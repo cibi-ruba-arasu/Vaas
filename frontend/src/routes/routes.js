@@ -6,6 +6,11 @@ import Register from "@/components/Register.vue"
 import OTP from "@/components/OTP.vue"
 import ForgotPassword from "@/components/ForgotPassword.vue"
 import ResetPassword from "@/components/ResetPassword.vue"
+import Homepage from "@/components/Homepage.vue"
+import UserProfile from "@/components/UserProfile.vue"
+import Create from "@/components/Create.vue"
+import Canvas from "@/components/Canvas.vue"
+
 
 const routes = [
   {
@@ -39,6 +44,30 @@ const routes = [
   {
     path: "/login",
     redirect: "/"
+  },
+  {
+    path: "/home",
+    name: "Homepage",
+    component: Homepage,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: "/profile",
+    name: "UserProfile",
+    component: UserProfile,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: "/create",
+    name: "Create",
+    component: Create,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: "/canvas/:projectId",
+    name: "Canvas",
+    component: Canvas,
+    meta: { requiresAuth: true }
   }
 ]
 
@@ -48,24 +77,39 @@ const router = createRouter({
 })
 
 router.beforeEach((to, from, next) => {
+
   /* ===== OTP PROTECTION ===== */
   if (to.meta.requiresOTP) {
     const registerUser = sessionStorage.getItem("registerUser")
     if (!registerUser) return next("/login")
   }
 
-  /* ===== FORGOT PASSWORD PROTECTION ===== */
-  if (to.meta.requiresForgot) {
-    // Optional: block direct access if you want stricter flow
-    // Example: user must come from login
-    // For now, allow access
-    return next()
-  }
-
   /* ===== RESET PASSWORD PROTECTION ===== */
   if (to.meta.requiresReset) {
     const resetEmail = sessionStorage.getItem("resetEmail")
     if (!resetEmail) return next("/login")
+  }
+
+  if (to.meta.requiresAuth) {
+    const token = localStorage.getItem("token")
+    if (!token) return next("/login")
+  }
+
+  if (to.meta.requiresAuth && !localStorage.getItem("token")) {
+    return next("/login")
+  }
+
+  /* ===== AUTH PROTECTION (JWT) ===== */
+  if (to.meta.requiresAuth) {
+    const token = localStorage.getItem("token")
+
+    if (!token) {
+      // ❌ Not logged in
+      return next("/login")
+    }
+
+    // ✅ Token exists (basic protection)
+    return next()
   }
 
   next()

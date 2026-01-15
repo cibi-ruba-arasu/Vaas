@@ -1,20 +1,56 @@
 <script setup>
 import { ref } from "vue"
+import { useRouter } from "vue-router"
+
+const router = useRouter()
 
 const email = ref("")
 const password = ref("")
 const showPassword = ref(false)
-
-const handleLogin = () => {
-  console.log("Email:", email.value)
-  console.log("Password:", password.value)
-}
+const isLoading = ref(false)
 
 const togglePassword = () => {
   showPassword.value = !showPassword.value
 }
-</script>
 
+const handleLogin = async () => {
+  if (!email.value || !password.value) {
+    return alert("Please fill all fields")
+  }
+
+  isLoading.value = true
+
+  try {
+    const res = await fetch("http://localhost:5000/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: email.value,
+        password: password.value
+      })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      return alert(data.message)
+    }
+
+    // ✅ Save auth data
+    localStorage.setItem("token", data.token)
+    localStorage.setItem("user", JSON.stringify(data.user))
+
+    // ✅ Redirect to Homepage
+    router.push("/home")
+
+  } catch (err) {
+    alert("Login failed")
+    console.error(err)
+  } finally {
+    isLoading.value = false
+  }
+}
+</script>
 <template>
     <head>
         <title>Login | Loomart</title>
@@ -64,7 +100,13 @@ const togglePassword = () => {
         </span>
       </div>
 
-      <button @click="handleLogin">Login</button>
+      <button @click="handleLogin" :disabled="isLoading">
+        <span v-if="!isLoading">Login</span>
+        <span v-else class="loading">
+          <span class="spinner"></span>
+          Verifying...
+        </span>
+      </button>
       
       <div class="patience-box">
         Thank ✨you✨ for your patience
@@ -294,5 +336,24 @@ const togglePassword = () => {
 .links a:hover {
   color: #60a5fa;
   text-decoration: underline;
+}
+
+.loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 3px solid rgba(255,255,255,0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 </style>

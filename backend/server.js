@@ -5,6 +5,11 @@ import dotenv from "dotenv"
 import mongoose from "mongoose"
 import User from "./schema/User.js"
 import bcrypt from "bcryptjs"
+import jwt from "jsonwebtoken"
+import UserPreference from "./schema/UserPreference.js"
+import authMiddleware from "./middleware/auth.js"
+import Project from "./schema/Project.js"
+
 
 dotenv.config()
 
@@ -116,6 +121,66 @@ app.post("/forgot-password/verify-otp", (req, res) => {
   res.json({ success: true })
 })
 
+app.post("/login", async (req, res) => {
+  const { email, password } = req.body
+
+  console.log("🔐 Login attempt:", email)
+
+  if (!email || !password) {
+    console.log("❌ Missing email or password")
+    return res.status(400).json({ message: "Email and password required" })
+  }
+
+  try {
+    // 1️⃣ Find user by email
+    const user = await User.findOne({ email })
+
+    if (!user) {
+      console.log("❌ Login failed: User not found")
+      return res.status(404).json({ message: "Account does not exist" })
+    }
+
+    // 2️⃣ Compare password
+    const isMatch = await bcrypt.compare(password, user.password)
+
+    if (!isMatch) {
+      console.log("❌ Login failed: Wrong password")
+      return res.status(401).json({ message: "Invalid credentials" })
+    }
+
+    // 3️⃣ Create JWT payload
+    const payload = {
+      mongoId: user._id,     // MongoDB ObjectId
+      userId: user.userid   // Custom user ID from DB
+    }
+
+    // 4️⃣ Sign JWT
+    const token = jwt.sign(payload, process.env.JWT_SECRET, {
+      expiresIn: "7d"
+    })
+
+    // 5️⃣ SUCCESS LOGS
+    console.log("✅ LOGIN SUCCESSFUL")
+    console.log("👤 Mongo ID:", user._id.toString())
+    console.log("🆔 UserID:", user.userid)
+    console.log("🔐 JWT TOKEN:", token)
+
+    // 6️⃣ Response
+    res.json({
+      success: true,
+      token,
+      user: {
+        mongoId: user._id,
+        userId: user.userid
+      }
+    })
+
+  } catch (err) {
+    console.error("❌ Login server error:", err)
+    res.status(500).json({ message: "Server error" })
+  }
+})
+
 app.post("/forgot-password/reset", async (req, res) => {
   const { email, password }
   = req.body
@@ -141,6 +206,187 @@ app.post("/forgot-password/send-otp", async (req, res) => {
   })
 
   res.json({ success: true })
+})
+
+app.get("/user/theme", authMiddleware, async (req, res) => {
+  const { mongoId } = req.user
+
+  let pref = await UserPreference.findOne({ userId: mongoId })
+
+  if (!pref) {
+    return res.json({ themeColor: "#808080" }) // default grey
+  }
+
+  res.json({ themeColor: pref.themeColor })
+})
+
+app.post("/user/theme", authMiddleware, async (req, res) => {
+  const { mongoId } = req.user
+  const { color } = req.body
+
+  let pref = await UserPreference.findOne({ userId: mongoId })
+
+  if (!pref) {
+    pref = new UserPreference({
+      userId: mongoId,
+      themeColor: color
+    })
+  } else {
+    pref.themeColor = color
+  }
+
+  await pref.save()
+  res.json({ success: true })
+})
+
+app.get("/user/profile", authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.mongoId).select(
+      "username dob country state city"
+    )
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" })
+    }
+
+    res.json({
+      username: user.username,
+      dob: user.dob,
+      country: user.country,
+      state: user.state,
+      city: user.city
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: "Server error" })
+  }
+})
+
+app.get("/projects", authMiddleware, async (req, res) => {
+  const { mongoId } = req.user
+
+  const bucket = await Project.findOne({ userId: mongoId })
+
+  if (!bucket) return res.json([])
+
+  // oldest → newest
+  const sorted = bucket.projects.sort(
+    (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
+  )
+
+  res.json(sorted)
+})
+
+app.post("/projects", authMiddleware, async (req, res) => {
+  const { mongoId } = req.user
+  const { name, description } = req.body
+
+  if (!name) {
+    return res.status(400).json({ message: "Project name required" })
+  }
+
+  const user = await User.findById(mongoId).select("username")
+
+  let bucket = await Project.findOne({ userId: mongoId })
+
+  if (!bucket) {
+    bucket = new Project({
+      userId: mongoId,
+      username: user.username,
+      projects: []
+    })
+  }
+
+  const exists = bucket.projects.some(
+    p => p.name.toLowerCase() === name.toLowerCase()
+  )
+
+  if (exists) {
+    return res.status(409).json({
+      message: "Project with same name already exists"
+    })
+  }
+
+  bucket.projects.push({ name, description })
+  await bucket.save()
+
+  res.status(201).json(bucket.projects.at(-1))
+})
+
+app.put("/projects/:id", authMiddleware, async (req, res) => {
+  const { mongoId } = req.user
+  const { name, description } = req.body
+
+  const bucket = await Project.findOne({ userId: mongoId })
+
+  if (!bucket) {
+    return res.status(404).json({ message: "Project not found" })
+  }
+
+  const project = bucket.projects.id(req.params.id)
+
+  if (!project) {
+    return res.status(404).json({ message: "Project not found" })
+  }
+
+  const duplicate = bucket.projects.some(
+    p =>
+      p._id.toString() !== project._id.toString() &&
+      p.name.toLowerCase() === name.toLowerCase()
+  )
+
+  if (duplicate) {
+    return res.status(409).json({
+      message: "Project name already exists"
+    })
+  }
+
+  project.name = name
+  project.description = description
+  project.updatedAt = new Date()
+
+  await bucket.save()
+  res.json(project)
+})
+
+app.delete("/projects/:id", authMiddleware, async (req, res) => {
+  const { mongoId } = req.user
+
+  const bucket = await Project.findOne({ userId: mongoId })
+
+  if (!bucket) {
+    return res.status(404).json({ message: "Project not found" })
+  }
+
+  const project = bucket.projects.id(req.params.id)
+
+  if (!project) {
+    return res.status(404).json({ message: "Project not found" })
+  }
+
+  project.deleteOne()
+  await bucket.save()
+
+  res.json({ success: true })
+})
+
+app.get("/projects/:id", authMiddleware, async (req, res) => {
+  const { mongoId } = req.user
+  const { id } = req.params
+
+  const bucket = await Project.findOne({ userId: mongoId })
+
+  if (!bucket) {
+    return res.status(404).json({ message: "Project not found" })
+  }
+
+  const project = bucket.projects.id(id)
+
+  if (!project) {
+    return res.status(404).json({ message: "Project not found" })
+  }
+
+  res.json(project)
 })
 
 app.listen(PORT, () =>
