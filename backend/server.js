@@ -389,6 +389,8 @@ app.get("/projects/:id", authMiddleware, async (req, res) => {
   res.json(project)
 })
 
+
+
 app.listen(PORT, () =>
   console.log(`🚀 Backend running on http://localhost:${PORT}`)
 )
