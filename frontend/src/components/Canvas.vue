@@ -27,13 +27,32 @@ let mouseWorld = { x: 0, y: 0 }
 
 /* ================= NODES ================= */
 const nodes = ref([])
+const selectedNodeId = ref(null)
+
+/**
+ * Canvas_Status
+ * Stores canonical data for every node on canvas
+ * {
+ *   index: Number,
+ *   x: Number,
+ *   y: Number,
+ *   node_type: "General"
+ * }
+ */
+const Canvas_Status = ref([])
+
 let draggingNode = null
 let dragOffset = { x: 0, y: 0 }
 let menuDragging = false
 
-const NODE_W = 160
-const NODE_H = 80
-const HEADER_H = 26
+const NODE_W = 180
+const NODE_H = 110
+const HEADER_H = 28
+const NODE_RADIUS = 12
+const ARROW_OFFSET = 14
+const ARROW_HIT_R = 10
+
+let hoveredArrow = null
 
 /* ================= UTILS ================= */
 const screenToWorld = (sx, sy) => {
@@ -43,6 +62,44 @@ const screenToWorld = (sx, sy) => {
     y: (sy - r.height / 2) / scale + camY
   }
 }
+
+const drawRoundedRect = (x, y, w, h, r) => {
+  ctx.beginPath()
+  ctx.moveTo(x + r, y)
+  ctx.lineTo(x + w - r, y)
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+  ctx.lineTo(x + w, y + h - r)
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+  ctx.lineTo(x + r, y + h)
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+  ctx.lineTo(x, y + r)
+  ctx.quadraticCurveTo(x, y, x + r, y)
+  ctx.closePath()
+}
+
+/* ================= HIT TEST ================= */
+const arrowHit = (n, wx, wy) => {
+  const ay = n.y - NODE_H / 2 + HEADER_H / 2
+  const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
+  const rightAx = n.x + NODE_W / 2 - ARROW_OFFSET
+
+  if (Math.hypot(wx - leftAx, wy - ay) < ARROW_HIT_R)
+    return { node: n, side: "left", x: leftAx, y: ay }
+
+  if (Math.hypot(wx - rightAx, wy - ay) < ARROW_HIT_R)
+    return { node: n, side: "right", x: rightAx, y: ay }
+
+  return null
+}
+
+const getNodeAt = (wx, wy) =>
+  nodes.value.find(
+    n =>
+      wx >= n.x - NODE_W / 2 &&
+      wx <= n.x + NODE_W / 2 &&
+      wy >= n.y - NODE_H / 2 &&
+      wy <= n.y + NODE_H / 2
+  )
 
 /* ================= DRAW ================= */
 const draw = () => {
@@ -63,6 +120,7 @@ const draw = () => {
   ctx.restore()
 }
 
+/* ================= GRID ================= */
 const drawGrid = (w, h) => {
   const minor = 50
   const major = 250
@@ -107,7 +165,7 @@ const drawGrid = (w, h) => {
   }
 }
 
-/* ✅ ORIGIN-LOCKED AXES */
+/* ================= AXES ================= */
 const drawAxes = (w, h) => {
   const left = camX - w / 2 / scale
   const right = camX + w / 2 / scale
@@ -128,99 +186,134 @@ const drawAxes = (w, h) => {
   ctx.stroke()
 }
 
-/* ================= DRAW NODES ================= */
+/* ================= NODES ================= */
 const drawNodes = () => {
   for (const n of nodes.value) {
     const x = n.x
     const y = n.y
 
+    /* === HIGHLIGHT === */
+    if (n.id === selectedNodeId.value) {
+      ctx.strokeStyle = "#ffffff"
+      ctx.lineWidth = 3 / scale
+      drawRoundedRect(
+        x - NODE_W / 2 - 4,
+        y - NODE_H / 2 - 4,
+        NODE_W + 8,
+        NODE_H + 8,
+        NODE_RADIUS + 2
+      )
+      ctx.stroke()
+    }
+
     // Body
     ctx.fillStyle = "#5f6f82"
-    ctx.fillRect(x - NODE_W / 2, y - NODE_H / 2, NODE_W, NODE_H)
+    drawRoundedRect(x - NODE_W / 2, y - NODE_H / 2, NODE_W, NODE_H, NODE_RADIUS)
+    ctx.fill()
 
     // Header
-    ctx.fillStyle = "#3f4b5a"
-    ctx.fillRect(
+    const grad = ctx.createLinearGradient(
       x - NODE_W / 2,
       y - NODE_H / 2,
-      NODE_W,
-      HEADER_H
+      x + NODE_W / 2,
+      y - NODE_H / 2
     )
+    grad.addColorStop(0, "#ff2a2a")
+    grad.addColorStop(1, "#000")
+
+    ctx.fillStyle = grad
+    drawRoundedRect(x - NODE_W / 2, y - NODE_H / 2, NODE_W, HEADER_H, NODE_RADIUS)
+    ctx.fill()
 
     // Border
     ctx.strokeStyle = "#cbd5e1"
     ctx.lineWidth = 2
-    ctx.strokeRect(x - NODE_W / 2, y - NODE_H / 2, NODE_W, NODE_H)
+    drawRoundedRect(x - NODE_W / 2, y - NODE_H / 2, NODE_W, NODE_H, NODE_RADIUS)
+    ctx.stroke()
 
     // Title
-    ctx.fillStyle = "#e5e7eb"
+    ctx.fillStyle = "#fff"
     ctx.font = "13px sans-serif"
     ctx.textAlign = "center"
     ctx.textBaseline = "middle"
-    ctx.fillText(
-      "General Node",
-      x,
-      y - NODE_H / 2 + HEADER_H / 2
-    )
+    ctx.fillText("General Node", x, y - NODE_H / 2 + HEADER_H / 2)
 
-    // Arrowheads (▷)
-    ctx.font = "14px sans-serif"
-    ctx.fillText(
-      "▷",
-      x - NODE_W / 2 + 12,
-      y - NODE_H / 2 + HEADER_H / 2
-    )
-    ctx.fillText(
-      "▷",
-      x + NODE_W / 2 - 12,
-      y - NODE_H / 2 + HEADER_H / 2
-    )
+    /* === ARROWHEADS === */
+    const ay = y - NODE_H / 2 + HEADER_H / 2
+    const leftAx = x - NODE_W / 2 + ARROW_OFFSET
+    const rightAx = x + NODE_W / 2 - ARROW_OFFSET
+
+    if (hoveredArrow?.node === n) {
+      ctx.beginPath()
+      ctx.arc(hoveredArrow.x, hoveredArrow.y, 9, 0, Math.PI * 2)
+      ctx.strokeStyle = "#fff"
+      ctx.lineWidth = 2 / scale
+      ctx.stroke()
+    }
+
+    ctx.fillStyle = "#ffffff"
+    ctx.font = "16px sans-serif"
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+    ctx.fillText("▷", leftAx, ay)
+    ctx.fillText("▷", rightAx, ay)
   }
 }
-
-/* ================= HIT TEST ================= */
-const getNodeAt = (wx, wy) =>
-  nodes.value.find(
-    n =>
-      wx >= n.x - NODE_W / 2 &&
-      wx <= n.x + NODE_W / 2 &&
-      wy >= n.y - NODE_H / 2 &&
-      wy <= n.y + NODE_H / 2
-  )
 
 /* ================= MOUSE ================= */
 const onMouseDown = e => {
   const w = screenToWorld(e.clientX, e.clientY)
-  const hit = getNodeAt(w.x, w.y)
 
-  if (hit) {
-    draggingNode = hit
-    dragOffset.x = w.x - hit.x
-    dragOffset.y = w.y - hit.y
+  hoveredArrow = null
+  for (const n of nodes.value) {
+    const hit = arrowHit(n, w.x, w.y)
+    if (hit) return
+  }
+
+  const hitNode = getNodeAt(w.x, w.y)
+  if (hitNode) {
+    selectedNodeId.value = hitNode.id
+    draggingNode = hitNode
+    dragOffset.x = w.x - hitNode.x
+    dragOffset.y = w.y - hitNode.y
+    draw()
     return
   }
 
+  selectedNodeId.value = null
   isPanning = true
   lastX = e.clientX
   lastY = e.clientY
+  draw()
 }
 
 const onMouseMove = e => {
   mouseWorld = screenToWorld(e.clientX, e.clientY)
 
+  hoveredArrow = null
+  for (const n of nodes.value) {
+    const hit = arrowHit(n, mouseWorld.x, mouseWorld.y)
+    if (hit) {
+      hoveredArrow = hit
+      break
+    }
+  }
+
   if (draggingNode) {
     draggingNode.x = mouseWorld.x - dragOffset.x
     draggingNode.y = mouseWorld.y - dragOffset.y
-    draw()
-    return
-  }
 
-  if (isPanning) {
+    const status = Canvas_Status.value.find(s => s.index === draggingNode.id)
+    if (status) {
+      status.x = draggingNode.x
+      status.y = draggingNode.y
+    }
+  } else if (isPanning) {
     camX -= (e.clientX - lastX) / scale
     camY -= (e.clientY - lastY) / scale
-    draw()
   }
 
+  draw()
   lastX = e.clientX
   lastY = e.clientY
 }
@@ -230,15 +323,23 @@ const onMouseUp = () => {
   draggingNode = null
 
   if (menuDragging) {
-    nodes.value.push({
-      id: nodes.value.length,
-      type: "general",
-      x: mouseWorld.x,
-      y: mouseWorld.y
+    const id = nodes.value.length
+    const x = mouseWorld.x
+    const y = mouseWorld.y
+
+    nodes.value.push({ id, x, y })
+    Canvas_Status.value.push({
+      index: id,
+      x,
+      y,
+      node_type: "General"
     })
+
+    selectedNodeId.value = id
     menuDragging = false
-    draw()
   }
+
+  draw()
 }
 
 /* ================= ZOOM ================= */
@@ -267,7 +368,7 @@ const saveProject = async () => {
     },
     body: JSON.stringify({
       projectId,
-      nodes: nodes.value
+      Canvas_Status: Canvas_Status.value
     })
   })
 }
@@ -279,11 +380,9 @@ const resize = () => {
   draw()
 }
 
-/* ================= LIFECYCLE ================= */
 onMounted(() => {
   ctx = canvasRef.value.getContext("2d")
   resize()
-
   window.addEventListener("resize", resize)
   window.addEventListener("mousemove", onMouseMove)
   window.addEventListener("mouseup", onMouseUp)
@@ -298,12 +397,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="wrapper">
-    <canvas
-      ref="canvasRef"
-      class="canvas"
-      @mousedown="onMouseDown"
-      @wheel="onWheel"
-    />
+    <canvas ref="canvasRef" class="canvas" @mousedown="onMouseDown" @wheel="onWheel" />
 
     <header class="header">
       <button class="hamburger" @click="toggleMenu">☰</button>
@@ -316,11 +410,10 @@ onBeforeUnmount(() => {
     <aside class="side-menu" :class="{ open: menuOpen }">
       <div class="menu-node" @mousedown.prevent="menuDragging = true">
         <div class="menu-node-header">
-          <span>▷</span>
+          <span>▶</span>
           <span class="menu-node-title">General Node</span>
-          <span>▷</span>
+          <span>▶</span>
         </div>
-        <div class="menu-node-body"></div>
       </div>
     </aside>
   </div>
@@ -360,7 +453,6 @@ onBeforeUnmount(() => {
   border: none;
   padding: 4px 12px;
   border-radius: 6px;
-  cursor: pointer;
 }
 
 .side-menu {
@@ -378,32 +470,25 @@ onBeforeUnmount(() => {
 
 .side-menu.open { transform: translateX(0) }
 
-/* ===== MENU NODE ===== */
 .menu-node {
   background: #5f6f82;
-  border-radius: 8px;
-  cursor: grab;
+  border-radius: 12px;
   overflow: hidden;
+  cursor: grab;
 }
 
 .menu-node-header {
-  background: #3f4b5a;
   height: 28px;
+  background: linear-gradient(to right, #ff2a2a, #000);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px;
-  color: #e5e7eb;
+  padding: 0 12px;
+  color: #fff;
   font-size: 14px;
 }
 
-.menu-node-body {
-  height: 40px;
-}
-
-.menu-node-title {
-  font-weight: 600;
-}
+.menu-node-title { font-weight: 600 }
 
 .title {
   font-size: 1.3rem;
