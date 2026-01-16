@@ -29,16 +29,6 @@ let mouseWorld = { x: 0, y: 0 }
 const nodes = ref([])
 const selectedNodeId = ref(null)
 
-/**
- * Canvas_Status
- * {
- *  index: Number,
- *  x: Number,
- *  y: Number,
- *  node_type: String,
- *  Next: Number|null
- * }
- */
 const Canvas_Status = ref([])
 
 let draggingNode = null
@@ -233,8 +223,8 @@ const drawNodes = () => {
 
 /* ================= DRAW CONNECTIONS ================= */
 const drawConnections = () => {
-  ctx.strokeStyle = "#00ff88"
-  ctx.lineWidth = 2 / scale
+  ctx.strokeStyle = "#fff"
+  ctx.lineWidth = 4 / scale // thicker
   for (const n of Canvas_Status.value) {
     if (n.Next != null) {
       const fromNode = nodes.value.find(nd => nd.id === n.index)
@@ -256,8 +246,8 @@ const drawConnections = () => {
 /* ================= DRAW TEMP LINE ================= */
 const drawConnectingLine = () => {
   if (!connectingLine) return
-  ctx.strokeStyle = "#00ff88"
-  ctx.lineWidth = 2 / scale
+  ctx.strokeStyle = "#fff"
+  ctx.lineWidth = 4 / scale // thicker
   ctx.beginPath()
   ctx.moveTo(connectingLine.fromX, connectingLine.fromY)
   ctx.lineTo(connectingLine.toX, connectingLine.toY)
@@ -271,7 +261,6 @@ const onMouseDown = e => {
   const w = screenToWorld(e.clientX, e.clientY)
   hoveredArrow = null
 
-  // Check if output arrow is clicked
   for (const n of nodes.value) {
     const hit = arrowHit(n, w.x, w.y)
     if (hit?.side === "right") {
@@ -281,7 +270,6 @@ const onMouseDown = e => {
     }
   }
 
-  // Normal node dragging
   const hitNode = getNodeAt(w.x, w.y)
   if (hitNode) {
     draggingNode = hitNode
@@ -324,7 +312,6 @@ const onMouseMove = e => {
     camY -= (e.clientY - lastY) / scale
   }
 
-  // Update connecting line while dragging output
   if (outputDragging) {
     connectingLine.toX = mouseWorld.x
     connectingLine.toY = mouseWorld.y
@@ -346,7 +333,6 @@ const onMouseUp = e => {
       return hit?.side === "left" && nd.id !== outputDragging.node.id
     })
     if (targetNode) {
-      // Update Canvas_Status Next
       const cs = Canvas_Status.value.find(s => s.index === outputDragging.node.id)
       if (cs) cs.Next = targetNode.id
     }
@@ -380,15 +366,6 @@ const onWheel = e => {
   draw()
 }
 
-/* ================= SAVE ================= */
-const saveProject = async () => {
-  await fetch("http://localhost:5000/projects/save-graph", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ projectId, Canvas_Status: Canvas_Status.value })
-  })
-}
-
 /* ================= RESIZE ================= */
 const resize = () => {
   canvasRef.value.width = window.innerWidth
@@ -402,8 +379,6 @@ onMounted(() => {
   window.addEventListener("resize", resize)
   window.addEventListener("mousemove", onMouseMove)
   window.addEventListener("mouseup", onMouseUp)
-
-  setInterval(() => console.log(Canvas_Status.value), 10000)
 })
 
 onBeforeUnmount(() => {
@@ -416,12 +391,10 @@ onBeforeUnmount(() => {
 <template>
   <div class="wrapper">
     <canvas ref="canvasRef" class="canvas" @mousedown="onMouseDown" @wheel="onWheel" />
-
     <header class="header">
       <button class="hamburger" @click="toggleMenu">☰</button>
       <div class="center">
         <div class="title">Weaver Project</div>
-        <button class="save" @click="saveProject">Save</button>
       </div>
     </header>
 
