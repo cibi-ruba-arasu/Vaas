@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from "vue"
+import { ref, onMounted, onBeforeUnmount, nextTick } from "vue"
 import { useRoute } from "vue-router"
 
 /* ================= ROUTE ================= */
@@ -28,7 +28,6 @@ let mouseWorld = { x: 0, y: 0 }
 /* ================= NODES ================= */
 const nodes = ref([])
 const selectedNodeId = ref(null)
-
 const Canvas_Status = ref([])
 
 let draggingNode = null
@@ -44,6 +43,27 @@ const ARROW_HIT_R = 10
 
 let hoveredArrow = null
 let connectingLine = null // { fromNode, fromX, fromY, toX, toY }
+
+/* ================= POPUP ================= */
+const showPopup = ref(false)
+const popupNode = ref(null)
+const popupAnimation = ref(false)
+
+const openPopup = node => {
+  popupNode.value = node
+  showPopup.value = true
+  nextTick(() => {
+    popupAnimation.value = true
+  })
+}
+
+const closePopup = () => {
+  popupAnimation.value = false
+  setTimeout(() => {
+    showPopup.value = false
+    popupNode.value = null
+  }, 300) // duration of animation
+}
 
 /* ================= UTILS ================= */
 const screenToWorld = (sx, sy) => {
@@ -224,7 +244,7 @@ const drawNodes = () => {
 /* ================= DRAW CONNECTIONS ================= */
 const drawConnections = () => {
   ctx.strokeStyle = "#fff"
-  ctx.lineWidth = 4 / scale // thicker
+  ctx.lineWidth = 4 / scale
   for (const n of Canvas_Status.value) {
     if (n.Next != null) {
       const fromNode = nodes.value.find(nd => nd.id === n.index)
@@ -234,7 +254,6 @@ const drawConnections = () => {
       const fromY = fromNode.y - NODE_H / 2 + HEADER_H / 2
       const toX = toNode.x - NODE_W / 2 + ARROW_OFFSET
       const toY = toNode.y - NODE_H / 2 + HEADER_H / 2
-
       ctx.beginPath()
       ctx.moveTo(fromX, fromY)
       ctx.lineTo(toX, toY)
@@ -247,7 +266,7 @@ const drawConnections = () => {
 const drawConnectingLine = () => {
   if (!connectingLine) return
   ctx.strokeStyle = "#fff"
-  ctx.lineWidth = 4 / scale // thicker
+  ctx.lineWidth = 4 / scale
   ctx.beginPath()
   ctx.moveTo(connectingLine.fromX, connectingLine.fromY)
   ctx.lineTo(connectingLine.toX, connectingLine.toY)
@@ -256,6 +275,7 @@ const drawConnectingLine = () => {
 
 /* ================= MOUSE EVENTS ================= */
 let outputDragging = null
+let lastClickTime = 0
 
 const onMouseDown = e => {
   const w = screenToWorld(e.clientX, e.clientY)
@@ -271,6 +291,14 @@ const onMouseDown = e => {
   }
 
   const hitNode = getNodeAt(w.x, w.y)
+  const now = Date.now()
+  if (hitNode && now - lastClickTime < 300) {
+    openPopup(hitNode)
+    lastClickTime = 0
+    return
+  }
+  lastClickTime = now
+
   if (hitNode) {
     draggingNode = hitNode
     dragOffset.x = w.x - hitNode.x
@@ -289,7 +317,6 @@ const onMouseDown = e => {
 
 const onMouseMove = e => {
   mouseWorld = screenToWorld(e.clientX, e.clientY)
-
   hoveredArrow = null
   for (const n of nodes.value) {
     const hit = arrowHit(n, mouseWorld.x, mouseWorld.y)
@@ -386,11 +413,13 @@ onBeforeUnmount(() => {
   window.removeEventListener("mousemove", onMouseMove)
   window.removeEventListener("mouseup", onMouseUp)
 })
+
 </script>
 
 <template>
   <div class="wrapper">
     <canvas ref="canvasRef" class="canvas" @mousedown="onMouseDown" @wheel="onWheel" />
+
     <header class="header">
       <button class="hamburger" @click="toggleMenu">☰</button>
       <div class="center">
@@ -407,6 +436,24 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </aside>
+
+    <!-- NODE POPUP -->
+    <transition name="popup">
+      <div v-if="showPopup" class="popup-overlay">
+        <div class="popup" :class="{ active: popupAnimation }">
+          <div class="popup-header">
+            <button class="popup-add">+ Add</button>
+            Node Details
+          </div>
+          <div class="popup-body">
+            <div class="popup-content">
+              <!-- Large rectangle occupying 75% of popup -->
+            </div>
+          </div>
+          <button class="popup-cancel" @click="closePopup">Cancel</button>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -437,14 +484,6 @@ onBeforeUnmount(() => {
 }
 
 .center { text-align: center }
-
-.save {
-  margin-top: 4px;
-  background: #00ff88;
-  border: none;
-  padding: 4px 12px;
-  border-radius: 6px;
-}
 
 .side-menu {
   position: absolute;
@@ -481,8 +520,87 @@ onBeforeUnmount(() => {
 
 .menu-node-title { font-weight: 600 }
 
-.title {
-  font-size: 1.3rem;
-  color: #00ff88;
+.title { font-size: 1.3rem; color: #00ff88 }
+
+/* ========== POPUP STYLES ========== */
+.popup-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 50;
 }
+
+.popup {
+  width: 80%;
+  height: 80%;
+  background: #1f2937;
+  border-radius: 12px;
+  padding: 24px;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.popup.active {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.popup-header {
+  font-size: 1.4rem;
+  color: #00ff88;
+  display: flex;
+  align-items: center;
+}
+
+.popup-add {
+  background: #00ff88;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: #000;
+  font-weight: bold;
+  margin-right: 12px;
+  cursor: pointer;
+}
+
+.popup-body {
+  flex: 1;
+  margin-top: 16px;
+  color: #fff;
+  font-size: 1.1rem;
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+
+.popup-content {
+  width: 75%;
+  height: 100%;
+  background: rgba(255,255,255,0.05);
+  border-radius: 8px;
+}
+
+/* Cancel button */
+.popup-cancel {
+  align-self: flex-end;
+  background: #ff4444;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+}
+.popup-cancel:hover { background: #ff0000 }
+
+/* TRANSITION */
+.popup-enter-active, .popup-leave-active { transition: all 0.3s ease; }
+.popup-enter-from, .popup-leave-to { opacity: 0; transform: scale(0.8); }
+.popup-enter-to, .popup-leave-from { opacity: 1; transform: scale(1); }
 </style>
