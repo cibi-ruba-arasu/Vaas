@@ -52,10 +52,9 @@ const popupAnimation = ref(false)
 /* ================= GRAPH SETTINGS ================= */
 const graphCanvasRef = ref(null)
 let graphCtx
-const graphMousePos = ref({ x: 0, y: 0 })
-const showGraphCoords = ref(false)
-const graphCoords = ref({ x: 0, y: 0 })
-const graphCoordsPopupPos = ref({ x: 0, y: 0 })
+// Separate canvas for images
+const imagesCanvasRef = ref(null)
+let imagesCtx
 
 // Graph settings
 const GRAPH_MIN_X = -1000
@@ -64,6 +63,18 @@ const GRAPH_MIN_Y = -600
 const GRAPH_MAX_Y = 600
 const GRAPH_MAJOR_GRID = 100  // Major grid lines every 100 units
 const GRAPH_MINOR_GRID = 20   // Minor grid lines every 20 units
+
+/* ================= IMAGE MANAGEMENT ================= */
+const sceneImages = ref([]) // Images for the current scene
+const imageInputRef = ref(null) // Reference to file input
+const isDraggingImage = ref(false)
+const draggingImageIndex = ref(null)
+const dragImageOffset = ref({ x: 0, y: 0 })
+
+/* ================= SCENE SETTINGS ================= */
+const sceneSettings = ref({
+  backgroundColor: '#000000' // Default black (opaque)
+})
 
 /* ================= SCENES MANAGEMENT ================= */
 const nodeScenes = ref([]) // Scenes for the currently opened node
@@ -86,8 +97,15 @@ const toggleAddDropdown = () => {
 
 const selectAddOption = (option) => {
   console.log(`Selected: ${option.label}`)
-  // Here you can add logic to handle the selected option
-  // For example, add a new node of the selected type
+  
+  if (option.id === 'image') {
+    // Trigger image file input
+    imageInputRef.value.click()
+  } else {
+    // For other options, just log for now
+    console.log(`Handling ${option.label} option`)
+  }
+  
   showAddDropdown.value = false
 }
 
@@ -95,10 +113,198 @@ const closeAddDropdown = () => {
   showAddDropdown.value = false
 }
 
+/* ================= IMAGE HANDLING FUNCTIONS ================= */
+const handleImageUpload = (event) => {
+  const file = event.target.files[0]
+  if (!file) return
+  
+  // Check if file is an image
+  if (!file.type.startsWith('image/')) {
+    alert('Please select an image file')
+    return
+  }
+  
+  // Create a unique filename
+  const timestamp = Date.now()
+  const fileName = `scene_${selectedScene.value.id}_image_${timestamp}_${file.name}`
+  
+  // Create a FileReader to read the image
+  const reader = new FileReader()
+  
+  reader.onload = (e) => {
+    const imageUrl = e.target.result
+    
+    // Create image object - position at origin (0,0)
+    const newImage = {
+      id: Date.now(), // Unique ID for the image
+      name: file.name,
+      url: imageUrl,
+      x: 0, // Position at origin
+      y: 0,
+      width: 100, // Default width
+      height: 100, // Default height (will be adjusted based on aspect ratio)
+      originalFile: file // Keep reference to original file
+    }
+    
+    // Load the image to get its dimensions
+    const img = new Image()
+    img.onload = () => {
+      // Adjust size while maintaining aspect ratio
+      const maxSize = 200
+      let width = img.width
+      let height = img.height
+      
+      if (width > maxSize || height > maxSize) {
+        const ratio = Math.min(maxSize / width, maxSize / height)
+        width = width * ratio
+        height = height * ratio
+      }
+      
+      newImage.width = width
+      newImage.height = height
+      newImage.naturalWidth = img.width
+      newImage.naturalHeight = img.height
+      
+      // Add to scene images
+      sceneImages.value.push(newImage)
+      
+      // Update scene content display
+      updateSceneContentDisplay()
+      
+      // Redraw images on the images canvas
+      drawImages()
+      
+      console.log(`Image uploaded: ${file.name}, Size: ${width}x${height}, Position: (${newImage.x}, ${newImage.y})`)
+    }
+    img.src = imageUrl
+  }
+  
+  reader.readAsDataURL(file)
+  
+  // Reset file input
+  event.target.value = ''
+}
+
+const updateSceneContentDisplay = () => {
+  // Update the scene content body to show uploaded images
+  const contentBody = document.querySelector('.scene-content-body')
+  if (contentBody) {
+    if (sceneImages.value.length > 0) {
+      contentBody.innerHTML = ''
+      
+      sceneImages.value.forEach((image, index) => {
+        const imageItem = document.createElement('div')
+        imageItem.className = 'image-item'
+        imageItem.innerHTML = `
+          <img src="${image.url}" alt="${image.name}" style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px;">
+          <div class="image-info">
+            <div class="image-name">${image.name}</div>
+            <div class="image-position">Position: (${Math.round(image.x)}, ${Math.round(image.y)})</div>
+            <div class="image-size">Size: ${Math.round(image.width)}x${Math.round(image.height)}</div>
+          </div>
+          <button class="remove-image-btn" data-index="${index}">🗑️</button>
+        `
+        contentBody.appendChild(imageItem)
+        
+        // Add event listener to remove button
+        const removeBtn = imageItem.querySelector('.remove-image-btn')
+        removeBtn.addEventListener('click', () => removeImage(index))
+      })
+    } else {
+      contentBody.innerHTML = '<div class="empty-content">No content added yet. Click "+ Add" to add content.</div>'
+    }
+  }
+}
+
+const removeImage = (index) => {
+  sceneImages.value.splice(index, 1)
+  updateSceneContentDisplay()
+  drawImages()
+}
+
+const onGraphMouseDown = (event) => {
+  if (!imagesCanvasRef.value) return
+  
+  const rect = imagesCanvasRef.value.getBoundingClientRect()
+  const mouseX = event.clientX
+  const mouseY = event.clientY
+  
+  // Check if mouse is inside images canvas
+  if (mouseX >= rect.left && mouseX <= rect.right && 
+      mouseY >= rect.top && mouseY <= rect.bottom) {
+    
+    // Convert to graph coordinates
+    const coords = screenToGraphCoords(mouseX, mouseY)
+    
+    // Check if clicking on an image
+    for (let i = sceneImages.value.length - 1; i >= 0; i--) {
+      const image = sceneImages.value[i]
+      const imageLeft = image.x - (image.width / 2)
+      const imageRight = image.x + (image.width / 2)
+      const imageTop = image.y + (image.height / 2) // Note: Y is inverted
+      const imageBottom = image.y - (image.height / 2)
+      
+      if (coords.x >= imageLeft && coords.x <= imageRight &&
+          coords.y <= imageTop && coords.y >= imageBottom) {
+        
+        isDraggingImage.value = true
+        draggingImageIndex.value = i
+        dragImageOffset.value = {
+          x: coords.x - image.x,
+          y: coords.y - image.y
+        }
+        
+        // Bring image to front (move to end of array)
+        const [draggedImage] = sceneImages.value.splice(i, 1)
+        sceneImages.value.push(draggedImage)
+        draggingImageIndex.value = sceneImages.value.length - 1
+        
+        drawImages()
+        return
+      }
+    }
+  }
+}
+
+const onGraphMouseMove = (event) => {
+  if (!imagesCanvasRef.value) return
+  
+  const rect = imagesCanvasRef.value.getBoundingClientRect()
+  const mouseX = event.clientX
+  const mouseY = event.clientY
+  
+  // Check if mouse is inside images canvas
+  if (mouseX >= rect.left && mouseX <= rect.right && 
+      mouseY >= rect.top && mouseY <= rect.bottom) {
+    
+    // Handle image dragging
+    if (isDraggingImage.value && draggingImageIndex.value !== null) {
+      const coords = screenToGraphCoords(mouseX, mouseY)
+      const image = sceneImages.value[draggingImageIndex.value]
+      image.x = coords.x - dragImageOffset.value.x
+      image.y = coords.y - dragImageOffset.value.y
+      
+      // Update scene content display with new position
+      updateSceneContentDisplay()
+      drawImages()
+    }
+  }
+}
+
+const onGraphMouseUp = () => {
+  if (isDraggingImage.value) {
+    isDraggingImage.value = false
+    draggingImageIndex.value = null
+    drawImages()
+  }
+}
+
 const openPopup = node => {
   popupNode.value = node
   viewMode.value = 'scenes'
   selectedScene.value = null
+  sceneImages.value = [] // Clear images when opening new node
+  sceneSettings.value.backgroundColor = '#000000' // Reset to black
   
   // Load scenes for this node from Canvas_Status
   const nodeStatus = Canvas_Status.value.find(s => s.index === node.id)
@@ -106,6 +312,15 @@ const openPopup = node => {
     // If node already has scenes, use them
     if (nodeStatus.scenes) {
       nodeScenes.value = [...nodeStatus.scenes]
+      // Set default scene name if not present
+      nodeScenes.value.forEach((scene, index) => {
+        if (!scene.name) {
+          scene.name = `Scene ${scene.id}`
+        }
+        if (!scene.backgroundColor) {
+          scene.backgroundColor = '#000000' // Default black
+        }
+      })
     } else {
       // Initialize with empty scenes array
       nodeScenes.value = []
@@ -117,42 +332,68 @@ const openPopup = node => {
   showPopup.value = true
   nextTick(() => {
     popupAnimation.value = true
-    // Initialize graph canvas after popup is shown
+    // Initialize graph canvas after popup is shown (but won't draw if no scene selected)
     setTimeout(initializeGraphCanvas, 50)
   })
 }
 
 const closePopup = () => {
+  // Save current scene details before closing
+  if (selectedScene.value) {
+    updateSceneDetails()
+  }
+  
   popupAnimation.value = false
-  showGraphCoords.value = false
+  isDraggingImage.value = false
+  draggingImageIndex.value = null
   setTimeout(() => {
     showPopup.value = false
     popupNode.value = null
     nodeScenes.value = []
     hoveredSceneId.value = null
     selectedScene.value = null
+    sceneImages.value = []
     viewMode.value = 'scenes'
   }, 300) // duration of animation
 }
 
+/* ================= BACKGROUND COLOR FUNCTIONS ================= */
+const updateBackgroundColor = () => {
+  // Update the background color overlay
+  const overlay = document.querySelector('.background-color-overlay')
+  if (overlay) {
+    overlay.style.backgroundColor = sceneSettings.value.backgroundColor
+  }
+}
+
 /* ================= GRAPH FUNCTIONS ================= */
 const initializeGraphCanvas = () => {
-  if (!graphCanvasRef.value) return
+  if (!graphCanvasRef.value || !imagesCanvasRef.value) return
   
   graphCtx = graphCanvasRef.value.getContext('2d')
+  imagesCtx = imagesCanvasRef.value.getContext('2d')
   resizeGraphCanvas()
-  drawGraph()
+  // Only draw graph if a scene is selected
+  if (selectedScene.value) {
+    drawGraph()
+  }
 }
 
 const resizeGraphCanvas = () => {
-  if (!graphCanvasRef.value) return
+  if (!graphCanvasRef.value || !imagesCanvasRef.value) return
   
   const container = document.querySelector('.popup-content')
   if (container) {
     const rect = container.getBoundingClientRect()
     graphCanvasRef.value.width = rect.width
     graphCanvasRef.value.height = rect.height
-    drawGraph()
+    imagesCanvasRef.value.width = rect.width
+    imagesCanvasRef.value.height = rect.height
+    // Only draw if a scene is selected
+    if (selectedScene.value) {
+      drawGraph()
+      drawImages()
+    }
   }
 }
 
@@ -183,8 +424,22 @@ const screenToGraphCoords = (screenX, screenY) => {
   }
 }
 
+const graphToScreenCoords = (graphX, graphY) => {
+  if (!graphCanvasRef.value) return { x: 0, y: 0 }
+  
+  const canvas = graphCanvasRef.value
+  const centerX = canvas.width / 2
+  const centerY = canvas.height / 2
+  
+  const pixelsPerUnit = 2
+  const screenX = centerX + (graphX * pixelsPerUnit)
+  const screenY = centerY - (graphY * pixelsPerUnit) // Invert Y axis
+  
+  return { x: screenX, y: screenY }
+}
+
 const drawGraph = () => {
-  if (!graphCtx || !graphCanvasRef.value) return
+  if (!graphCtx || !graphCanvasRef.value || !selectedScene.value) return
   
   const canvas = graphCanvasRef.value
   const ctx = graphCtx
@@ -195,10 +450,6 @@ const drawGraph = () => {
   // Get center coordinates
   const centerX = canvas.width / 2
   const centerY = canvas.height / 2
-  
-  // Draw background
-  ctx.fillStyle = 'rgba(30, 41, 59, 0.8)' // Dark blue-gray background
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
   
   // Draw minor grid lines
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'
@@ -322,35 +573,49 @@ const drawGridLines = (ctx, canvas, centerX, centerY, gridSize, pixelsPerUnit) =
   }
 }
 
-const onGraphMouseMove = (event) => {
-  if (!graphCanvasRef.value) return
+const drawImages = () => {
+  if (!imagesCtx || !imagesCanvasRef.value || !selectedScene.value) return
   
-  const rect = graphCanvasRef.value.getBoundingClientRect()
-  const mouseX = event.clientX
-  const mouseY = event.clientY
+  const ctx = imagesCtx
+  const canvas = imagesCanvasRef.value
   
-  // Check if mouse is inside graph canvas
-  if (mouseX >= rect.left && mouseX <= rect.right && 
-      mouseY >= rect.top && mouseY <= rect.bottom) {
+  // Clear canvas
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  
+  if (sceneImages.value.length === 0) return
+  
+  sceneImages.value.forEach((image, index) => {
+    // Convert graph coordinates to screen coordinates
+    const screenPos = graphToScreenCoords(image.x, image.y)
     
-    // Calculate graph coordinates
-    const coords = screenToGraphCoords(mouseX, mouseY)
-    graphCoords.value = coords
-    
-    // Update popup position (offset from cursor)
-    graphCoordsPopupPos.value = {
-      x: mouseX + 15,
-      y: mouseY - 30
+    // Create image element
+    const img = new Image()
+    img.onload = () => {
+      // Draw image
+      ctx.drawImage(
+        img,
+        screenPos.x - (image.width / 2),
+        screenPos.y - (image.height / 2),
+        image.width,
+        image.height
+      )
+      
+      // Draw selection border if dragging
+      if (isDraggingImage.value && draggingImageIndex.value === index) {
+        ctx.strokeStyle = '#00ff88'
+        ctx.lineWidth = 2
+        ctx.setLineDash([5, 3])
+        ctx.strokeRect(
+          screenPos.x - (image.width / 2) - 2,
+          screenPos.y - (image.height / 2) - 2,
+          image.width + 4,
+          image.height + 4
+        )
+        ctx.setLineDash([])
+      }
     }
-    
-    showGraphCoords.value = true
-  } else {
-    showGraphCoords.value = false
-  }
-}
-
-const onGraphMouseLeave = () => {
-  showGraphCoords.value = false
+    img.src = image.url
+  })
 }
 
 /* ================= SCENE FUNCTIONS ================= */
@@ -360,12 +625,13 @@ const addScene = () => {
   const newSceneId = nodeScenes.value.length + 1
   const newScene = {
     id: newSceneId,
-    name: `Scene ${newSceneId}`
+    name: `Scene ${newSceneId}`,
+    backgroundColor: '#000000' // Default black background
   }
   
   nodeScenes.value.push(newScene)
   
-  // Update Canvas_Status with the new scenes
+  // Update Canvas_Status with the new scene
   updateNodeScenesInStatus()
 }
 
@@ -382,7 +648,10 @@ const deleteScene = (sceneId) => {
   // Renumber remaining scenes
   nodeScenes.value.forEach((scene, index) => {
     scene.id = index + 1
-    scene.name = `Scene ${index + 1}`
+    // Keep existing name or use default
+    if (!scene.name || scene.name.startsWith('Scene ')) {
+      scene.name = `Scene ${index + 1}`
+    }
   })
   
   // Update Canvas_Status
@@ -392,11 +661,34 @@ const deleteScene = (sceneId) => {
 const selectScene = (scene) => {
   selectedScene.value = { ...scene }
   viewMode.value = 'sceneDetails'
+  sceneImages.value = [] // Clear images when selecting a new scene
+  
+  // Set scene settings from the selected scene
+  sceneSettings.value.backgroundColor = selectedScene.value.backgroundColor || '#000000'
+  
+  updateSceneContentDisplay()
+  updateBackgroundColor()
+  // Clear images canvas
+  if (imagesCtx && imagesCanvasRef.value) {
+    imagesCtx.clearRect(0, 0, imagesCanvasRef.value.width, imagesCanvasRef.value.height)
+  }
+  // Draw graph when scene is selected
+  drawGraph()
 }
 
 const goBackToScenes = () => {
+  // Save current scene details before going back
+  if (selectedScene.value) {
+    updateSceneDetails()
+  }
+  
   viewMode.value = 'scenes'
   selectedScene.value = null
+  sceneImages.value = []
+  // Clear images canvas
+  if (imagesCtx && imagesCanvasRef.value) {
+    imagesCtx.clearRect(0, 0, imagesCanvasRef.value.width, imagesCanvasRef.value.height)
+  }
 }
 
 const updateSceneDetails = () => {
@@ -405,7 +697,12 @@ const updateSceneDetails = () => {
   // Update the scene in nodeScenes
   const index = nodeScenes.value.findIndex(scene => scene.id === selectedScene.value.id)
   if (index !== -1) {
-    nodeScenes.value[index] = { ...selectedScene.value }
+    // Update the scene with current values
+    nodeScenes.value[index] = { 
+      ...selectedScene.value,
+      // Ensure background color is stored
+      backgroundColor: sceneSettings.value.backgroundColor
+    }
     updateNodeScenesInStatus()
   }
 }
@@ -417,12 +714,30 @@ const updateNodeScenesInStatus = () => {
   const nodeStatusIndex = Canvas_Status.value.findIndex(s => s.index === popupNode.value.id)
   
   if (nodeStatusIndex !== -1) {
-    // Update existing node
-    Canvas_Status.value[nodeStatusIndex].scenes = [...nodeScenes.value]
+    // Update existing node with scene details
+    Canvas_Status.value[nodeStatusIndex].scenes = nodeScenes.value.map(scene => ({
+      id: scene.id,
+      name: scene.name,
+      backgroundColor: scene.backgroundColor || '#000000' // Default black
+    }))
   } else {
-    // This shouldn't happen normally, but just in case
-    console.warn("Node not found in Canvas_Status")
+    // Create new node entry with scenes
+    Canvas_Status.value.push({ 
+      index: popupNode.value.id, 
+      x: popupNode.value.x, 
+      y: popupNode.value.y, 
+      node_type: "General", 
+      Next: null,
+      scenes: nodeScenes.value.map(scene => ({
+        id: scene.id,
+        name: scene.name,
+        backgroundColor: scene.backgroundColor || '#000000' // Default black
+      }))
+    })
   }
+  
+  // Log the updated Canvas_Status for debugging
+  console.log('Canvas_Status updated:', JSON.stringify(Canvas_Status.value, null, 2))
 }
 
 /* ================= UTILS ================= */
@@ -823,25 +1138,57 @@ watch(showPopup, (newVal) => {
           </div>
           <div class="popup-body">
             <!-- Main content area (75%) - Now with graph -->
-            <div class="popup-content" @mousemove="onGraphMouseMove" @mouseleave="onGraphMouseLeave">
+            <div 
+              class="popup-content" 
+              @mousemove="onGraphMouseMove"
+              @mousedown="onGraphMouseDown"
+              @mouseup="onGraphMouseUp"
+            >
+              <!-- Graph Canvas (bottom layer) - Only shown when scene is selected -->
               <canvas 
                 ref="graphCanvasRef" 
                 class="graph-canvas"
+                :style="{ display: selectedScene ? 'block' : 'none' }"
               ></canvas>
               
-              <!-- Graph Coordinates Popup -->
+              <!-- Background Color Overlay (middle layer) - Only shown when scene is selected -->
               <div 
-                v-if="showGraphCoords" 
-                class="graph-coords-popup"
-                :style="{
-                  left: graphCoordsPopupPos.x + 'px',
-                  top: graphCoordsPopupPos.y + 'px'
+                class="background-color-overlay"
+                :style="{ 
+                  backgroundColor: sceneSettings.backgroundColor,
+                  display: selectedScene ? 'block' : 'none'
                 }"
-              >
-                <div class="coords-text">
-                  ({{ graphCoords.x }}, {{ graphCoords.y }})
+              ></div>
+              
+              <!-- Images Canvas (top layer) - Only shown when scene is selected -->
+              <canvas 
+                ref="imagesCanvasRef" 
+                class="images-canvas"
+                :style="{ display: selectedScene ? 'block' : 'none' }"
+              ></canvas>
+              
+              <!-- Welcome message when no scene is selected -->
+              <div v-if="!selectedScene" class="welcome-message">
+                <div class="welcome-icon">🎬</div>
+                <h2 class="welcome-title">Welcome to Scene Editor</h2>
+                <p class="welcome-text">
+                  To start editing, either:<br>
+                  1. Click on an existing scene from the list<br>
+                  2. Or click "Add Scene" to create a new one
+                </p>
+                <div class="welcome-hint">
+                  Double-click on a scene in the list to open it
                 </div>
               </div>
+              
+              <!-- Hidden file input for image upload -->
+              <input
+                type="file"
+                ref="imageInputRef"
+                accept="image/*"
+                style="display: none"
+                @change="handleImageUpload"
+              />
             </div>
             
             <!-- Scene panel (25%) - Fixed height with scroll -->
@@ -899,6 +1246,21 @@ watch(showPopup, (newVal) => {
                     />
                   </div>
                   
+                  <!-- Background Set Input (moved between Scene Name and Scene Content) -->
+                  <div class="detail-section">
+                    <label class="detail-label">Background Set:</label>
+                    <div class="color-picker-container">
+                      <input 
+                        type="color" 
+                        v-model="sceneSettings.backgroundColor"
+                        @change="updateBackgroundColor"
+                        class="color-input"
+                      />
+                      <div class="color-preview" :style="{ backgroundColor: sceneSettings.backgroundColor }"></div>
+                      <span class="color-value">{{ sceneSettings.backgroundColor }}</span>
+                    </div>
+                  </div>
+                  
                   <!-- Scene Content Box -->
                   <div class="scene-content-box">
                     <div class="scene-content-header">
@@ -920,8 +1282,8 @@ watch(showPopup, (newVal) => {
                       </div>
                     </div>
                     <div class="scene-content-body">
-                      <!-- Content will go here when items are added -->
-                      <div class="empty-content">
+                      <!-- Content will be dynamically updated with images -->
+                      <div v-if="sceneImages.length === 0" class="empty-content">
                         No content added yet. Click "+ Add" to add content.
                       </div>
                     </div>
@@ -1054,6 +1416,9 @@ watch(showPopup, (newVal) => {
   border-radius: 8px;
   position: relative;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .graph-canvas {
@@ -1063,28 +1428,77 @@ watch(showPopup, (newVal) => {
   width: 100%;
   height: 100%;
   cursor: crosshair;
+  z-index: 1; /* Graph is at the bottom layer */
 }
 
-/* Graph Coordinates Popup */
-.graph-coords-popup {
-  position: fixed;
-  background: rgba(0, 0, 0, 0.8);
-  border: 1px solid #00ff88;
-  border-radius: 6px;
-  padding: 8px 12px;
-  color: #00ff88;
-  font-family: monospace;
-  font-size: 14px;
-  font-weight: bold;
-  pointer-events: none;
-  z-index: 102;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-  min-width: 80px;
+/* Background Color Overlay - Middle layer */
+.background-color-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2; /* Middle layer between graph and images */
+  pointer-events: none; /* Allows clicking through to the graph/images */
+  mix-blend-mode: normal;
+}
+
+/* Images Canvas - Top layer */
+.images-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  cursor: move;
+  z-index: 3; /* Images are on the top layer */
+}
+
+/* Welcome Message Styles */
+.welcome-message {
   text-align: center;
+  padding: 40px;
+  max-width: 500px;
+  z-index: 4;
 }
 
-.coords-text {
-  white-space: nowrap;
+.welcome-icon {
+  font-size: 64px;
+  margin-bottom: 24px;
+  animation: bounce 2s infinite;
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.welcome-title {
+  color: #e2e8f0;
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin-bottom: 16px;
+  background: linear-gradient(90deg, #00ff88, #3b82f6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.welcome-text {
+  color: #cbd5e1;
+  font-size: 1.1rem;
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+
+.welcome-hint {
+  color: #00ff88;
+  font-size: 0.9rem;
+  font-style: italic;
+  padding: 12px 20px;
+  background: rgba(0, 255, 136, 0.1);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 255, 136, 0.3);
 }
 
 /* Scene Panel Styles - FIXED HEIGHT with scroll */
@@ -1252,6 +1666,48 @@ watch(showPopup, (newVal) => {
   border-color: #00ff88;
 }
 
+/* Color Picker Styles */
+.color-picker-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.color-input {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.color-input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.color-input::-webkit-color-swatch {
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+}
+
+.color-preview {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+.color-value {
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  font-family: monospace;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 8px 12px;
+  border-radius: 6px;
+  flex: 1;
+}
+
 /* Scene Content Box Styles */
 .scene-content-box {
   background: rgba(255, 255, 255, 0.05);
@@ -1320,9 +1776,8 @@ watch(showPopup, (newVal) => {
 .scene-content-body {
   padding: 16px;
   min-height: 200px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  max-height: 300px;
+  overflow-y: auto;
 }
 
 .empty-content {
@@ -1330,6 +1785,7 @@ watch(showPopup, (newVal) => {
   font-size: 0.85rem;
   font-style: italic;
   text-align: center;
+  padding: 40px 0;
 }
 
 /* Cancel button - Now at bottom right corner */
@@ -1351,6 +1807,16 @@ watch(showPopup, (newVal) => {
 
 .popup-cancel:hover {
   background: #ff0000;
+}
+
+/* Dropdown overlay */
+.dropdown-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 99;
 }
 
 /* Popup transition */
