@@ -92,6 +92,9 @@ const isDraggingImage = ref(false)
 const draggingImageIndex = ref(null)
 const dragImageOffset = ref({ x: 0, y: 0 })
 
+// NEW: Active Component State for Component Editor
+const activeComponent = ref(null)
+
 /* ================= SCENE SETTINGS ================= */
 const sceneSettings = ref({
   backgroundColor: '#000000' // Default black (opaque)
@@ -101,7 +104,7 @@ const sceneSettings = ref({
 const nodeScenes = ref([]) // Scenes for the currently opened node
 const hoveredSceneId = ref(null) // Track which scene is hovered
 const selectedScene = ref(null) // Track which scene is selected for editing
-const viewMode = ref('scenes') // 'scenes' or 'sceneDetails'
+const viewMode = ref('scenes') // 'scenes', 'sceneDetails', or 'componentEditor'
 
 /* ================= ADD DROPDOWN ================= */
 const showAddDropdown = ref(false)
@@ -169,7 +172,8 @@ const handleImageUpload = (event) => {
       displayX: 0, // For scene panel display
       displayY: 0,
       displayWidth: 120, // Fixed width for panel display
-      displayHeight: 90 // Fixed height for panel display
+      displayHeight: 90, // Fixed height for panel display
+      aspectRatio: 1 // Will be updated on load
     }
     
     // Load the image to get its dimensions
@@ -179,11 +183,18 @@ const handleImageUpload = (event) => {
       const maxSize = 200
       let width = img.width
       let height = img.height
+      const ratio = width / height
       
+      newImage.aspectRatio = ratio
+
       if (width > maxSize || height > maxSize) {
-        const ratio = Math.min(maxSize / width, maxSize / height)
-        width = width * ratio
-        height = height * ratio
+        if (width > height) {
+            width = maxSize
+            height = maxSize / ratio
+        } else {
+            height = maxSize
+            width = maxSize * ratio
+        }
       }
       
       newImage.width = width
@@ -267,6 +278,11 @@ const updateSceneContentDisplay = () => {
           })
           imageContainer.classList.add('selected')
         })
+
+        // NEW: Double Click to open Component Editor
+        imageContainer.addEventListener('dblclick', () => {
+            openComponentEditor(image)
+        })
         
         contentBody.appendChild(imageContainer)
       })
@@ -283,6 +299,10 @@ const confirmRemoveImage = (index) => {
 }
 
 const removeImage = (index) => {
+  // If we are deleting the currently active component, go back
+  if (activeComponent.value && sceneImages.value[index].id === activeComponent.value.id) {
+    closeComponentEditor()
+  }
   sceneImages.value.splice(index, 1)
   updateSceneContentDisplay()
   drawImages()
@@ -303,6 +323,8 @@ const onGraphMouseDown = (event) => {
     const coords = screenToGraphCoords(mouseX, mouseY)
     
     // Check if clicking on an image
+    // Iterate backwards to select top-most image first
+    let clickedImage = null
     for (let i = sceneImages.value.length - 1; i >= 0; i--) {
       const image = sceneImages.value[i]
       const imageLeft = image.x - (image.width / 2)
@@ -313,6 +335,8 @@ const onGraphMouseDown = (event) => {
       if (coords.x >= imageLeft && coords.x <= imageRight &&
           coords.y <= imageTop && coords.y >= imageBottom) {
         
+        clickedImage = image
+        
         isDraggingImage.value = true
         draggingImageIndex.value = i
         dragImageOffset.value = {
@@ -321,10 +345,20 @@ const onGraphMouseDown = (event) => {
         }
         
         // Bring image to front (move to end of array)
-        const [draggedImage] = sceneImages.value.splice(i, 1)
-        sceneImages.value.push(draggedImage)
-        draggingImageIndex.value = sceneImages.value.length - 1
+        // NOTE: In standard behavior, clicking brings to front. 
+        // With explicit layering controls, we might strictly want to keep order unless explicitly moved.
+        // However, dragging logic often benefits from being "on top". 
+        // For this specific request "position on top/bottom", we will NOT automatically reorder array on click
+        // so that the manual Z-index controls dictate the order.
         
+        // We just select it index-wise
+        draggingImageIndex.value = i;
+        
+        // Update Active Component if in editor mode
+        if (viewMode.value === 'componentEditor') {
+            activeComponent.value = clickedImage
+        }
+
         drawImages()
         
         // Update the selected state in the panel
@@ -362,8 +396,6 @@ const onGraphMouseMove = (event) => {
       image.x = coords.x - dragImageOffset.value.x
       image.y = coords.y - dragImageOffset.value.y
       
-      // Update scene content display with new position
-      updateSceneContentDisplay()
       drawImages()
     }
   }
@@ -375,6 +407,74 @@ const onGraphMouseUp = () => {
     draggingImageIndex.value = null
     drawImages()
   }
+}
+
+/* ================= COMPONENT EDITOR LOGIC ================= */
+const openComponentEditor = (image) => {
+    activeComponent.value = image
+    viewMode.value = 'componentEditor'
+    drawImages() // Trigger redraw to show focus ring
+}
+
+const closeComponentEditor = () => {
+    activeComponent.value = null
+    viewMode.value = 'sceneDetails'
+    drawImages() // Remove focus ring
+    updateSceneContentDisplay() // Refresh list just in case
+}
+
+const updateActiveComponentPosition = () => {
+    if (activeComponent.value) {
+        // Force redraw when sliders/inputs change
+        drawImages()
+    }
+}
+
+const updateActiveComponentSize = () => {
+    if (activeComponent.value) {
+        // Maintain aspect ratio
+        const ratio = activeComponent.value.aspectRatio || (activeComponent.value.naturalWidth / activeComponent.value.naturalHeight) || 1
+        activeComponent.value.height = activeComponent.value.width / ratio
+        drawImages()
+    }
+}
+
+// Z-INDEX / LAYERING LOGIC
+const changeLayer = (action) => {
+    if (!activeComponent.value) return
+    
+    // Find current index of the active component
+    const idx = sceneImages.value.findIndex(img => img.id === activeComponent.value.id)
+    if (idx === -1) return
+
+    const arr = sceneImages.value
+    
+    if (action === 'up') {
+        // Swap with next element (move towards end of array = draw later = on top)
+        if (idx < arr.length - 1) {
+            const temp = arr[idx]
+            arr[idx] = arr[idx + 1]
+            arr[idx + 1] = temp
+        }
+    } else if (action === 'down') {
+        // Swap with prev element (move towards start of array = draw earlier = behind)
+        if (idx > 0) {
+            const temp = arr[idx]
+            arr[idx] = arr[idx - 1]
+            arr[idx - 1] = temp
+        }
+    } else if (action === 'top') {
+        // Move to end
+        const [item] = arr.splice(idx, 1)
+        arr.push(item)
+    } else if (action === 'bottom') {
+        // Move to start
+        const [item] = arr.splice(idx, 1)
+        arr.unshift(item)
+    }
+    
+    drawImages()
+    updateSceneContentDisplay() // List order reflects z-index
 }
 
 /* ================= NODE & POPUP RENAME LOGIC ================= */
@@ -397,12 +497,12 @@ const openPopup = node => {
   selectedScene.value = null
   sceneImages.value = [] // Clear images when opening new node
   sceneSettings.value.backgroundColor = '#000000' // Reset to black
+  activeComponent.value = null // Reset active component
   
   // Load Node Data from Canvas_Status
   const nodeStatus = Canvas_Status.value.find(s => s.index === node.id)
   if (nodeStatus) {
     // 1. Set the Name for editing
-    // If Node_name doesn't exist (legacy), default it
     if (!nodeStatus.Node_name) {
       nodeStatus.Node_name = `Node ${node.id}`
     }
@@ -440,6 +540,8 @@ const closePopup = () => {
   popupAnimation.value = false
   isDraggingImage.value = false
   draggingImageIndex.value = null
+  activeComponent.value = null
+  
   setTimeout(() => {
     showPopup.value = false
     popupNode.value = null
@@ -695,8 +797,12 @@ const drawImages = () => {
         image.height
       )
       
-      // Draw selection border if dragging
-      if (isDraggingImage.value && draggingImageIndex.value === index) {
+      // Draw selection/focus border
+      // Condition: Image is being dragged OR Image is the active focused component
+      const isActive = (activeComponent.value && activeComponent.value.id === image.id)
+      const isDragging = (isDraggingImage.value && draggingImageIndex.value === index)
+
+      if (isActive || isDragging) {
         ctx.strokeStyle = '#00ff88'
         ctx.lineWidth = 2
         ctx.setLineDash([5, 3])
@@ -1463,6 +1569,102 @@ watch(showPopup, (newVal) => {
                   </div>
                 </div>
               </div>
+
+              <div v-else-if="viewMode === 'componentEditor' && activeComponent" class="component-editor-view">
+                <div class="scene-panel-header">
+                  <button class="back-btn" @click="closeComponentEditor" title="Back to Scene Details">
+                    ←
+                  </button>
+                  <span class="scene-panel-title">Component Editor</span>
+                </div>
+
+                <div class="scene-details-content">
+                    <div class="component-preview">
+                        <img :src="activeComponent.url" alt="Preview" />
+                    </div>
+
+                    <div class="detail-section">
+                        <label class="detail-label">Name:</label>
+                        <input 
+                            v-model="activeComponent.name" 
+                            class="detail-input"
+                            @change="updateSceneContentDisplay"
+                        />
+                    </div>
+
+                    <div class="detail-section">
+                        <label class="detail-label">Position X:</label>
+                        <div class="input-row">
+                            <input 
+                                type="range"
+                                v-model.number="activeComponent.x"
+                                :min="GRAPH_MIN_X"
+                                :max="GRAPH_MAX_X"
+                                class="range-input"
+                                @input="updateActiveComponentPosition"
+                            />
+                            <input 
+                                type="number"
+                                v-model.number="activeComponent.x"
+                                class="number-input"
+                                @input="updateActiveComponentPosition"
+                            />
+                        </div>
+                    </div>
+
+                    <div class="detail-section">
+                        <label class="detail-label">Position Y:</label>
+                        <div class="input-row">
+                            <input 
+                                type="range"
+                                v-model.number="activeComponent.y"
+                                :min="GRAPH_MIN_Y"
+                                :max="GRAPH_MAX_Y"
+                                class="range-input"
+                                @input="updateActiveComponentPosition"
+                            />
+                            <input 
+                                type="number"
+                                v-model.number="activeComponent.y"
+                                class="number-input"
+                                @input="updateActiveComponentPosition"
+                            />
+                        </div>
+                    </div>
+
+                    <div class="detail-section">
+                        <label class="detail-label">Width (px):</label>
+                        <div class="input-row">
+                            <input 
+                                type="range"
+                                v-model.number="activeComponent.width"
+                                min="10"
+                                max="800"
+                                class="range-input"
+                                @input="updateActiveComponentSize"
+                            />
+                            <input 
+                                type="number"
+                                v-model.number="activeComponent.width"
+                                class="number-input"
+                                @input="updateActiveComponentSize"
+                            />
+                        </div>
+                    </div>
+
+                    <div class="detail-section">
+                        <label class="detail-label">Layering:</label>
+                        <div class="layering-controls">
+                            <button class="layer-btn" @click="changeLayer('top')" title="Bring to Front">⇈</button>
+                            <button class="layer-btn" @click="changeLayer('up')" title="Bring Forward">↑</button>
+                            <button class="layer-btn" @click="changeLayer('down')" title="Send Backward">↓</button>
+                            <button class="layer-btn" @click="changeLayer('bottom')" title="Send to Back">⇊</button>
+                        </div>
+                    </div>
+
+                </div>
+              </div>
+
             </div>
           </div>
           <button class="popup-cancel" @click="closePopup">Cancel</button>
@@ -1886,6 +2088,101 @@ watch(showPopup, (newVal) => {
   .detail-input:focus {
     outline: none;
     border-color: #00ff88;
+  }
+
+  /* Range Slider Styles */
+  .range-input {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 2px;
+    outline: none;
+  }
+
+  .range-input::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: #00ff88;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: transform 0.1s;
+  }
+
+  .range-input::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+  }
+
+  /* Number Input Styles */
+  .number-input {
+    width: 60px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 4px 8px;
+    color: #e2e8f0;
+    font-size: 0.85rem;
+    text-align: center;
+  }
+
+  .number-input:focus {
+    outline: none;
+    border-color: #00ff88;
+  }
+
+  /* Input Row for Slider + Number */
+  .input-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  /* Layering Controls */
+  .layering-controls {
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+  }
+
+  .layer-btn {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 8px 0;
+    color: #e2e8f0;
+    cursor: pointer;
+    font-size: 1.1rem;
+    transition: all 0.2s;
+  }
+
+  .layer-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: #00ff88;
+    color: #00ff88;
+  }
+
+  /* Component Preview */
+  .component-preview {
+    width: 100%;
+    height: 150px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .component-preview img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
   }
 
   /* Color Picker Styles */
