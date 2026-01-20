@@ -48,7 +48,6 @@ let mouseWorld = { x: 0, y: 0 }
 const nodes = ref([])
 const selectedNodeId = ref(null)
 const Canvas_Status = ref([])
-// Holds the name currently being edited in the popup
 const editingNodeName = ref("") 
 
 let draggingNode = null
@@ -63,56 +62,122 @@ const ARROW_OFFSET = 14
 const ARROW_HIT_R = 10
 
 let hoveredArrow = null
-let connectingLine = null // { fromNode, fromX, fromY, toX, toY }
+let connectingLine = null 
 
 /* ================= POPUP ================= */
 const showPopup = ref(false)
 const popupNode = ref(null)
 const popupAnimation = ref(false)
+let animationFrameId = null // To handle the video render loop
+
+/* ================= PREVIEW MODE STATE ================= */
+const isPreviewMode = ref(false)
+const previewCanvasRef = ref(null)
+let previewCtx = null
+const currentPreviewSceneIndex = ref(0)
+const currentPreviewComponentIndex = ref(-1) // -1 means "start of scene, nothing shown yet"
+const previewAudioElement = ref(null)
 
 /* ================= GRAPH SETTINGS ================= */
 const graphCanvasRef = ref(null)
 let graphCtx
-// Separate canvas for images
 const imagesCanvasRef = ref(null)
 let imagesCtx
 
-// Graph settings
 const GRAPH_MIN_X = -1000
 const GRAPH_MAX_X = 1000
 const GRAPH_MIN_Y = -600
 const GRAPH_MAX_Y = 600
-const GRAPH_MAJOR_GRID = 100  // Major grid lines every 100 units
-const GRAPH_MINOR_GRID = 20   // Minor grid lines every 20 units
+const GRAPH_MAJOR_GRID = 100  
+const GRAPH_MINOR_GRID = 20   
 
-/* ================= IMAGE MANAGEMENT ================= */
-const sceneImages = ref([]) // Images for the current scene
-const imageInputRef = ref(null) // Reference to file input
-const isDraggingImage = ref(false)
-const draggingImageIndex = ref(null)
-const dragImageOffset = ref({ x: 0, y: 0 })
+/* ================= SCENE COMPONENTS MANAGEMENT ================= */
+const sceneComponents = ref([]) 
+const imageInputRef = ref(null) 
+const videoInputRef = ref(null) // NEW: Reference for video input
+const isDraggingComponent = ref(false)
+const draggingComponentIndex = ref(null)
+const dragComponentOffset = ref({ x: 0, y: 0 })
 
-// NEW: Active Component State for Component Editor
+// Drag and Drop List State
+let dragSourceIndex = null
+let isHandleActive = false
+
+// Active Component State for Component Editor
 const activeComponent = ref(null)
+// Text Selection State
+const textSelection = ref({ start: 0, end: 0, text: '' })
 
 /* ================= SCENE SETTINGS ================= */
 const sceneSettings = ref({
-  backgroundColor: '#000000' // Default black (opaque)
+  backgroundColor: '#000000' 
 })
 
+/* ================= AUDIO MANAGEMENT ================= */
+const sequenceAudio = ref(null)
+const audioInputRef = ref(null)
+
+const triggerAudioUpload = () => {
+  audioInputRef.value.click()
+}
+
+const handleAudioUpload = (event) => {
+  const file = event.target.files[0]
+  if (!file) return
+
+  // Store minimal details
+  sequenceAudio.value = {
+    name: file.name,
+    // In a real app, you might upload this and get a URL, or create an ObjectURL
+    url: URL.createObjectURL(file) 
+  }
+
+  // Update Status immediately
+  updateNodeAudioInStatus()
+  
+  // Reset input so same file can be selected again if needed
+  event.target.value = ''
+}
+
+const removeAudio = (e) => {
+  e.stopPropagation() // Prevent triggering upload
+  sequenceAudio.value = null
+  updateNodeAudioInStatus()
+}
+
+const updateNodeAudioInStatus = () => {
+    if (!popupNode.value) return
+    const nodeStatusIndex = Canvas_Status.value.findIndex(s => s.index === popupNode.value.id)
+    
+    if (nodeStatusIndex !== -1) {
+        Canvas_Status.value[nodeStatusIndex].audio = sequenceAudio.value
+    } else {
+         // Create if doesn't exist (edge case, usually created on drag)
+        Canvas_Status.value.push({ 
+            index: popupNode.value.id, 
+            x: popupNode.value.x, 
+            y: popupNode.value.y, 
+            node_type: "General", 
+            Next: null, 
+            scenes: [],
+            audio: sequenceAudio.value,
+            Node_name: `Node ${popupNode.value.id}` 
+        })
+    }
+}
+
 /* ================= SCENES MANAGEMENT ================= */
-const nodeScenes = ref([]) // Scenes for the currently opened node
-const hoveredSceneId = ref(null) // Track which scene is hovered
-const selectedScene = ref(null) // Track which scene is selected for editing
-const viewMode = ref('scenes') // 'scenes', 'sceneDetails', or 'componentEditor'
+const nodeScenes = ref([]) 
+const hoveredSceneId = ref(null) 
+const selectedScene = ref(null) 
+const viewMode = ref('scenes') 
 
 /* ================= ADD DROPDOWN ================= */
 const showAddDropdown = ref(false)
 const addDropdownOptions = [
-  { id: 'image', label: 'Image' },
-  { id: 'audio', label: 'Audio' },
-  { id: 'text', label: 'Text' },
-  { id: 'video', label: 'Video' }
+  { id: 'image', label: 'Image', colorClass: 'hover-green' },
+  { id: 'text', label: 'Text', colorClass: 'hover-blue' },
+  { id: 'video', label: 'Video', colorClass: 'hover-yellow' }
 ]
 
 const toggleAddDropdown = () => {
@@ -120,16 +185,13 @@ const toggleAddDropdown = () => {
 }
 
 const selectAddOption = (option) => {
-  console.log(`Selected: ${option.label}`)
-  
   if (option.id === 'image') {
-    // Trigger image file input
     imageInputRef.value.click()
-  } else {
-    // For other options, just log for now
-    console.log(`Handling ${option.label} option`)
+  } else if (option.id === 'text') {
+    addTextComponent()
+  } else if (option.id === 'video') {
+    videoInputRef.value.click() // Trigger video input
   }
-  
   showAddDropdown.value = false
 }
 
@@ -137,49 +199,190 @@ const closeAddDropdown = () => {
   showAddDropdown.value = false
 }
 
+/* ================= TEXT HANDLING ================= */
+const addTextComponent = () => {
+  const newText = {
+    id: Date.now(),
+    type: 'text',
+    name: 'New Text',
+    content: 'Hello World',
+    x: 0,
+    y: 0,
+    width: 200, 
+    height: 50,
+    fontSize: 24,
+    fontFamily: 'sans-serif',
+    fontWeight: 'normal',
+    fontStyle: 'normal',
+    textDecoration: 'none',
+    textDecorationColor: '#ffffff',
+    textDecorationStyle: 'solid',
+    color: '#ffffff',
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
+    borderWidth: 0,
+    borderRadius: 0,
+    rotation: 0,
+    url: '', 
+  }
+  
+  sceneComponents.value.push(newText)
+  updateSceneContentDisplay()
+  drawComponents()
+}
+
+// Text Selection Handler
+const handleTextSelect = (e) => {
+    const input = e.target
+    if (input.selectionStart !== input.selectionEnd) {
+        textSelection.value = {
+            start: input.selectionStart,
+            end: input.selectionEnd,
+            text: input.value.substring(input.selectionStart, input.selectionEnd)
+        }
+    } else {
+        textSelection.value = { start: 0, end: 0, text: '' }
+    }
+}
+
+const applyTextStyle = (styleType, value) => {
+    if (!activeComponent.value || activeComponent.value.type !== 'text') return
+    
+    if (styleType === 'bold') {
+        activeComponent.value.fontWeight = value
+    } else if (styleType === 'italic') {
+        activeComponent.value.fontStyle = (activeComponent.value.fontStyle === 'italic' ? 'normal' : 'italic')
+    } else if (styleType === 'underline') {
+         if (activeComponent.value.textDecoration === 'underline') {
+             activeComponent.value.textDecoration = 'none'
+         } else {
+             activeComponent.value.textDecoration = 'underline'
+         }
+         if (value && activeComponent.value.textDecoration === 'underline') {
+             activeComponent.value.textDecorationColor = value
+         }
+    } else if (styleType === 'strikethrough') {
+         if (activeComponent.value.textDecoration === 'line-through') {
+             activeComponent.value.textDecoration = 'none'
+         } else {
+             activeComponent.value.textDecoration = 'line-through'
+         }
+         if (value && activeComponent.value.textDecoration === 'line-through') {
+             activeComponent.value.textDecorationColor = value
+         }
+    }
+}
+
+/* ================= VIDEO HANDLING FUNCTIONS ================= */
+const handleVideoUpload = (event) => {
+  const file = event.target.files[0]
+  if (!file) return
+
+  if (!file.type.startsWith('video/')) {
+    alert('Please select a video file')
+    return
+  }
+
+  const reader = new FileReader()
+
+  reader.onload = (e) => {
+    const videoUrl = e.target.result
+    
+    // Create DOM video element
+    const vid = document.createElement('video')
+    vid.src = videoUrl
+    vid.loop = true // Default loop
+    vid.muted = false // Default unmuted
+    vid.autoplay = true
+    vid.playsInline = true
+    
+    // We need to wait for metadata to get dimensions
+    vid.onloadedmetadata = () => {
+      const maxSize = 300
+      let width = vid.videoWidth
+      let height = vid.videoHeight
+      const ratio = width / height
+
+      if (width > maxSize || height > maxSize) {
+        if (width > height) {
+            width = maxSize
+            height = maxSize / ratio
+        } else {
+            height = maxSize
+            width = maxSize * ratio
+        }
+      }
+
+      const newVideo = {
+        id: Date.now(),
+        type: 'video',
+        name: file.name.replace(/\.[^/.]+$/, ""),
+        url: videoUrl,
+        x: 0,
+        y: 0,
+        width: width,
+        height: height,
+        rotation: 0,
+        aspectRatio: ratio,
+        videoElement: vid, // Store the DOM element to draw it
+        isLoop: true,
+        isMuted: false
+      }
+
+      vid.play() // Start playing
+      sceneComponents.value.push(newVideo)
+      updateSceneContentDisplay()
+    }
+  }
+
+  reader.readAsDataURL(file)
+  event.target.value = ''
+}
+
+const updateVideoProperties = () => {
+    if (!activeComponent.value || activeComponent.value.type !== 'video') return
+    
+    const vid = activeComponent.value.videoElement
+    if (vid) {
+        vid.loop = activeComponent.value.isLoop
+        vid.muted = activeComponent.value.isMuted
+    }
+}
+
 /* ================= IMAGE HANDLING FUNCTIONS ================= */
 const handleImageUpload = (event) => {
   const file = event.target.files[0]
   if (!file) return
   
-  // Check if file is an image
   if (!file.type.startsWith('image/')) {
     alert('Please select an image file')
     return
   }
   
-  // Create a unique filename
-  const timestamp = Date.now()
-  const fileName = `scene_${selectedScene.value.id}_image_${timestamp}_${file.name}`
-  
-  // Create a FileReader to read the image
   const reader = new FileReader()
   
   reader.onload = (e) => {
     const imageUrl = e.target.result
     
-    // Create image object - position at origin (0,0)
+    // Preload Image Object here
+    const img = new Image()
+    
     const newImage = {
-      id: Date.now(), // Unique ID for the image
-      name: file.name.replace(/\.[^/.]+$/, ""), // Remove file extension for display name
+      id: Date.now(), 
+      type: 'image',
+      name: file.name.replace(/\.[^/.]+$/, ""), 
       url: imageUrl,
-      x: 0, // Position at origin
+      x: 0, 
       y: 0,
-      width: 100, // Default width
-      height: 100, // Default height (will be adjusted based on aspect ratio)
-      originalFile: file, // Keep reference to original file
-      // New properties for display
-      displayX: 0, // For scene panel display
-      displayY: 0,
-      displayWidth: 120, // Fixed width for panel display
-      displayHeight: 90, // Fixed height for panel display
-      aspectRatio: 1 // Will be updated on load
+      width: 100, 
+      height: 100, 
+      rotation: 0,
+      originalFile: file, 
+      aspectRatio: 1,
+      imgObject: img // Store the loaded image object
     }
     
-    // Load the image to get its dimensions
-    const img = new Image()
     img.onload = () => {
-      // Adjust size while maintaining aspect ratio
       const maxSize = 200
       let width = img.width
       let height = img.height
@@ -202,110 +405,178 @@ const handleImageUpload = (event) => {
       newImage.naturalWidth = img.width
       newImage.naturalHeight = img.height
       
-      // Add to scene images
-      sceneImages.value.push(newImage)
+      sceneComponents.value.push(newImage)
       
-      // Update scene content display
       updateSceneContentDisplay()
-      
-      // Redraw images on the images canvas
-      drawImages()
-      
-      console.log(`Image uploaded: ${file.name}, Size: ${width}x${height}, Position: (${newImage.x}, ${newImage.y})`)
+      drawComponents() // Force a draw once loaded
     }
     img.src = imageUrl
   }
   
   reader.readAsDataURL(file)
-  
-  // Reset file input
   event.target.value = ''
 }
 
-// MODIFIED: This function now renders a single-line layout
+/* ================= LIST REORDERING & DOM DISPLAY ================= */
 const updateSceneContentDisplay = () => {
-  const contentBody = document.querySelector('.scene-content-body')
-  if (contentBody) {
-    if (sceneImages.value.length > 0) {
-      contentBody.innerHTML = ''
-      
-      sceneImages.value.forEach((image, index) => {
-        // Main Container (The Row)
-        const imageContainer = document.createElement('div')
-        imageContainer.className = 'image-container'
-        imageContainer.dataset.index = index
+  // Use nextTick to ensure DOM is updated if view just changed
+  nextTick(() => {
+    const contentBody = document.querySelector('.scene-content-body')
+    if (contentBody) {
+        if (sceneComponents.value.length > 0) {
+        contentBody.innerHTML = ''
         
-        // 1. Drag Handle Icon (Leftmost)
-        const dragHandle = document.createElement('div')
-        dragHandle.className = 'image-drag-handle'
-        dragHandle.innerHTML = '⋮⋮' 
-        dragHandle.title = 'Drag to reorder'
-        
-        // 2. Image Icon/Thumbnail
-        const imgIconDiv = document.createElement('div')
-        imgIconDiv.className = 'image-list-icon'
-        const imgElement = document.createElement('img')
-        imgElement.src = image.url
-        imgElement.alt = image.name
-        imgIconDiv.appendChild(imgElement)
-        
-        // 3. Image Name (Middle - Flexible width)
-        const imageName = document.createElement('div')
-        imageName.className = 'image-name'
-        imageName.title = image.name // Tooltip shows full name
-        imageName.textContent = image.name
-        
-        // 4. Delete Button (Rightmost)
-        const removeBtn = document.createElement('button')
-        removeBtn.className = 'remove-image-btn'
-        removeBtn.title = 'Delete image'
-        removeBtn.innerHTML = '🗑️'
-        removeBtn.addEventListener('click', (e) => {
-          e.stopPropagation()
-          confirmRemoveImage(index)
-        })
-        
-        // Assemble Row: Handle -> Icon -> Name -> Delete
-        imageContainer.appendChild(imgIconDiv) // Icon
-        imageContainer.appendChild(imageName)  // Name
-        imageContainer.appendChild(removeBtn)  // Delete
-        imageContainer.appendChild(dragHandle) // Drag Handle (Placed at end as per "icon... name... trash... dots")
-        
-        // Click to select logic
-        imageContainer.addEventListener('click', () => {
-          document.querySelectorAll('.image-container').forEach(container => {
-            container.classList.remove('selected')
-          })
-          imageContainer.classList.add('selected')
-        })
+        sceneComponents.value.forEach((comp, index) => {
+            const imageContainer = document.createElement('div')
+            imageContainer.className = 'image-container'
+            imageContainer.dataset.index = index
+            imageContainer.draggable = true // Enable dragging
+            
+            const indicator = document.createElement('div')
+            indicator.className = 'type-indicator'
+            if (comp.type === 'image') indicator.classList.add('bg-green')
+            else if (comp.type === 'text') indicator.classList.add('bg-blue')
+            else if (comp.type === 'video') indicator.classList.add('bg-yellow')
+            
+            const dragHandle = document.createElement('div')
+            dragHandle.className = 'image-drag-handle'
+            dragHandle.innerHTML = '⋮⋮⋮⋮' 
+            dragHandle.title = 'Drag to reorder'
+            
+            // Listen to Handle Interaction
+            dragHandle.addEventListener('mousedown', () => { isHandleActive = true })
+            dragHandle.addEventListener('mouseup', () => { isHandleActive = false })
+            
+            const imgIconDiv = document.createElement('div')
+            imgIconDiv.className = 'image-list-icon'
+            
+            if (comp.type === 'image') {
+            const imgElement = document.createElement('img')
+            imgElement.src = comp.url
+            imgElement.alt = comp.name
+            imgIconDiv.appendChild(imgElement)
+            } else if (comp.type === 'text') {
+            imgIconDiv.textContent = 'T'
+            imgIconDiv.style.color = '#fff'
+            imgIconDiv.style.fontSize = '20px'
+            imgIconDiv.style.fontWeight = 'bold'
+            } else if (comp.type === 'video') {
+            imgIconDiv.textContent = '▶' 
+            imgIconDiv.style.color = '#fff'
+            imgIconDiv.style.fontSize = '18px'
+            imgIconDiv.style.display = 'flex'
+            imgIconDiv.style.alignItems = 'center'
+            imgIconDiv.style.justifyContent = 'center'
+            }
+            
+            const imageName = document.createElement('div')
+            imageName.className = 'image-name'
+            imageName.title = comp.name 
+            imageName.textContent = comp.name
+            
+            const removeBtn = document.createElement('button')
+            removeBtn.className = 'remove-image-btn'
+            removeBtn.title = 'Delete'
+            removeBtn.innerHTML = '🗑️'
+            removeBtn.addEventListener('click', (e) => {
+            e.stopPropagation()
+            confirmRemoveComponent(index)
+            })
+            
+            imageContainer.appendChild(indicator)
+            imageContainer.appendChild(imgIconDiv) 
+            imageContainer.appendChild(imageName)  
+            imageContainer.appendChild(removeBtn)  
+            imageContainer.appendChild(dragHandle) 
+            
+            imageContainer.addEventListener('click', () => {
+            document.querySelectorAll('.image-container').forEach(container => {
+                container.classList.remove('selected')
+            })
+            imageContainer.classList.add('selected')
+            })
 
-        // NEW: Double Click to open Component Editor
-        imageContainer.addEventListener('dblclick', () => {
-            openComponentEditor(image)
+            imageContainer.addEventListener('dblclick', () => {
+                openComponentEditor(comp)
+            })
+
+            /* --- DRAG AND DROP EVENTS --- */
+            imageContainer.addEventListener('dragstart', (e) => {
+                // Only allow drag if handle was grabbed
+                if (!isHandleActive) {
+                    e.preventDefault()
+                    return
+                }
+                dragSourceIndex = index
+                e.dataTransfer.effectAllowed = 'move'
+                imageContainer.classList.add('dragging')
+            })
+
+            imageContainer.addEventListener('dragover', (e) => {
+                e.preventDefault() // Necessary to allow dropping
+                e.dataTransfer.dropEffect = 'move'
+                imageContainer.classList.add('over')
+                return false
+            })
+
+            imageContainer.addEventListener('dragenter', () => {
+                imageContainer.classList.add('over')
+            })
+
+            imageContainer.addEventListener('dragleave', () => {
+                imageContainer.classList.remove('over')
+            })
+
+            imageContainer.addEventListener('drop', (e) => {
+                e.stopPropagation()
+                e.preventDefault()
+                
+                // Swap Logic
+                if (dragSourceIndex !== null && dragSourceIndex !== index) {
+                    // Remove from old index
+                    const item = sceneComponents.value.splice(dragSourceIndex, 1)[0]
+                    // Insert at new index
+                    sceneComponents.value.splice(index, 0, item)
+                    
+                    // Refresh View
+                    updateSceneContentDisplay()
+                    drawComponents()
+                }
+                return false
+            })
+
+            imageContainer.addEventListener('dragend', () => {
+                isHandleActive = false
+                dragSourceIndex = null
+                // Cleanup visuals
+                document.querySelectorAll('.image-container').forEach(el => {
+                    el.classList.remove('over')
+                    el.classList.remove('dragging')
+                })
+            })
+            
+            contentBody.appendChild(imageContainer)
         })
-        
-        contentBody.appendChild(imageContainer)
-      })
-    } else {
-      contentBody.innerHTML = '<div class="empty-content">No content added yet. Click "+ Add" to add content.</div>'
+        } else {
+        contentBody.innerHTML = '<div class="empty-content">No content added yet. Click "+ Add" to add content.</div>'
+        }
     }
+  })
+}
+
+const confirmRemoveComponent = (index) => {
+  if (confirm('Are you sure you want to delete this component?')) {
+    removeComponent(index)
   }
 }
 
-const confirmRemoveImage = (index) => {
-  if (confirm('Are you sure you want to delete this image?')) {
-    removeImage(index)
-  }
-}
-
-const removeImage = (index) => {
-  // If we are deleting the currently active component, go back
-  if (activeComponent.value && sceneImages.value[index].id === activeComponent.value.id) {
+const removeComponent = (index) => {
+  if (activeComponent.value && sceneComponents.value[index].id === activeComponent.value.id) {
     closeComponentEditor()
   }
-  sceneImages.value.splice(index, 1)
+  sceneComponents.value.splice(index, 1)
   updateSceneContentDisplay()
-  drawImages()
+  drawComponents()
 }
 
 const onGraphMouseDown = (event) => {
@@ -315,58 +586,49 @@ const onGraphMouseDown = (event) => {
   const mouseX = event.clientX
   const mouseY = event.clientY
   
-  // Check if mouse is inside images canvas
   if (mouseX >= rect.left && mouseX <= rect.right && 
       mouseY >= rect.top && mouseY <= rect.bottom) {
     
-    // Convert to graph coordinates
     const coords = screenToGraphCoords(mouseX, mouseY)
     
-    // Check if clicking on an image
-    // Iterate backwards to select top-most image first
-    let clickedImage = null
-    for (let i = sceneImages.value.length - 1; i >= 0; i--) {
-      const image = sceneImages.value[i]
-      const imageLeft = image.x - (image.width / 2)
-      const imageRight = image.x + (image.width / 2)
-      const imageTop = image.y + (image.height / 2) // Note: Y is inverted
-      const imageBottom = image.y - (image.height / 2)
+    // Check backwards for top-most (Visual layering check)
+    let clickedComp = null
+    // sceneComponents is ordered Bottom -> Top for drawing.
+    // Iterating backwards finds the "Top" element first.
+    for (let i = sceneComponents.value.length - 1; i >= 0; i--) {
+      const comp = sceneComponents.value[i]
+      const halfW = comp.width / 2
+      const halfH = comp.height / 2
+      const left = comp.x - halfW
+      const right = comp.x + halfW
+      const top = comp.y + halfH 
+      const bottom = comp.y - halfH
       
-      if (coords.x >= imageLeft && coords.x <= imageRight &&
-          coords.y <= imageTop && coords.y >= imageBottom) {
+      if (coords.x >= left && coords.x <= right &&
+          coords.y <= top && coords.y >= bottom) {
         
-        clickedImage = image
+        clickedComp = comp
         
-        isDraggingImage.value = true
-        draggingImageIndex.value = i
-        dragImageOffset.value = {
-          x: coords.x - image.x,
-          y: coords.y - image.y
+        isDraggingComponent.value = true
+        draggingComponentIndex.value = i
+        dragComponentOffset.value = {
+          x: coords.x - comp.x,
+          y: coords.y - comp.y
         }
         
-        // Bring image to front (move to end of array)
-        // NOTE: In standard behavior, clicking brings to front. 
-        // With explicit layering controls, we might strictly want to keep order unless explicitly moved.
-        // However, dragging logic often benefits from being "on top". 
-        // For this specific request "position on top/bottom", we will NOT automatically reorder array on click
-        // so that the manual Z-index controls dictate the order.
-        
-        // We just select it index-wise
-        draggingImageIndex.value = i;
-        
-        // Update Active Component if in editor mode
         if (viewMode.value === 'componentEditor') {
-            activeComponent.value = clickedImage
+            activeComponent.value = clickedComp
+            // Reset text selection if switching
+            textSelection.value = { start: 0, end: 0, text: '' }
         }
 
-        drawImages()
+        drawComponents()
         
-        // Update the selected state in the panel
         setTimeout(() => {
           const containers = document.querySelectorAll('.image-container')
           containers.forEach((container, idx) => {
             container.classList.remove('selected')
-            if (idx === draggingImageIndex.value) {
+            if (idx === draggingComponentIndex.value) {
               container.classList.add('selected')
             }
           })
@@ -385,108 +647,105 @@ const onGraphMouseMove = (event) => {
   const mouseX = event.clientX
   const mouseY = event.clientY
   
-  // Check if mouse is inside images canvas
   if (mouseX >= rect.left && mouseX <= rect.right && 
       mouseY >= rect.top && mouseY <= rect.bottom) {
     
-    // Handle image dragging
-    if (isDraggingImage.value && draggingImageIndex.value !== null) {
+    if (isDraggingComponent.value && draggingComponentIndex.value !== null) {
       const coords = screenToGraphCoords(mouseX, mouseY)
-      const image = sceneImages.value[draggingImageIndex.value]
-      image.x = coords.x - dragImageOffset.value.x
-      image.y = coords.y - dragImageOffset.value.y
+      const comp = sceneComponents.value[draggingComponentIndex.value]
+      comp.x = coords.x - dragComponentOffset.value.x
+      comp.y = coords.y - dragComponentOffset.value.y
       
-      drawImages()
+      // We rely on the animation loop for continuous drawing, 
+      // but drawing here makes drag smoother if loop is slow
+      drawComponents()
     }
   }
 }
 
 const onGraphMouseUp = () => {
-  if (isDraggingImage.value) {
-    isDraggingImage.value = false
-    draggingImageIndex.value = null
-    drawImages()
+  if (isDraggingComponent.value) {
+    isDraggingComponent.value = false
+    draggingComponentIndex.value = null
+    drawComponents()
   }
 }
 
 /* ================= COMPONENT EDITOR LOGIC ================= */
-const openComponentEditor = (image) => {
-    activeComponent.value = image
+const openComponentEditor = (comp) => {
+    activeComponent.value = comp
     viewMode.value = 'componentEditor'
-    drawImages() // Trigger redraw to show focus ring
+    textSelection.value = { start: 0, end: 0, text: '' } // Reset
+    drawComponents() 
 }
 
 const closeComponentEditor = () => {
     activeComponent.value = null
     viewMode.value = 'sceneDetails'
-    drawImages() // Remove focus ring
-    updateSceneContentDisplay() // Refresh list just in case
+    drawComponents() 
+    
+    // Use nextTick to ensure the view has switched and the DOM element .scene-content-body exists
+    nextTick(() => {
+        updateSceneContentDisplay() 
+    })
 }
 
 const updateActiveComponentPosition = () => {
     if (activeComponent.value) {
-        // Force redraw when sliders/inputs change
-        drawImages()
+        drawComponents()
     }
 }
 
 const updateActiveComponentSize = () => {
     if (activeComponent.value) {
-        // Maintain aspect ratio
-        const ratio = activeComponent.value.aspectRatio || (activeComponent.value.naturalWidth / activeComponent.value.naturalHeight) || 1
-        activeComponent.value.height = activeComponent.value.width / ratio
-        drawImages()
+        if (activeComponent.value.type === 'image' || activeComponent.value.type === 'video') {
+             const ratio = activeComponent.value.aspectRatio || 1
+             activeComponent.value.height = activeComponent.value.width / ratio
+        }
+        drawComponents()
     }
 }
 
-// Z-INDEX / LAYERING LOGIC
 const changeLayer = (action) => {
     if (!activeComponent.value) return
     
-    // Find current index of the active component
-    const idx = sceneImages.value.findIndex(img => img.id === activeComponent.value.id)
+    const idx = sceneComponents.value.findIndex(c => c.id === activeComponent.value.id)
     if (idx === -1) return
 
-    const arr = sceneImages.value
+    const arr = sceneComponents.value
     
     if (action === 'up') {
-        // Swap with next element (move towards end of array = draw later = on top)
         if (idx < arr.length - 1) {
             const temp = arr[idx]
             arr[idx] = arr[idx + 1]
             arr[idx + 1] = temp
         }
     } else if (action === 'down') {
-        // Swap with prev element (move towards start of array = draw earlier = behind)
         if (idx > 0) {
             const temp = arr[idx]
             arr[idx] = arr[idx - 1]
             arr[idx - 1] = temp
         }
     } else if (action === 'top') {
-        // Move to end
         const [item] = arr.splice(idx, 1)
         arr.push(item)
     } else if (action === 'bottom') {
-        // Move to start
         const [item] = arr.splice(idx, 1)
         arr.unshift(item)
     }
     
-    drawImages()
-    updateSceneContentDisplay() // List order reflects z-index
+    drawComponents()
+    updateSceneContentDisplay() 
 }
 
 /* ================= NODE & POPUP RENAME LOGIC ================= */
 const updateNodeName = () => {
   if (!popupNode.value) return
   
-  // Find the node in Canvas_Status
   const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
   
   if (status) {
     status.Node_name = editingNodeName.value
-    // Redraw the main canvas to reflect the name change immediately
     draw()
   }
 }
@@ -495,20 +754,18 @@ const openPopup = node => {
   popupNode.value = node
   viewMode.value = 'scenes'
   selectedScene.value = null
-  sceneImages.value = [] // Clear images when opening new node
-  sceneSettings.value.backgroundColor = '#000000' // Reset to black
-  activeComponent.value = null // Reset active component
+  sceneComponents.value = [] 
+  sceneSettings.value.backgroundColor = '#000000' 
+  activeComponent.value = null 
   
-  // Load Node Data from Canvas_Status
   const nodeStatus = Canvas_Status.value.find(s => s.index === node.id)
   if (nodeStatus) {
-    // 1. Set the Name for editing
     if (!nodeStatus.Node_name) {
       nodeStatus.Node_name = `Node ${node.id}`
     }
     editingNodeName.value = nodeStatus.Node_name
 
-    // 2. Load Scenes
+    // Load Scenes
     if (nodeStatus.scenes) {
       nodeScenes.value = [...nodeStatus.scenes]
       nodeScenes.value.forEach((scene, index) => {
@@ -518,10 +775,18 @@ const openPopup = node => {
     } else {
       nodeScenes.value = []
     }
+
+    // Load Audio
+    if (nodeStatus.audio) {
+        sequenceAudio.value = nodeStatus.audio
+    } else {
+        sequenceAudio.value = null
+    }
+
   } else {
-    // Safety fallback
     editingNodeName.value = `Node ${node.id}`
     nodeScenes.value = []
+    sequenceAudio.value = null
   }
   
   showPopup.value = true
@@ -531,16 +796,35 @@ const openPopup = node => {
   })
 }
 
+// Animation Loop for Video Rendering
+const startRenderLoop = () => {
+  const loop = () => {
+    if (showPopup.value) {
+        drawComponents()
+    }
+    // Also render preview if active
+    if (isPreviewMode.value) {
+        drawPreview()
+    }
+    animationFrameId = requestAnimationFrame(loop)
+  }
+  loop()
+}
+
 const closePopup = () => {
-  // Save current scene details before closing
   if (selectedScene.value) {
     updateSceneDetails()
   }
   
   popupAnimation.value = false
-  isDraggingImage.value = false
-  draggingImageIndex.value = null
+  isDraggingComponent.value = false
+  draggingComponentIndex.value = null
   activeComponent.value = null
+  
+  if (animationFrameId) {
+    cancelAnimationFrame(animationFrameId)
+    animationFrameId = null
+  }
   
   setTimeout(() => {
     showPopup.value = false
@@ -548,15 +832,15 @@ const closePopup = () => {
     nodeScenes.value = []
     hoveredSceneId.value = null
     selectedScene.value = null
-    sceneImages.value = []
+    sceneComponents.value = []
     viewMode.value = 'scenes'
-    editingNodeName.value = "" // Reset name buffer
-  }, 300) // duration of animation
+    editingNodeName.value = "" 
+    sequenceAudio.value = null // Clear audio selection on close
+  }, 300) 
 }
 
 /* ================= BACKGROUND COLOR FUNCTIONS ================= */
 const updateBackgroundColor = () => {
-  // Update the background color overlay
   const overlay = document.querySelector('.background-color-overlay')
   if (overlay) {
     overlay.style.backgroundColor = sceneSettings.value.backgroundColor
@@ -570,9 +854,10 @@ const initializeGraphCanvas = () => {
   graphCtx = graphCanvasRef.value.getContext('2d')
   imagesCtx = imagesCanvasRef.value.getContext('2d')
   resizeGraphCanvas()
-  // Only draw graph if a scene is selected
+  
   if (selectedScene.value) {
     drawGraph()
+    startRenderLoop() // Start rendering loop for animations/videos
   }
 }
 
@@ -586,10 +871,10 @@ const resizeGraphCanvas = () => {
     graphCanvasRef.value.height = rect.height
     imagesCanvasRef.value.width = rect.width
     imagesCanvasRef.value.height = rect.height
-    // Only draw if a scene is selected
+    
     if (selectedScene.value) {
       drawGraph()
-      drawImages()
+      drawComponents()
     }
   }
 }
@@ -600,20 +885,15 @@ const screenToGraphCoords = (screenX, screenY) => {
   const canvas = graphCanvasRef.value
   const rect = canvas.getBoundingClientRect()
   
-  // Convert screen coordinates to canvas coordinates
   const canvasX = screenX - rect.left
   const canvasY = screenY - rect.top
   
-  // Convert canvas coordinates to graph coordinates
-  // Origin is at canvas center
   const centerX = canvas.width / 2
   const centerY = canvas.height / 2
   
-  // Calculate graph coordinates
-  // Each unit in graph corresponds to 2 pixels for better visibility
   const pixelsPerUnit = 2
   const graphX = (canvasX - centerX) / pixelsPerUnit
-  const graphY = (centerY - canvasY) / pixelsPerUnit  // Invert Y axis (graph Y increases upward)
+  const graphY = (centerY - canvasY) / pixelsPerUnit  
   
   return {
     x: Math.round(graphX),
@@ -630,7 +910,7 @@ const graphToScreenCoords = (graphX, graphY) => {
   
   const pixelsPerUnit = 2
   const screenX = centerX + (graphX * pixelsPerUnit)
-  const screenY = centerY - (graphY * pixelsPerUnit) // Invert Y axis
+  const screenY = centerY - (graphY * pixelsPerUnit) 
   
   return { x: screenX, y: screenY }
 }
@@ -641,52 +921,42 @@ const drawGraph = () => {
   const canvas = graphCanvasRef.value
   const ctx = graphCtx
   
-  // Clear canvas
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   
-  // Get center coordinates
   const centerX = canvas.width / 2
   const centerY = canvas.height / 2
   
-  // Draw minor grid lines
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'
   ctx.lineWidth = 1
-  drawGridLines(ctx, canvas, centerX, centerY, GRAPH_MINOR_GRID, 10) // 10 pixels per minor unit
+  drawGridLines(ctx, canvas, centerX, centerY, GRAPH_MINOR_GRID, 10) 
   
-  // Draw major grid lines
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)'
   ctx.lineWidth = 1.5
-  drawGridLines(ctx, canvas, centerX, centerY, GRAPH_MAJOR_GRID, 10) // 10 pixels per minor unit
+  drawGridLines(ctx, canvas, centerX, centerY, GRAPH_MAJOR_GRID, 10) 
   
-  // Draw X and Y axes
   ctx.strokeStyle = '#00ff88'
   ctx.lineWidth = 2
   
-  // Y axis
   ctx.beginPath()
   ctx.moveTo(centerX, 0)
   ctx.lineTo(centerX, canvas.height)
   ctx.stroke()
   
-  // X axis
   ctx.beginPath()
   ctx.moveTo(0, centerY)
   ctx.lineTo(canvas.width, centerY)
   ctx.stroke()
   
-  // Draw axis labels
   ctx.fillStyle = '#00ff88'
   ctx.font = '12px sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   
-  // X axis labels
   for (let x = -GRAPH_MAX_X; x <= GRAPH_MAX_X; x += GRAPH_MAJOR_GRID) {
-    if (x === 0) continue // Skip 0 to avoid overlapping with Y axis
-    const screenX = centerX + (x * 2) // 2 pixels per unit
+    if (x === 0) continue 
+    const screenX = centerX + (x * 2) 
     if (screenX >= 20 && screenX <= canvas.width - 20) {
       ctx.fillText(x.toString(), screenX, centerY + 15)
-      // Draw tick mark
       ctx.beginPath()
       ctx.moveTo(screenX, centerY - 5)
       ctx.lineTo(screenX, centerY + 5)
@@ -694,13 +964,11 @@ const drawGraph = () => {
     }
   }
   
-  // Y axis labels
   for (let y = -GRAPH_MAX_Y; y <= GRAPH_MAX_Y; y += GRAPH_MAJOR_GRID) {
-    if (y === 0) continue // Skip 0 to avoid overlapping with X axis
-    const screenY = centerY - (y * 2) // Invert Y and 2 pixels per unit
+    if (y === 0) continue 
+    const screenY = centerY - (y * 2) 
     if (screenY >= 20 && screenY <= canvas.height - 20) {
       ctx.fillText(y.toString(), centerX - 15, screenY)
-      // Draw tick mark
       ctx.beginPath()
       ctx.moveTo(centerX - 5, screenY)
       ctx.lineTo(centerX + 5, screenY)
@@ -708,10 +976,8 @@ const drawGraph = () => {
     }
   }
   
-  // Draw origin label (0,0)
   ctx.fillText('0', centerX - 12, centerY + 12)
   
-  // Draw graph boundaries
   ctx.strokeStyle = 'rgba(255, 0, 0, 0.3)'
   ctx.lineWidth = 1
   ctx.setLineDash([5, 5])
@@ -723,16 +989,13 @@ const drawGraph = () => {
   )
   ctx.setLineDash([])
   
-  // Draw boundary labels
   ctx.fillStyle = 'rgba(255, 0, 0, 0.7)'
   ctx.font = '10px sans-serif'
   
-  // Top-left corner (min X, max Y)
   const minXScreen = centerX + (GRAPH_MIN_X * 2)
   const maxYScreen = centerY - (GRAPH_MAX_Y * 2)
   ctx.fillText(`(${GRAPH_MIN_X}, ${GRAPH_MAX_Y})`, minXScreen + 40, maxYScreen + 15)
   
-  // Bottom-right corner (max X, min Y)
   const maxXScreen = centerX + (GRAPH_MAX_X * 2)
   const minYScreen = centerY - (GRAPH_MIN_Y * 2)
   ctx.fillText(`(${GRAPH_MAX_X}, ${GRAPH_MIN_Y})`, maxXScreen - 40, minYScreen - 10)
@@ -741,7 +1004,6 @@ const drawGraph = () => {
 const drawGridLines = (ctx, canvas, centerX, centerY, gridSize, pixelsPerUnit) => {
   const unitSize = gridSize * pixelsPerUnit
   
-  // Vertical grid lines
   for (let x = centerX; x < canvas.width; x += unitSize) {
     ctx.beginPath()
     ctx.moveTo(x, 0)
@@ -755,7 +1017,6 @@ const drawGridLines = (ctx, canvas, centerX, centerY, gridSize, pixelsPerUnit) =
     ctx.stroke()
   }
   
-  // Horizontal grid lines
   for (let y = centerY; y < canvas.height; y += unitSize) {
     ctx.beginPath()
     ctx.moveTo(0, y)
@@ -770,53 +1031,152 @@ const drawGridLines = (ctx, canvas, centerX, centerY, gridSize, pixelsPerUnit) =
   }
 }
 
-const drawImages = () => {
+const drawComponents = () => {
   if (!imagesCtx || !imagesCanvasRef.value || !selectedScene.value) return
   
   const ctx = imagesCtx
   const canvas = imagesCanvasRef.value
   
-  // Clear canvas
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   
-  if (sceneImages.value.length === 0) return
+  if (sceneComponents.value.length === 0) return
   
-  sceneImages.value.forEach((image, index) => {
-    // Convert graph coordinates to screen coordinates
-    const screenPos = graphToScreenCoords(image.x, image.y)
+  // Draw all components in array order (Array order dictates Z-index)
+  sceneComponents.value.forEach((comp, index) => {
+    const screenPos = graphToScreenCoords(comp.x, comp.y)
     
-    // Create image element
-    const img = new Image()
-    img.onload = () => {
-      // Draw image
-      ctx.drawImage(
-        img,
-        screenPos.x - (image.width / 2),
-        screenPos.y - (image.height / 2),
-        image.width,
-        image.height
-      )
-      
-      // Draw selection/focus border
-      // Condition: Image is being dragged OR Image is the active focused component
-      const isActive = (activeComponent.value && activeComponent.value.id === image.id)
-      const isDragging = (isDraggingImage.value && draggingImageIndex.value === index)
+    ctx.save()
+    // Handle Rotation
+    ctx.translate(screenPos.x, screenPos.y)
+    ctx.rotate( (comp.rotation || 0) * Math.PI / 180)
+    ctx.translate(-screenPos.x, -screenPos.y)
+
+    renderComponent(ctx, comp, screenPos) // Refactored drawing logic into helper
+
+    ctx.restore() // Restore rotation context
+    drawFocusRing(ctx, comp, index, screenPos)
+  })
+}
+
+// Helper: Renders a single component on a canvas context
+const renderComponent = (ctx, comp, screenPos) => {
+    if (comp.type === 'image') {
+        if (comp.imgObject) {
+            ctx.drawImage(
+                comp.imgObject,
+                screenPos.x - (comp.width / 2),
+                screenPos.y - (comp.height / 2),
+                comp.width,
+                comp.height
+            )
+        } else {
+            const img = new Image()
+            img.src = comp.url
+            comp.imgObject = img
+        }
+    } else if (comp.type === 'video') {
+         if (comp.videoElement) {
+             ctx.drawImage(
+                comp.videoElement,
+                screenPos.x - (comp.width / 2),
+                screenPos.y - (comp.height / 2),
+                comp.width,
+                comp.height
+             )
+         }
+    } else if (comp.type === 'text') {
+        ctx.translate(screenPos.x, screenPos.y) 
+        
+        if (comp.backgroundColor && comp.backgroundColor !== 'transparent') {
+            ctx.fillStyle = comp.backgroundColor
+            if (comp.borderRadius > 0) {
+               drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius)
+               ctx.fill()
+            } else {
+               ctx.fillRect(-(comp.width/2), -(comp.height/2), comp.width, comp.height)
+            }
+        }
+        
+        if (comp.borderWidth > 0 && comp.borderColor !== 'transparent') {
+            ctx.strokeStyle = comp.borderColor
+            ctx.lineWidth = comp.borderWidth
+            if (comp.borderRadius > 0) {
+               drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius)
+               ctx.stroke()
+            } else {
+               ctx.strokeRect(-(comp.width/2), -(comp.height/2), comp.width, comp.height)
+            }
+        }
+        
+        const fontWeight = comp.fontWeight || 'normal'
+        const fontStyle = comp.fontStyle || 'normal'
+        const fontFamily = comp.fontFamily || 'sans-serif'
+        ctx.font = `${fontStyle} ${fontWeight} ${comp.fontSize}px ${fontFamily}`
+        ctx.fillStyle = comp.color
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        
+        ctx.fillText(comp.content, 0, 0)
+        
+        if (comp.textDecoration === 'underline') {
+             const metrics = ctx.measureText(comp.content)
+             const width = metrics.width
+             ctx.beginPath()
+             ctx.strokeStyle = comp.textDecorationColor || comp.color
+             ctx.lineWidth = comp.fontSize / 15
+             ctx.moveTo(-width/2, comp.fontSize/2)
+             ctx.lineTo(width/2, comp.fontSize/2)
+             ctx.stroke()
+        } else if (comp.textDecoration === 'line-through') {
+             const metrics = ctx.measureText(comp.content)
+             const width = metrics.width
+             ctx.beginPath()
+             ctx.strokeStyle = comp.textDecorationColor || comp.color
+             ctx.lineWidth = comp.fontSize / 15
+             ctx.moveTo(-width/2, 0)
+             ctx.lineTo(width/2, 0)
+             ctx.stroke()
+        }
+        
+        ctx.translate(-screenPos.x, -screenPos.y)
+    }
+}
+
+// Helper to draw rounded rect path
+const drawRoundedRectPaths = (ctx, x, y, w, h, r) => {
+    ctx.beginPath()
+    ctx.moveTo(x + r, y)
+    ctx.lineTo(x + w - r, y)
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+    ctx.lineTo(x + w, y + h - r)
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+    ctx.lineTo(x + r, y + h)
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+    ctx.lineTo(x, y + r)
+    ctx.quadraticCurveTo(x, y, x + r, y)
+    ctx.closePath()
+}
+
+const drawFocusRing = (ctx, comp, index, screenPos) => {
+      const isActive = (activeComponent.value && activeComponent.value.id === comp.id)
+      const isDragging = (isDraggingComponent.value && draggingComponentIndex.value === index)
 
       if (isActive || isDragging) {
+        ctx.save()
+        ctx.translate(screenPos.x, screenPos.y)
+        ctx.rotate( (comp.rotation || 0) * Math.PI / 180)
+        
         ctx.strokeStyle = '#00ff88'
         ctx.lineWidth = 2
         ctx.setLineDash([5, 3])
         ctx.strokeRect(
-          screenPos.x - (image.width / 2) - 2,
-          screenPos.y - (image.height / 2) - 2,
-          image.width + 4,
-          image.height + 4
+          -(comp.width / 2) - 4,
+          -(comp.height / 2) - 4,
+          comp.width + 8,
+          comp.height + 8
         )
-        ctx.setLineDash([])
+        ctx.restore()
       }
-    }
-    img.src = image.url
-  })
 }
 
 /* ================= SCENE FUNCTIONS ================= */
@@ -827,99 +1187,79 @@ const addScene = () => {
   const newScene = {
     id: newSceneId,
     name: `Scene ${newSceneId}`,
-    backgroundColor: '#000000' // Default black background
+    backgroundColor: '#000000' 
   }
   
   nodeScenes.value.push(newScene)
-  
-  // Update Canvas_Status with the new scene
   updateNodeScenesInStatus()
-  
-  // Automatically select the newly created scene
   selectScene(newScene)
 }
 
 const deleteScene = (sceneId) => {
-  // If we're deleting the currently selected scene, go back to scenes view
   if (selectedScene.value && selectedScene.value.id === sceneId) {
     viewMode.value = 'scenes'
     selectedScene.value = null
   }
   
-  // Remove the scene from nodeScenes
   nodeScenes.value = nodeScenes.value.filter(scene => scene.id !== sceneId)
   
-  // Renumber remaining scenes
   nodeScenes.value.forEach((scene, index) => {
     scene.id = index + 1
-    // Keep existing name or use default
     if (!scene.name || scene.name.startsWith('Scene ')) {
       scene.name = `Scene ${index + 1}`
     }
   })
   
-  // Update Canvas_Status
   updateNodeScenesInStatus()
 }
 
 const selectScene = (scene) => {
   selectedScene.value = { ...scene }
   viewMode.value = 'sceneDetails'
-  sceneImages.value = [] // Clear images when selecting a new scene
+  sceneComponents.value = [] 
   
-  // Set scene settings from the selected scene
   sceneSettings.value.backgroundColor = selectedScene.value.backgroundColor || '#000000'
   
   updateSceneContentDisplay()
   updateBackgroundColor()
-  // Clear images canvas
   if (imagesCtx && imagesCanvasRef.value) {
     imagesCtx.clearRect(0, 0, imagesCanvasRef.value.width, imagesCanvasRef.value.height)
   }
-  // Draw graph when scene is selected
   drawGraph()
+  startRenderLoop() // Ensure render loop starts if we select scene directly
 }
 
 const saveSceneAndGoBack = () => {
   if (!selectedScene.value) return
-  
-  // Update scene details before saving
   updateSceneDetails()
   
-  // Save the images for this scene (you might want to add this to your updateSceneDetails function)
   const sceneIndex = nodeScenes.value.findIndex(scene => scene.id === selectedScene.value.id)
   if (sceneIndex !== -1) {
-    // Store the images in the scene object
-    nodeScenes.value[sceneIndex].images = [...sceneImages.value]
+    nodeScenes.value[sceneIndex].components = [...sceneComponents.value]
   }
   
-  // Go back to scenes list
   viewMode.value = 'scenes'
   selectedScene.value = null
-  sceneImages.value = []
+  sceneComponents.value = []
   
-  // Clear images canvas
   if (imagesCtx && imagesCanvasRef.value) {
     imagesCtx.clearRect(0, 0, imagesCanvasRef.value.width, imagesCanvasRef.value.height)
   }
 }
 
 const goBackToScenes = () => {
-  // Save current scene details before going back
   if (selectedScene.value) {
     updateSceneDetails()
     
-    // Also save images if you want to persist them
     const sceneIndex = nodeScenes.value.findIndex(scene => scene.id === selectedScene.value.id)
     if (sceneIndex !== -1) {
-      nodeScenes.value[sceneIndex].images = [...sceneImages.value]
+      nodeScenes.value[sceneIndex].components = [...sceneComponents.value]
     }
   }
   
   viewMode.value = 'scenes'
   selectedScene.value = null
-  sceneImages.value = []
-  // Clear images canvas
+  sceneComponents.value = []
   if (imagesCtx && imagesCanvasRef.value) {
     imagesCtx.clearRect(0, 0, imagesCanvasRef.value.width, imagesCanvasRef.value.height)
   }
@@ -928,13 +1268,10 @@ const goBackToScenes = () => {
 const updateSceneDetails = () => {
   if (!selectedScene.value) return
   
-  // Update the scene in nodeScenes
   const index = nodeScenes.value.findIndex(scene => scene.id === selectedScene.value.id)
   if (index !== -1) {
-    // Update the scene with current values
     nodeScenes.value[index] = { 
       ...selectedScene.value,
-      // Ensure background color is stored
       backgroundColor: sceneSettings.value.backgroundColor
     }
     updateNodeScenesInStatus()
@@ -944,18 +1281,17 @@ const updateSceneDetails = () => {
 const updateNodeScenesInStatus = () => {
   if (!popupNode.value) return
   
-  // Find the node in Canvas_Status
   const nodeStatusIndex = Canvas_Status.value.findIndex(s => s.index === popupNode.value.id)
   
   if (nodeStatusIndex !== -1) {
-    // Update existing node with scene details
     Canvas_Status.value[nodeStatusIndex].scenes = nodeScenes.value.map(scene => ({
       id: scene.id,
       name: scene.name,
-      backgroundColor: scene.backgroundColor || '#000000' // Default black
+      backgroundColor: scene.backgroundColor || '#000000',
+      components: scene.components || [] 
     }))
+    Canvas_Status.value[nodeStatusIndex].audio = sequenceAudio.value
   } else {
-    // Create new node entry with scenes
     Canvas_Status.value.push({ 
       index: popupNode.value.id, 
       x: popupNode.value.x, 
@@ -965,14 +1301,13 @@ const updateNodeScenesInStatus = () => {
       scenes: nodeScenes.value.map(scene => ({
         id: scene.id,
         name: scene.name,
-        backgroundColor: scene.backgroundColor || '#000000' // Default black
+        backgroundColor: scene.backgroundColor || '#000000',
+        components: scene.components || [] 
       })),
-      Node_name: `Node ${popupNode.value.id}` // Ensure name exists
+      audio: sequenceAudio.value,
+      Node_name: `Node ${popupNode.value.id}` 
     })
   }
-  
-  // Log the updated Canvas_Status for debugging
-  console.log('Canvas_Status updated:', JSON.stringify(Canvas_Status.value, null, 2))
 }
 
 /* ================= UTILS ================= */
@@ -999,11 +1334,9 @@ const drawRoundedRect = (x, y, w, h, r) => {
 }
 
 const arrowHit = (n, wx, wy) => {
-  // Input Arrow (Left) stays in the Header (centered vertically in header)
   const leftAy = n.y - NODE_H / 2 + HEADER_H / 2
   const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
 
-  // Output Arrow (Right) moves to the Node Body (centered vertically in body)
   const rightAy = n.y + HEADER_H / 2
   const rightAx = n.x + NODE_W / 2 - ARROW_OFFSET
 
@@ -1128,24 +1461,17 @@ const drawNodes = () => {
     drawRoundedRect(x - NODE_W / 2, y - NODE_H / 2, NODE_W, NODE_H, NODE_RADIUS)
     ctx.stroke()
 
-    // --- DRAW NODE NAME ---
     ctx.fillStyle = "#fff"
     ctx.font = "13px sans-serif"
     ctx.textAlign = "center"
     ctx.textBaseline = "middle"
     
-    // Find the node status to get the name
     const status = Canvas_Status.value.find(s => s.index === n.id)
-    // Use stored name or default
     let label = status ? (status.Node_name || `Node ${n.id}`) : "General Node"
     
-    // TRUNCATION LOGIC
-    // NODE_W is 180. We leave some padding (e.g. 30px total for left/right arrows)
     const maxWidth = NODE_W - 30 
     
-    // Check if text exceeds max width
     if (ctx.measureText(label).width > maxWidth) {
-      // Loop to shorten string until it fits with "..."
       while (ctx.measureText(label + "...").width > maxWidth && label.length > 0) {
         label = label.slice(0, -1)
       }
@@ -1154,12 +1480,9 @@ const drawNodes = () => {
     
     ctx.fillText(label, x, y - NODE_H / 2 + HEADER_H / 2)
 
-    // Left Arrow - In Header
     const leftAy = y - NODE_H / 2 + HEADER_H / 2
     const leftAx = x - NODE_W / 2 + ARROW_OFFSET
 
-    // Right Arrow - In Body (Below Header)
-    // Centered in the remaining space: (Node Height - Header Height)
     const rightAy = y + HEADER_H / 2
     const rightAx = x + NODE_W / 2 - ARROW_OFFSET
 
@@ -1190,11 +1513,9 @@ const drawConnections = () => {
       const toNode = nodes.value.find(nd => nd.id === n.Next)
       if (!fromNode || !toNode) continue
       
-      // Start from RIGHT arrow (Body) of FromNode
       const fromX = fromNode.x + NODE_W / 2 - ARROW_OFFSET
       const fromY = fromNode.y + HEADER_H / 2
 
-      // End at LEFT arrow (Header) of ToNode
       const toX = toNode.x - NODE_W / 2 + ARROW_OFFSET
       const toY = toNode.y - NODE_H / 2 + HEADER_H / 2
 
@@ -1316,7 +1637,6 @@ const onMouseUp = e => {
     const x = mouseWorld.x
     const y = mouseWorld.y
     nodes.value.push({ id, x, y })
-    // Initialize with empty scenes array and default Name
     Canvas_Status.value.push({ 
       index: id, 
       x, 
@@ -1324,7 +1644,8 @@ const onMouseUp = e => {
       node_type: "General", 
       Next: null, 
       scenes: [],
-      Node_name: `Node ${id}` // <--- ADDED DEFAULT NAME
+      audio: null,
+      Node_name: `Node ${id}` 
     })
     selectedNodeId.value = id
     menuDragging = false
@@ -1369,13 +1690,148 @@ onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', handleFullscreenChange)
 })
 
-// Watch for popup show to initialize graph
 watch(showPopup, (newVal) => {
   if (newVal) {
     nextTick(() => {
       setTimeout(initializeGraphCanvas, 100)
     })
   }
+})
+
+/* ================= PREVIEW LOGIC ================= */
+const startPreview = () => {
+    if (nodeScenes.value.length === 0) {
+        alert("No scenes to preview!")
+        return
+    }
+
+    isPreviewMode.value = true
+    currentPreviewSceneIndex.value = 0
+    currentPreviewComponentIndex.value = -1 // Start with blank slate, first click shows first component
+    
+    // Play Audio
+    if (sequenceAudio.value && sequenceAudio.value.url) {
+        previewAudioElement.value = new Audio(sequenceAudio.value.url)
+        previewAudioElement.value.play().catch(e => console.log("Autoplay prevented:", e))
+    }
+
+    // Go full screen
+    const previewContainer = document.querySelector('.preview-overlay')
+    if (previewContainer && previewContainer.requestFullscreen) {
+        previewContainer.requestFullscreen()
+    }
+    
+    nextTick(() => {
+        initializePreviewCanvas()
+    })
+}
+
+const initializePreviewCanvas = () => {
+    if (!previewCanvasRef.value) return
+    previewCtx = previewCanvasRef.value.getContext('2d')
+    resizePreviewCanvas()
+    drawPreview()
+}
+
+const resizePreviewCanvas = () => {
+    if (previewCanvasRef.value) {
+        previewCanvasRef.value.width = window.innerWidth
+        previewCanvasRef.value.height = window.innerHeight
+    }
+}
+
+const advancePreview = () => {
+    // Current Scene
+    const scene = nodeScenes.value[currentPreviewSceneIndex.value]
+    const components = scene.components || []
+
+    // Logic: Increment component index. If we pass the last component, go to next scene.
+    if (currentPreviewComponentIndex.value < components.length - 1) {
+        currentPreviewComponentIndex.value++
+    } else {
+        // Go to next scene
+        if (currentPreviewSceneIndex.value < nodeScenes.value.length - 1) {
+            currentPreviewSceneIndex.value++
+            currentPreviewComponentIndex.value = 0 // Show first component of new scene immediately? Or -1 to wait for click?
+            // "once you reach the final component of a scene... another click means go to the next scene... and render whatever's inside there"
+            // Let's interpret "render whatever's inside there" as loading the scene background, maybe start with 1st component or 0.
+            // Let's reset to -1 so first click in new scene shows first component, OR if you want seamless flow:
+            // "loading whatever the first component of the screen is" -> reset to 0
+             currentPreviewComponentIndex.value = 0
+        } else {
+            // End of sequence
+            exitPreview()
+            return
+        }
+    }
+    drawPreview()
+}
+
+const drawPreview = () => {
+    if (!previewCtx || !previewCanvasRef.value) return
+    
+    const canvas = previewCanvasRef.value
+    const ctx = previewCtx
+    
+    // Clear
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    
+    // 1. Draw Background of current scene
+    const scene = nodeScenes.value[currentPreviewSceneIndex.value]
+    if (scene) {
+        ctx.fillStyle = scene.backgroundColor || '#000000'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        
+        // 2. Draw Components up to current index
+        const components = scene.components || []
+        
+        // We need to map the graph coordinates (centered at 0,0) to screen coordinates
+        // The preview should probably center the graph view like the editor
+        const centerX = canvas.width / 2
+        const centerY = canvas.height / 2
+        
+        // Draw all components up to the current index
+        for (let i = 0; i <= currentPreviewComponentIndex.value; i++) {
+            const comp = components[i]
+            if (!comp) continue;
+
+            // Map coords (pixelsPerUnit = 2 as per editor)
+            const pixelsPerUnit = 2
+            const screenX = centerX + (comp.x * pixelsPerUnit)
+            const screenY = centerY - (comp.y * pixelsPerUnit)
+            
+            const screenPos = { x: screenX, y: screenY }
+            
+            ctx.save()
+            ctx.translate(screenPos.x, screenPos.y)
+            ctx.rotate((comp.rotation || 0) * Math.PI / 180)
+            ctx.translate(-screenPos.x, -screenPos.y)
+            
+            // Re-use the render logic
+            renderComponent(ctx, comp, screenPos)
+            
+            ctx.restore()
+        }
+    }
+}
+
+const exitPreview = () => {
+    if (document.fullscreenElement) {
+        document.exitFullscreen()
+    }
+    if (previewAudioElement.value) {
+        previewAudioElement.value.pause()
+        previewAudioElement.value = null
+    }
+    isPreviewMode.value = false
+}
+
+// Hook resize for preview too
+window.addEventListener('resize', () => {
+    if (isPreviewMode.value) {
+        resizePreviewCanvas()
+        drawPreview()
+    }
 })
 
 </script>
@@ -1420,7 +1876,16 @@ watch(showPopup, (newVal) => {
                 placeholder="Rename Node"
               />
             </div>
+            
+            <div class="audio-status-display">
+                <span class="audio-label">Sequence Audio:</span>
+                <span class="audio-value">{{ sequenceAudio?.name || 'Not selected yet' }}</span>
             </div>
+
+            <button class="preview-btn" @click="startPreview">
+                ▶ Preview
+             </button>
+          </div>
 
           <div class="popup-body">
             <div 
@@ -1469,39 +1934,77 @@ watch(showPopup, (newVal) => {
                 style="display: none"
                 @change="handleImageUpload"
               />
+              
+              <input 
+                type="file"
+                ref="videoInputRef"
+                accept="video/*"
+                style="display: none"
+                @change="handleVideoUpload"
+              />
+              
+               <input
+                type="file"
+                ref="audioInputRef"
+                accept="audio/*"
+                style="display: none"
+                @change="handleAudioUpload"
+               />
             </div>
             
             <div class="scene-panel">
               <div v-if="viewMode === 'scenes'" class="scene-list-view">
-                <div class="scene-panel-header">
-                  <span class="scene-panel-title">Scenes</span>
-                  <button class="add-scene-btn" @click="addScene">
-                    Add Scene
-                  </button>
+                
+                <div class="scenes-box">
+                    <div class="scene-panel-header">
+                        <span class="scene-panel-title">Scenes</span>
+                        <button class="add-scene-btn" @click="addScene">
+                            Add Scene
+                        </button>
+                    </div>
+                    <div class="scene-list">
+                        <div 
+                            v-for="scene in nodeScenes" 
+                            :key="scene.id"
+                            class="scene-item"
+                            @mouseenter="hoveredSceneId = scene.id"
+                            @mouseleave="hoveredSceneId = null"
+                            @dblclick="selectScene(scene)"
+                        >
+                            <span class="scene-name">{{ scene.name }}</span>
+                            <button 
+                            v-show="hoveredSceneId === scene.id"
+                            class="scene-delete-btn"
+                            @click="deleteScene(scene.id)"
+                            title="Delete scene"
+                            >
+                            🗑️
+                            </button>
+                        </div>
+                        <div v-if="nodeScenes.length === 0" class="no-scenes">
+                            No scenes added yet
+                        </div>
+                    </div>
                 </div>
-                <div class="scene-list">
-                  <div 
-                    v-for="scene in nodeScenes" 
-                    :key="scene.id"
-                    class="scene-item"
-                    @mouseenter="hoveredSceneId = scene.id"
-                    @mouseleave="hoveredSceneId = null"
-                    @dblclick="selectScene(scene)"
-                  >
-                    <span class="scene-name">{{ scene.name }}</span>
-                    <button 
-                      v-show="hoveredSceneId === scene.id"
-                      class="scene-delete-btn"
-                      @click="deleteScene(scene.id)"
-                      title="Delete scene"
-                    >
-                      🗑️
-                    </button>
-                  </div>
-                  <div v-if="nodeScenes.length === 0" class="no-scenes">
-                    No scenes added yet
-                  </div>
+
+                <div class="audio-box">
+                    <div class="scene-panel-header">
+                        <span class="scene-panel-title">Sequence Background Audio</span>
+                    </div>
+                    <div class="audio-content">
+                        <div v-if="!sequenceAudio" class="audio-upload-placeholder" @click="triggerAudioUpload">
+                             <span>🎵 Click to add audio</span>
+                        </div>
+                        <div v-else class="audio-file-display">
+                             <div class="audio-icon">🔊</div>
+                             <div class="audio-info">
+                                 <div class="audio-filename">{{ sequenceAudio.name }}</div>
+                             </div>
+                             <button class="remove-audio-btn" @click="removeAudio">✕</button>
+                        </div>
+                    </div>
                 </div>
+
               </div>
               
               <div v-else-if="viewMode === 'sceneDetails' && selectedScene" class="scene-details-view">
@@ -1549,6 +2052,7 @@ watch(showPopup, (newVal) => {
                           v-for="option in addDropdownOptions" 
                           :key="option.id"
                           class="dropdown-item"
+                          :class="option.colorClass"
                           @click="selectAddOption(option)"
                         >
                           {{ option.label }}
@@ -1556,7 +2060,7 @@ watch(showPopup, (newVal) => {
                       </div>
                     </div>
                     <div class="scene-content-body">
-                      <div v-if="sceneImages.length === 0" class="empty-content">
+                      <div v-if="sceneComponents.length === 0" class="empty-content">
                         No content added yet. Click "+ Add" to add content.
                       </div>
                     </div>
@@ -1580,7 +2084,15 @@ watch(showPopup, (newVal) => {
 
                 <div class="scene-details-content">
                     <div class="component-preview">
-                        <img :src="activeComponent.url" alt="Preview" />
+                        <img v-if="activeComponent.type === 'image'" :src="activeComponent.url" alt="Preview" />
+                        <div v-else-if="activeComponent.type === 'text'" style="color:white; font-size: 24px; text-align: center;">T</div>
+                         <video 
+                            v-else-if="activeComponent.type === 'video'" 
+                            :src="activeComponent.url" 
+                            style="max-width: 100%; max-height: 100%;"
+                            controls
+                          ></video>
+                        <div v-else style="color:white">?</div>
                     </div>
 
                     <div class="detail-section">
@@ -1595,60 +2107,109 @@ watch(showPopup, (newVal) => {
                     <div class="detail-section">
                         <label class="detail-label">Position X:</label>
                         <div class="input-row">
-                            <input 
-                                type="range"
-                                v-model.number="activeComponent.x"
-                                :min="GRAPH_MIN_X"
-                                :max="GRAPH_MAX_X"
-                                class="range-input"
-                                @input="updateActiveComponentPosition"
-                            />
-                            <input 
-                                type="number"
-                                v-model.number="activeComponent.x"
-                                class="number-input"
-                                @input="updateActiveComponentPosition"
-                            />
+                            <input type="range" v-model.number="activeComponent.x" :min="GRAPH_MIN_X" :max="GRAPH_MAX_X" class="range-input" @input="updateActiveComponentPosition" />
+                            <input type="number" v-model.number="activeComponent.x" class="number-input" @input="updateActiveComponentPosition" />
                         </div>
                     </div>
-
                     <div class="detail-section">
                         <label class="detail-label">Position Y:</label>
                         <div class="input-row">
-                            <input 
-                                type="range"
-                                v-model.number="activeComponent.y"
-                                :min="GRAPH_MIN_Y"
-                                :max="GRAPH_MAX_Y"
-                                class="range-input"
-                                @input="updateActiveComponentPosition"
-                            />
-                            <input 
-                                type="number"
-                                v-model.number="activeComponent.y"
-                                class="number-input"
-                                @input="updateActiveComponentPosition"
-                            />
+                            <input type="range" v-model.number="activeComponent.y" :min="GRAPH_MIN_Y" :max="GRAPH_MAX_Y" class="range-input" @input="updateActiveComponentPosition" />
+                            <input type="number" v-model.number="activeComponent.y" class="number-input" @input="updateActiveComponentPosition" />
                         </div>
                     </div>
-
                     <div class="detail-section">
                         <label class="detail-label">Width (px):</label>
                         <div class="input-row">
+                            <input type="range" v-model.number="activeComponent.width" min="10" max="800" class="range-input" @input="updateActiveComponentSize" />
+                            <input type="number" v-model.number="activeComponent.width" class="number-input" @input="updateActiveComponentSize" />
+                        </div>
+                    </div>
+                    
+                    <div class="detail-section">
+                        <label class="detail-label">Rotation (deg):</label>
+                        <div class="input-row">
+                            <input type="range" v-model.number="activeComponent.rotation" min="0" max="360" class="range-input" @input="updateActiveComponentPosition" />
+                            <input type="number" v-model.number="activeComponent.rotation" class="number-input" @input="updateActiveComponentPosition" />
+                        </div>
+                    </div>
+
+                    <div v-if="activeComponent.type === 'video'">
+                        <div class="detail-section">
+                             <div class="checkbox-row">
+                                <label class="detail-label" style="margin-bottom:0;">Loop:</label>
+                                <input type="checkbox" v-model="activeComponent.isLoop" @change="updateVideoProperties" />
+                             </div>
+                        </div>
+                         <div class="detail-section">
+                             <div class="checkbox-row">
+                                <label class="detail-label" style="margin-bottom:0;">Mute:</label>
+                                <input type="checkbox" v-model="activeComponent.isMuted" @change="updateVideoProperties" />
+                             </div>
+                        </div>
+                    </div>
+
+                    <div v-if="activeComponent.type === 'text'">
+                        <div class="detail-section">
+                            <label class="detail-label">Content:</label>
                             <input 
-                                type="range"
-                                v-model.number="activeComponent.width"
-                                min="10"
-                                max="800"
-                                class="range-input"
-                                @input="updateActiveComponentSize"
+                                v-model="activeComponent.content" 
+                                class="detail-input" 
+                                @input="updateActiveComponentPosition" 
+                                @select="handleTextSelect"
                             />
-                            <input 
-                                type="number"
-                                v-model.number="activeComponent.width"
-                                class="number-input"
-                                @input="updateActiveComponentSize"
-                            />
+                            
+                            <div v-if="textSelection.text.length > 0" class="formatting-controls">
+                                <button class="format-btn" @click="applyTextStyle('bold', activeComponent.fontWeight === 'bold' ? 'normal' : 'bold')" :class="{ active: activeComponent.fontWeight === 'bold' }" title="Bold">B</button>
+                                <button class="format-btn" @click="applyTextStyle('italic')" :class="{ active: activeComponent.fontStyle === 'italic' }" title="Italic">I</button>
+                                <button class="format-btn" @click="applyTextStyle('underline')" :class="{ active: activeComponent.textDecoration === 'underline' }" title="Underline">U</button>
+                                <button class="format-btn" @click="applyTextStyle('strikethrough')" :class="{ active: activeComponent.textDecoration === 'line-through' }" title="Strikethrough">S</button>
+                                <input type="color" v-model="activeComponent.textDecorationColor" class="mini-color-input" title="Line Color" />
+                            </div>
+                        </div>
+
+                        <div class="detail-section">
+                            <label class="detail-label">Font Family:</label>
+                            <select v-model="activeComponent.fontFamily" class="detail-input" @change="updateActiveComponentPosition">
+                                <option value="sans-serif">Sans Serif</option>
+                                <option value="serif">Serif</option>
+                                <option value="monospace">Monospace</option>
+                                <option value="cursive">Cursive</option>
+                                <option value="fantasy">Fantasy</option>
+                            </select>
+                        </div>
+                        <div class="detail-section">
+                            <label class="detail-label">Font Size:</label>
+                            <input type="number" v-model.number="activeComponent.fontSize" class="detail-input" @input="updateActiveComponentPosition" />
+                        </div>
+                        <div class="detail-section">
+                            <label class="detail-label">Text Color:</label>
+                             <div class="color-picker-container">
+                                <input type="color" v-model="activeComponent.color" class="color-input" @input="updateActiveComponentPosition" />
+                                <div class="color-preview" :style="{ backgroundColor: activeComponent.color }"></div>
+                             </div>
+                        </div>
+                        <div class="detail-section">
+                            <label class="detail-label">Background Color:</label>
+                             <div class="color-picker-container">
+                                <input type="color" v-model="activeComponent.backgroundColor" class="color-input" @input="updateActiveComponentPosition" />
+                                <div class="color-preview" :style="{ backgroundColor: activeComponent.backgroundColor }"></div>
+                             </div>
+                        </div>
+                        <div class="detail-section">
+                            <label class="detail-label">Border Color:</label>
+                             <div class="color-picker-container">
+                                <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="updateActiveComponentPosition" />
+                                <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
+                             </div>
+                        </div>
+                         <div class="detail-section">
+                            <label class="detail-label">Border Width:</label>
+                            <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="updateActiveComponentPosition" />
+                        </div>
+                         <div class="detail-section">
+                            <label class="detail-label">Round Corners:</label>
+                            <input type="range" v-model.number="activeComponent.borderRadius" min="0" max="50" class="range-input" @input="updateActiveComponentPosition" />
                         </div>
                     </div>
 
@@ -1667,12 +2228,21 @@ watch(showPopup, (newVal) => {
 
             </div>
           </div>
-          <button class="popup-cancel" @click="closePopup">Cancel</button>
+          <button class="popup-return-btn" @click="closePopup">Return to Canvas</button>
           
           <div v-if="showAddDropdown" class="dropdown-overlay" @click="closeAddDropdown"></div>
         </div>
       </div>
     </transition>
+
+    <transition name="fade">
+        <div v-if="isPreviewMode" class="preview-overlay" @click="advancePreview">
+             <canvas ref="previewCanvasRef" class="preview-canvas"></canvas>
+             <button class="preview-close-btn" @click.stop="exitPreview">Stop Preview ✕</button>
+             <div class="preview-hint">Click to advance sequence</div>
+        </div>
+    </transition>
+
   </div>
 </template>
 
@@ -1680,7 +2250,6 @@ watch(showPopup, (newVal) => {
   .wrapper { 
     width: 100vw; 
     height: 100vh;
-    /* Added overflow hidden to prevent body scrolling when popup content overscrolls */
     overflow: hidden;
     position: relative;
     background-color: #000;
@@ -1824,6 +2393,48 @@ watch(showPopup, (newVal) => {
     box-shadow: 0 0 0 2px rgba(0, 255, 136, 0.2);
   }
 
+  /* Audio Status Display in Header */
+  .audio-status-display {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 20px;
+    flex: 1; /* allow it to grow */
+  }
+
+  .audio-label {
+      color: #9ca3af;
+      font-size: 14px;
+      font-weight: 500;
+  }
+
+  .audio-value {
+      color: #00ff88;
+      font-size: 14px;
+      font-weight: 600;
+  }
+
+  /* Preview Button */
+  .preview-btn {
+      background: #8b5cf6; /* Violet */
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      color: #fff;
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 20px;
+      transition: background 0.2s;
+  }
+
+  .preview-btn:hover {
+      background: #7c3aed;
+  }
+
   .popup-body {
     flex: 1;
     padding: 24px;
@@ -1852,7 +2463,8 @@ watch(showPopup, (newVal) => {
     width: 100%;
     height: 100%;
     cursor: crosshair;
-    z-index: 1; /* Graph is at the bottom layer */
+    z-index: 1; /* BOTTOM layer - Graph grid, hidden by overlay */
+    pointer-events: none; /* Let events fall through to background if necessary, though parent handles events */
   }
 
   /* Background Color Overlay - Middle layer */
@@ -1862,7 +2474,7 @@ watch(showPopup, (newVal) => {
     left: 0;
     width: 100%;
     height: 100%;
-    z-index: 2; /* Middle layer between graph and images */
+    z-index: 2; /* MIDDLE layer - Covers the grid */
     pointer-events: none; /* Allows clicking through to the graph/images */
     mix-blend-mode: normal;
   }
@@ -1875,7 +2487,7 @@ watch(showPopup, (newVal) => {
     width: 100%;
     height: 100%;
     cursor: move;
-    z-index: 3; /* Images are on the top layer */
+    z-index: 10; /* TOP layer - Images/Videos/Text */
   }
 
   /* Welcome Message Styles */
@@ -1883,7 +2495,7 @@ watch(showPopup, (newVal) => {
     text-align: center;
     padding: 40px;
     max-width: 500px;
-    z-index: 4;
+    z-index: 20; /* Ensure welcome message is above canvas stack */
   }
 
   .welcome-icon {
@@ -1942,26 +2554,46 @@ watch(showPopup, (newVal) => {
     box-sizing: border-box; /* Ensures padding doesn't add to the height */
   }
 
-  /* Optional: Style the scrollbar to match the dark theme */
-  .scene-panel::-webkit-scrollbar {
-    width: 6px;
+  /* Scene List View Styles - Updated for 2 boxes */
+  .scene-list-view {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      gap: 16px;
   }
 
-  .scene-panel::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 10px;
+  .scenes-box {
+      flex: 1; /* Take up remaining space */
+      display: flex;
+      flex-direction: column;
+      min-height: 200px; /* Ensure scenes always have space */
+      overflow: hidden; /* Contain inner scroll */
+  }
+  
+  .audio-box {
+      flex-shrink: 0;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.05);
   }
 
-  /* Scene List View Styles */
   .scene-panel-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 16px;
-    padding-bottom: 12px;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     flex-shrink: 0; /* Prevent header from shrinking */
     position: relative;
+    padding-top: 4px;
+  }
+
+  .audio-box .scene-panel-header {
+      padding: 12px;
+      margin-bottom: 0;
+      background: rgba(255, 255, 255, 0.03);
   }
 
   .scene-panel-title {
@@ -2038,6 +2670,70 @@ watch(showPopup, (newVal) => {
     font-style: italic;
     flex-shrink: 0; /* Prevent the "no scenes" message from shrinking */
   }
+
+  /* Audio Box Content */
+  .audio-content {
+      padding: 16px;
+  }
+
+  .audio-upload-placeholder {
+      border: 2px dashed rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+      padding: 16px;
+      text-align: center;
+      color: #9ca3af;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 0.9rem;
+  }
+
+  .audio-upload-placeholder:hover {
+      border-color: #00ff88;
+      color: #00ff88;
+      background: rgba(0, 255, 136, 0.05);
+  }
+
+  .audio-file-display {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 10px;
+      border-radius: 6px;
+  }
+
+  .audio-icon {
+      font-size: 1.2rem;
+  }
+
+  .audio-info {
+      flex: 1;
+      overflow: hidden;
+  }
+
+  .audio-filename {
+      color: #e2e8f0;
+      font-size: 0.9rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+  }
+
+  .remove-audio-btn {
+      background: transparent;
+      border: none;
+      color: #f87171;
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 4px;
+      line-height: 1;
+  }
+  
+  .remove-audio-btn:hover {
+      background: rgba(248, 113, 113, 0.2);
+      border-radius: 4px;
+  }
+
 
   /* Scene Details View Styles */
   .back-btn {
@@ -2139,6 +2835,13 @@ watch(showPopup, (newVal) => {
     align-items: center;
     gap: 12px;
   }
+  
+  /* Checkbox Row */
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
 
   /* Layering Controls */
   .layering-controls {
@@ -2163,6 +2866,45 @@ watch(showPopup, (newVal) => {
     background: rgba(255, 255, 255, 0.15);
     border-color: #00ff88;
     color: #00ff88;
+  }
+  
+  /* Formatting Controls */
+  .formatting-controls {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    align-items: center;
+  }
+  
+  .format-btn {
+    width: 30px;
+    height: 30px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #ccc;
+    cursor: pointer;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 14px;
+  }
+  
+  .format-btn:hover {
+    background: rgba(255,255,255,0.1);
+  }
+  
+  .format-btn.active {
+    background: #00ff88;
+    color: #000;
+    border-color: #00ff88;
+  }
+  
+  .mini-color-input {
+      width: 30px;
+      height: 30px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      padding: 0;
   }
 
   /* Component Preview */
@@ -2292,6 +3034,11 @@ watch(showPopup, (newVal) => {
     background: rgba(255, 255, 255, 0.1);
   }
 
+  /* DROPDOWN HOVER COLORS */
+  .hover-green:hover { background-color: rgba(0, 255, 136, 0.2); }
+  .hover-blue:hover { background-color: rgba(59, 130, 246, 0.2); }
+  .hover-yellow:hover { background-color: rgba(234, 179, 8, 0.2); }
+
   /* Scene Content Body Styles - UPDATED FOR SEPARATE IMAGE CONTAINERS */
   .scene-content-body {
     padding: 16px;
@@ -2312,8 +3059,8 @@ watch(showPopup, (newVal) => {
   }
 
   /* ==========================================================================
-     UPDATED IMAGE CONTAINER STYLES (Single Line Layout)
-     ========================================================================== */
+      UPDATED IMAGE CONTAINER STYLES (Single Line Layout)
+      ========================================================================== */
   
   :deep(.image-container) {
     background: rgba(255, 255, 255, 0.08);
@@ -2330,6 +3077,8 @@ watch(showPopup, (newVal) => {
     
     flex-shrink: 0;
     height: 50px; /* Fixed height for consistency */
+    position: relative; /* For strip positioning */
+    overflow: hidden; /* For strip containment */
   }
 
   :deep(.image-container:hover) {
@@ -2342,6 +3091,30 @@ watch(showPopup, (newVal) => {
     border-color: rgba(59, 130, 246, 0.5);
     box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3);
   }
+
+  /* Dragging Visuals */
+  :deep(.image-container.over) {
+    border: 2px dashed #00ff88;
+    background: rgba(0, 255, 136, 0.1);
+  }
+
+  :deep(.image-container.dragging) {
+    opacity: 0.5;
+    border: 2px dashed #3b82f6;
+  }
+
+  /* TYPE INDICATOR STRIP */
+  :deep(.type-indicator) {
+    width: 4px;
+    height: 100%;
+    position: absolute;
+    left: 0;
+    top: 0;
+  }
+  
+  :deep(.bg-green) { background-color: #00ff88; }
+  :deep(.bg-blue) { background-color: #3b82f6; }
+  :deep(.bg-yellow) { background-color: #eab308; }
 
   /* Drag Handle (New) */
   :deep(.image-drag-handle) {
@@ -2369,6 +3142,7 @@ watch(showPopup, (newVal) => {
     align-items: center;
     justify-content: center;
     order: 1; /* First */
+    margin-left: 6px; /* Space for indicator strip */
   }
 
   :deep(.image-list-icon img) {
@@ -2439,24 +3213,26 @@ watch(showPopup, (newVal) => {
   }
 
   /* Cancel button - Now at bottom right corner */
-  .popup-cancel {
+  .popup-return-btn {
     position: absolute;
     bottom: 24px;
     right: 24px;
-    background: #ff4444;
-    border: none;
+    background: #374151; /* Dark gray */
+    border: 1px solid rgba(255, 255, 255, 0.1);
     padding: 12px 24px;
     border-radius: 8px;
-    color: #fff;
+    color: #e2e8f0;
     font-size: 1rem;
     font-weight: 600;
     cursor: pointer;
-    transition: background-color 0.2s;
-    z-index: 10;
+    transition: all 0.2s;
+    z-index: 20; /* Ensure it's above everything */
   }
 
-  .popup-cancel:hover {
-    background: #ff0000;
+  .popup-return-btn:hover {
+    background: #4b5563; /* Lighter gray */
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.3);
   }
 
   /* Dropdown overlay */
@@ -2483,5 +3259,68 @@ watch(showPopup, (newVal) => {
   .popup-enter-to,
   .popup-leave-from {
     opacity: 1;
+  }
+
+  /* PREVIEW MODE STYLES */
+  .preview-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+      z-index: 9999;
+      cursor: pointer; /* Indicate clickable */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+  }
+
+  .preview-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+  }
+
+  .preview-close-btn {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: rgba(255, 68, 68, 0.8);
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-weight: bold;
+      cursor: pointer;
+      z-index: 10000;
+      transition: background 0.2s;
+  }
+
+  .preview-close-btn:hover {
+      background: #ff0000;
+  }
+  
+  .preview-hint {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(255,255,255,0.5);
+      font-size: 0.9rem;
+      pointer-events: none;
+      background: rgba(0,0,0,0.5);
+      padding: 6px 12px;
+      border-radius: 20px;
+  }
+
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: opacity 0.5s ease;
+  }
+
+  .fade-enter-from,
+  .fade-leave-to {
+    opacity: 0;
   }
 </style>
