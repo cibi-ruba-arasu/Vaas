@@ -75,8 +75,9 @@ const isPreviewMode = ref(false)
 const previewCanvasRef = ref(null)
 let previewCtx = null
 const currentPreviewSceneIndex = ref(0)
-const currentPreviewComponentIndex = ref(-1) // -1 means "start of scene, nothing shown yet"
+const currentPreviewComponentIndex = ref(-1) 
 const previewAudioElement = ref(null)
+const previewScale = ref(1) // Stores the calculated constant factor
 
 /* ================= GRAPH SETTINGS ================= */
 const graphCanvasRef = ref(null)
@@ -94,7 +95,7 @@ const GRAPH_MINOR_GRID = 20
 /* ================= SCENE COMPONENTS MANAGEMENT ================= */
 const sceneComponents = ref([]) 
 const imageInputRef = ref(null) 
-const videoInputRef = ref(null) // NEW: Reference for video input
+const videoInputRef = ref(null) 
 const isDraggingComponent = ref(false)
 const draggingComponentIndex = ref(null)
 const dragComponentOffset = ref({ x: 0, y: 0 })
@@ -107,6 +108,8 @@ let isHandleActive = false
 const activeComponent = ref(null)
 // Text Selection State
 const textSelection = ref({ start: 0, end: 0, text: '' })
+// Options Component Style Editor State
+const activeStyleState = ref('normal') // 'normal', 'hovered', 'clicked'
 
 /* ================= SCENE SETTINGS ================= */
 const sceneSettings = ref({
@@ -134,7 +137,7 @@ const handleAudioUpload = (event) => {
 
   // Update Status immediately
   updateNodeAudioInStatus()
-  
+   
   // Reset input so same file can be selected again if needed
   event.target.value = ''
 }
@@ -161,7 +164,7 @@ const updateNodeAudioInStatus = () => {
             Next: null, 
             scenes: [],
             audio: sequenceAudio.value,
-            Node_name: `Node ${popupNode.value.id}` 
+            Node_name: `Node ${popupNode.value.id}`
         })
     }
 }
@@ -177,7 +180,8 @@ const showAddDropdown = ref(false)
 const addDropdownOptions = [
   { id: 'image', label: 'Image', colorClass: 'hover-green' },
   { id: 'text', label: 'Text', colorClass: 'hover-blue' },
-  { id: 'video', label: 'Video', colorClass: 'hover-yellow' }
+  { id: 'video', label: 'Video', colorClass: 'hover-yellow' },
+  { id: 'options', label: 'Options', colorClass: 'hover-red' } // Added Options
 ]
 
 const toggleAddDropdown = () => {
@@ -185,18 +189,92 @@ const toggleAddDropdown = () => {
 }
 
 const selectAddOption = (option) => {
-  if (option.id === 'image') {
+  // CASE 1 & 2: Check if current scene is the last scene
+  const isLastScene = selectedScene.value && nodeScenes.value.length > 0 && selectedScene.value.id === nodeScenes.value[nodeScenes.value.length - 1].id;
+
+  if (option.id === 'options') {
+      if (!isLastScene) {
+          alert("The 'Options' component can only be added to the final scene of the sequence.");
+          showAddDropdown.value = false;
+          return;
+      }
+      // Check if options already exist in this scene
+      const hasOptions = sceneComponents.value.some(c => c.type === 'options');
+      if (hasOptions) {
+           alert("This scene already has an Options component.");
+           showAddDropdown.value = false;
+           return;
+      }
+      addOptionsComponent();
+  } else if (option.id === 'image') {
     imageInputRef.value.click()
   } else if (option.id === 'text') {
     addTextComponent()
   } else if (option.id === 'video') {
-    videoInputRef.value.click() // Trigger video input
+    videoInputRef.value.click() 
   }
   showAddDropdown.value = false
 }
 
 const closeAddDropdown = () => {
   showAddDropdown.value = false
+}
+
+/* ================= OPTIONS HANDLING ================= */
+const addOptionsComponent = () => {
+    // Default Styles Template
+    const defaultBtnStyle = {
+        backgroundColor: '#374151',
+        color: '#ffffff',
+        borderColor: '#9ca3af',
+        borderWidth: 1,
+        borderRadius: 4,
+        fontSize: 16,
+        fontFamily: 'sans-serif'
+    };
+
+    const newOption = {
+        id: Date.now(),
+        type: 'options',
+        name: 'Options Box',
+        x: 0,
+        y: 0,
+        width: 300,
+        height: 200,
+        rotation: 0,
+        optionsList: [
+            { id: 1, text: 'Option 1' },
+            { id: 2, text: 'Option 2' }
+        ],
+        // Styles for different states
+        styles: {
+            normal: { ...defaultBtnStyle },
+            hovered: { ...defaultBtnStyle, backgroundColor: '#4b5563', borderColor: '#00ff88' },
+            clicked: { ...defaultBtnStyle, backgroundColor: '#1f2937', borderColor: '#00ff88', borderWidth: 2 }
+        },
+        // Runtime State
+        _hoveredOptionIndex: -1,
+        _clickedOptionIndex: -1
+    }
+    // Options always goes to the end
+    sceneComponents.value.push(newOption)
+    updateSceneContentDisplay()
+    drawComponents()
+}
+
+const addOptionToComponent = () => {
+    if(!activeComponent.value || activeComponent.value.type !== 'options') return;
+    const newId = activeComponent.value.optionsList.length > 0 
+        ? Math.max(...activeComponent.value.optionsList.map(o => o.id)) + 1 
+        : 1;
+    activeComponent.value.optionsList.push({ id: newId, text: `Option ${newId}` });
+    drawComponents();
+}
+
+const removeOptionFromComponent = (index) => {
+    if(!activeComponent.value || activeComponent.value.type !== 'options') return;
+    activeComponent.value.optionsList.splice(index, 1);
+    drawComponents();
 }
 
 /* ================= TEXT HANDLING ================= */
@@ -225,8 +303,15 @@ const addTextComponent = () => {
     rotation: 0,
     url: '', 
   }
-  
-  sceneComponents.value.push(newText)
+   
+  // Insert logic: If options exists, insert BEFORE it.
+  const optionsIndex = sceneComponents.value.findIndex(c => c.type === 'options');
+  if (optionsIndex !== -1) {
+      sceneComponents.value.splice(optionsIndex, 0, newText);
+  } else {
+      sceneComponents.value.push(newText);
+  }
+
   updateSceneContentDisplay()
   drawComponents()
 }
@@ -330,7 +415,15 @@ const handleVideoUpload = (event) => {
       }
 
       vid.play() // Start playing
-      sceneComponents.value.push(newVideo)
+      
+      // Insert logic: Before Options if exists
+      const optionsIndex = sceneComponents.value.findIndex(c => c.type === 'options');
+      if (optionsIndex !== -1) {
+          sceneComponents.value.splice(optionsIndex, 0, newVideo);
+      } else {
+          sceneComponents.value.push(newVideo);
+      }
+
       updateSceneContentDisplay()
     }
   }
@@ -353,14 +446,14 @@ const updateVideoProperties = () => {
 const handleImageUpload = (event) => {
   const file = event.target.files[0]
   if (!file) return
-  
+   
   if (!file.type.startsWith('image/')) {
     alert('Please select an image file')
     return
   }
-  
+   
   const reader = new FileReader()
-  
+   
   reader.onload = (e) => {
     const imageUrl = e.target.result
     
@@ -405,14 +498,20 @@ const handleImageUpload = (event) => {
       newImage.naturalWidth = img.width
       newImage.naturalHeight = img.height
       
-      sceneComponents.value.push(newImage)
+      // Insert logic: Before Options if exists
+      const optionsIndex = sceneComponents.value.findIndex(c => c.type === 'options');
+      if (optionsIndex !== -1) {
+          sceneComponents.value.splice(optionsIndex, 0, newImage);
+      } else {
+          sceneComponents.value.push(newImage);
+      }
       
       updateSceneContentDisplay()
       drawComponents() // Force a draw once loaded
     }
     img.src = imageUrl
   }
-  
+   
   reader.readAsDataURL(file)
   event.target.value = ''
 }
@@ -430,43 +529,60 @@ const updateSceneContentDisplay = () => {
             const imageContainer = document.createElement('div')
             imageContainer.className = 'image-container'
             imageContainer.dataset.index = index
-            imageContainer.draggable = true // Enable dragging
+            
+            // Disable drag for 'options' component
+            if (comp.type !== 'options') {
+                imageContainer.draggable = true 
+            }
             
             const indicator = document.createElement('div')
             indicator.className = 'type-indicator'
             if (comp.type === 'image') indicator.classList.add('bg-green')
             else if (comp.type === 'text') indicator.classList.add('bg-blue')
             else if (comp.type === 'video') indicator.classList.add('bg-yellow')
+            else if (comp.type === 'options') indicator.classList.add('bg-red') // Red for options
             
-            const dragHandle = document.createElement('div')
-            dragHandle.className = 'image-drag-handle'
-            dragHandle.innerHTML = '⋮⋮⋮⋮' 
-            dragHandle.title = 'Drag to reorder'
-            
-            // Listen to Handle Interaction
-            dragHandle.addEventListener('mousedown', () => { isHandleActive = true })
-            dragHandle.addEventListener('mouseup', () => { isHandleActive = false })
+            // Only show drag handle for non-options
+            if (comp.type !== 'options') {
+                const dragHandle = document.createElement('div')
+                dragHandle.className = 'image-drag-handle'
+                dragHandle.innerHTML = '⋮⋮⋮⋮' 
+                dragHandle.title = 'Drag to reorder'
+                
+                // Listen to Handle Interaction
+                dragHandle.addEventListener('mousedown', () => { isHandleActive = true })
+                dragHandle.addEventListener('mouseup', () => { isHandleActive = false })
+                
+                imageContainer.appendChild(dragHandle) 
+            }
             
             const imgIconDiv = document.createElement('div')
             imgIconDiv.className = 'image-list-icon'
             
             if (comp.type === 'image') {
-            const imgElement = document.createElement('img')
-            imgElement.src = comp.url
-            imgElement.alt = comp.name
-            imgIconDiv.appendChild(imgElement)
+                const imgElement = document.createElement('img')
+                imgElement.src = comp.url
+                imgElement.alt = comp.name
+                imgIconDiv.appendChild(imgElement)
             } else if (comp.type === 'text') {
-            imgIconDiv.textContent = 'T'
-            imgIconDiv.style.color = '#fff'
-            imgIconDiv.style.fontSize = '20px'
-            imgIconDiv.style.fontWeight = 'bold'
+                imgIconDiv.textContent = 'T'
+                imgIconDiv.style.color = '#fff'
+                imgIconDiv.style.fontSize = '20px'
+                imgIconDiv.style.fontWeight = 'bold'
             } else if (comp.type === 'video') {
-            imgIconDiv.textContent = '▶' 
-            imgIconDiv.style.color = '#fff'
-            imgIconDiv.style.fontSize = '18px'
-            imgIconDiv.style.display = 'flex'
-            imgIconDiv.style.alignItems = 'center'
-            imgIconDiv.style.justifyContent = 'center'
+                imgIconDiv.textContent = '▶' 
+                imgIconDiv.style.color = '#fff'
+                imgIconDiv.style.fontSize = '18px'
+                imgIconDiv.style.display = 'flex'
+                imgIconDiv.style.alignItems = 'center'
+                imgIconDiv.style.justifyContent = 'center'
+            } else if (comp.type === 'options') {
+                imgIconDiv.textContent = '❖' 
+                imgIconDiv.style.color = '#fff'
+                imgIconDiv.style.fontSize = '18px'
+                imgIconDiv.style.display = 'flex'
+                imgIconDiv.style.alignItems = 'center'
+                imgIconDiv.style.justifyContent = 'center'
             }
             
             const imageName = document.createElement('div')
@@ -487,7 +603,6 @@ const updateSceneContentDisplay = () => {
             imageContainer.appendChild(imgIconDiv) 
             imageContainer.appendChild(imageName)  
             imageContainer.appendChild(removeBtn)  
-            imageContainer.appendChild(dragHandle) 
             
             imageContainer.addEventListener('click', () => {
             document.querySelectorAll('.image-container').forEach(container => {
@@ -501,59 +616,70 @@ const updateSceneContentDisplay = () => {
             })
 
             /* --- DRAG AND DROP EVENTS --- */
-            imageContainer.addEventListener('dragstart', (e) => {
-                // Only allow drag if handle was grabbed
-                if (!isHandleActive) {
-                    e.preventDefault()
-                    return
-                }
-                dragSourceIndex = index
-                e.dataTransfer.effectAllowed = 'move'
-                imageContainer.classList.add('dragging')
-            })
-
-            imageContainer.addEventListener('dragover', (e) => {
-                e.preventDefault() // Necessary to allow dropping
-                e.dataTransfer.dropEffect = 'move'
-                imageContainer.classList.add('over')
-                return false
-            })
-
-            imageContainer.addEventListener('dragenter', () => {
-                imageContainer.classList.add('over')
-            })
-
-            imageContainer.addEventListener('dragleave', () => {
-                imageContainer.classList.remove('over')
-            })
-
-            imageContainer.addEventListener('drop', (e) => {
-                e.stopPropagation()
-                e.preventDefault()
-                
-                // Swap Logic
-                if (dragSourceIndex !== null && dragSourceIndex !== index) {
-                    // Remove from old index
-                    const item = sceneComponents.value.splice(dragSourceIndex, 1)[0]
-                    // Insert at new index
-                    sceneComponents.value.splice(index, 0, item)
-                    
-                    // Refresh View
-                    updateSceneContentDisplay()
-                    drawComponents()
-                }
-                return false
-            })
-
-            imageContainer.addEventListener('dragend', () => {
-                isHandleActive = false
-                dragSourceIndex = null
-                // Cleanup visuals
-                document.querySelectorAll('.image-container').forEach(el => {
-                    el.classList.remove('over')
-                    el.classList.remove('dragging')
+            // Skip drag events for options
+            if (comp.type !== 'options') {
+                imageContainer.addEventListener('dragstart', (e) => {
+                    // Only allow drag if handle was grabbed
+                    if (!isHandleActive) {
+                        e.preventDefault()
+                        return
+                    }
+                    dragSourceIndex = index
+                    e.dataTransfer.effectAllowed = 'move'
+                    imageContainer.classList.add('dragging')
                 })
-            })
+
+                imageContainer.addEventListener('dragover', (e) => {
+                    e.preventDefault() // Necessary to allow dropping
+                    e.dataTransfer.dropEffect = 'move'
+                    imageContainer.classList.add('over')
+                    return false
+                })
+
+                imageContainer.addEventListener('dragenter', () => {
+                    imageContainer.classList.add('over')
+                })
+
+                imageContainer.addEventListener('dragleave', () => {
+                    imageContainer.classList.remove('over')
+                })
+
+                imageContainer.addEventListener('drop', (e) => {
+                    e.stopPropagation()
+                    e.preventDefault()
+                    
+                    // Swap Logic
+                    if (dragSourceIndex !== null && dragSourceIndex !== index) {
+                        // Remove from old index
+                        const item = sceneComponents.value.splice(dragSourceIndex, 1)[0]
+                        // Insert at new index
+                        sceneComponents.value.splice(index, 0, item)
+                        
+                        // Enforce: If options exists, move it to the end
+                        // This prevents dragging items visually below the Options component
+                        const optIdx = sceneComponents.value.findIndex(c => c.type === 'options');
+                        if (optIdx !== -1 && optIdx !== sceneComponents.value.length - 1) {
+                             const opt = sceneComponents.value.splice(optIdx, 1)[0];
+                             sceneComponents.value.push(opt);
+                        }
+                        
+                        // Refresh View
+                        updateSceneContentDisplay()
+                        drawComponents()
+                    }
+                    return false
+                })
+
+                imageContainer.addEventListener('dragend', () => {
+                    isHandleActive = false
+                    dragSourceIndex = null
+                    // Cleanup visuals
+                    document.querySelectorAll('.image-container').forEach(el => {
+                        el.classList.remove('over')
+                        el.classList.remove('dragging')
+                    })
+                })
+            }
             
             contentBody.appendChild(imageContainer)
         })
@@ -609,6 +735,39 @@ const onGraphMouseDown = (event) => {
         
         clickedComp = comp
         
+        // --- Option Button Click Handling ---
+        if (comp.type === 'options' && comp.optionsList) {
+             // We need to check if we clicked a specific button inside
+             // Transform world coord to local component space
+             // Since we handle rotation at center:
+             // 1. Translate point relative to center
+             // 2. Rotate point backwards
+             
+             const dx = coords.x - comp.x;
+             const dy = coords.y - comp.y;
+             const rad = -(comp.rotation || 0) * Math.PI / 180;
+             const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
+             const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
+             
+             // Reconstruct Button Layout Logic (must match renderComponent)
+             const btnHeight = 40;
+             const btnGap = 10;
+             const totalHeight = (comp.optionsList.length * btnHeight) + ((comp.optionsList.length - 1) * btnGap);
+             const startY = - (totalHeight / 2);
+             
+             for (let j = 0; j < comp.optionsList.length; j++) {
+                const btnY = startY + (j * (btnHeight + btnGap));
+                if (localX >= -(comp.width/2 - 20) && localX <= (comp.width/2 - 20) &&
+                    localY >= btnY && localY <= btnY + btnHeight) {
+                    
+                    comp._clickedOptionIndex = j;
+                    drawComponents();
+                    setTimeout(() => { comp._clickedOptionIndex = -1; drawComponents(); }, 150);
+                    // Prevent dragging if button clicked? Maybe. For now allow selection.
+                }
+             }
+        }
+
         isDraggingComponent.value = true
         draggingComponentIndex.value = i
         dragComponentOffset.value = {
@@ -620,6 +779,9 @@ const onGraphMouseDown = (event) => {
             activeComponent.value = clickedComp
             // Reset text selection if switching
             textSelection.value = { start: 0, end: 0, text: '' }
+            if (activeComponent.value.type === 'options') {
+                activeStyleState.value = 'normal';
+            }
         }
 
         drawComponents()
@@ -650,8 +812,54 @@ const onGraphMouseMove = (event) => {
   if (mouseX >= rect.left && mouseX <= rect.right && 
       mouseY >= rect.top && mouseY <= rect.bottom) {
     
+    // Check for hovers on options components
+    const coords = screenToGraphCoords(mouseX, mouseY)
+    let needsRedraw = false;
+    
+    sceneComponents.value.forEach(comp => {
+        if (comp.type === 'options') {
+             const dx = coords.x - comp.x;
+             const dy = coords.y - comp.y;
+             // Inverse Rotate
+             const rad = -(comp.rotation || 0) * Math.PI / 180;
+             const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
+             const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
+             
+             // Check bounds
+             if (Math.abs(localX) <= comp.width/2 && Math.abs(localY) <= comp.height/2) {
+                 // Inside box, check buttons
+                 const btnHeight = 40;
+                 const btnGap = 10;
+                 const totalHeight = (comp.optionsList.length * btnHeight) + ((comp.optionsList.length - 1) * btnGap);
+                 const startY = - (totalHeight / 2);
+                 let foundHover = -1;
+                 
+                 for (let j = 0; j < comp.optionsList.length; j++) {
+                    const btnY = startY + (j * (btnHeight + btnGap));
+                    // Buttons have 20px padding from sides
+                    if (localX >= -(comp.width/2 - 20) && localX <= (comp.width/2 - 20) &&
+                        localY >= btnY && localY <= btnY + btnHeight) {
+                        foundHover = j;
+                        break;
+                    }
+                 }
+                 
+                 if (comp._hoveredOptionIndex !== foundHover) {
+                     comp._hoveredOptionIndex = foundHover;
+                     needsRedraw = true;
+                 }
+             } else {
+                 if (comp._hoveredOptionIndex !== -1) {
+                     comp._hoveredOptionIndex = -1;
+                     needsRedraw = true;
+                 }
+             }
+        }
+    });
+
+    if (needsRedraw) drawComponents();
+
     if (isDraggingComponent.value && draggingComponentIndex.value !== null) {
-      const coords = screenToGraphCoords(mouseX, mouseY)
       const comp = sceneComponents.value[draggingComponentIndex.value]
       comp.x = coords.x - dragComponentOffset.value.x
       comp.y = coords.y - dragComponentOffset.value.y
@@ -676,6 +884,9 @@ const openComponentEditor = (comp) => {
     activeComponent.value = comp
     viewMode.value = 'componentEditor'
     textSelection.value = { start: 0, end: 0, text: '' } // Reset
+    if (comp.type === 'options') {
+        activeStyleState.value = 'normal';
+    }
     drawComponents() 
 }
 
@@ -713,9 +924,25 @@ const changeLayer = (action) => {
     if (idx === -1) return
 
     const arr = sceneComponents.value
+    const hasOptions = arr.some(c => c.type === 'options');
+    const isOptions = activeComponent.value.type === 'options';
+
+    // Rule: Options component must always be last (highest Z).
+    // If active is Options, it cannot move down if it's already last, and up/top is irrelevant.
+    // Actually, if it's Options, it CANNOT change layer because it must stay on top.
+    if (isOptions) {
+        // Options is strictly locked to top.
+        return;
+    }
+
+    // If active is NOT options, it cannot move past options.
+    // 'Top' means 'index before options'.
     
+    const lastIndex = arr.length - 1;
+    const maxIndex = hasOptions ? lastIndex - 1 : lastIndex; // If options exist, max index for normal items is len-2
+
     if (action === 'up') {
-        if (idx < arr.length - 1) {
+        if (idx < maxIndex) {
             const temp = arr[idx]
             arr[idx] = arr[idx + 1]
             arr[idx + 1] = temp
@@ -727,8 +954,19 @@ const changeLayer = (action) => {
             arr[idx - 1] = temp
         }
     } else if (action === 'top') {
+        // Move to maxIndex
         const [item] = arr.splice(idx, 1)
-        arr.push(item)
+        // If hasOptions, insert at len-1 (which is index of options, pushing options to len)
+        // Wait, splice insert at index X puts it BEFORE item at X.
+        // If we want it at maxIndex (visually top of normal items):
+        // If array is [A, B, Options], len=3. Options at 2. maxIndex = 1.
+        // We want [A, Item, Options]. Splice at 2 puts it before options.
+        if (hasOptions) {
+             const insertPos = arr.findIndex(c => c.type === 'options');
+             arr.splice(insertPos, 0, item);
+        } else {
+             arr.push(item);
+        }
     } else if (action === 'bottom') {
         const [item] = arr.splice(idx, 1)
         arr.unshift(item)
@@ -871,6 +1109,15 @@ const resizeGraphCanvas = () => {
     graphCanvasRef.value.height = rect.height
     imagesCanvasRef.value.width = rect.width
     imagesCanvasRef.value.height = rect.height
+
+    // --- STORE REFERENCE DIMENSIONS IN CANVAS_STATUS ---
+    if (popupNode.value) {
+        const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
+        if (status) {
+            status.referenceWidth = rect.width
+            status.referenceHeight = rect.height
+        }
+    }
     
     if (selectedScene.value) {
       drawGraph()
@@ -1139,6 +1386,68 @@ const renderComponent = (ctx, comp, screenPos) => {
         }
         
         ctx.translate(-screenPos.x, -screenPos.y)
+    } else if (comp.type === 'options') {
+        // Render Options Component
+        ctx.translate(screenPos.x, screenPos.y) 
+        
+        // Background - Transparent with border container
+        ctx.fillStyle = 'rgba(31, 41, 55, 0.3)'; 
+        // Dashed border for visual distinction of the container
+        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = '#f87171'; // Red border
+        ctx.lineWidth = 1;
+        drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, 8);
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]); // Reset dash for buttons
+        
+        // --- DRAW OPTION BUTTONS ---
+        if (comp.optionsList && comp.optionsList.length > 0) {
+            const btnHeight = 40;
+            const btnGap = 10;
+            // Center buttons vertically
+            const totalContentHeight = (comp.optionsList.length * btnHeight) + ((comp.optionsList.length - 1) * btnGap);
+            const startY = - (totalContentHeight / 2);
+            
+            // Width with some padding inside the container
+            const btnWidth = comp.width - 40;
+            
+            comp.optionsList.forEach((option, index) => {
+                const yPos = startY + (index * (btnHeight + btnGap));
+                
+                // Determine Style State
+                let style = comp.styles.normal;
+                if (comp._clickedOptionIndex === index) {
+                    style = comp.styles.clicked;
+                } else if (comp._hoveredOptionIndex === index) {
+                    style = comp.styles.hovered;
+                }
+                
+                // Draw Button Background
+                if (style.backgroundColor && style.backgroundColor !== 'transparent') {
+                    ctx.fillStyle = style.backgroundColor;
+                    drawRoundedRectPaths(ctx, -(btnWidth/2), yPos, btnWidth, btnHeight, style.borderRadius);
+                    ctx.fill();
+                }
+                
+                // Draw Button Border
+                if (style.borderWidth > 0 && style.borderColor && style.borderColor !== 'transparent') {
+                    ctx.strokeStyle = style.borderColor;
+                    ctx.lineWidth = style.borderWidth;
+                    drawRoundedRectPaths(ctx, -(btnWidth/2), yPos, btnWidth, btnHeight, style.borderRadius);
+                    ctx.stroke();
+                }
+                
+                // Draw Text
+                ctx.fillStyle = style.color;
+                ctx.font = `${style.fontSize}px ${style.fontFamily || 'sans-serif'}`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(option.text, 0, yPos + (btnHeight/2));
+            });
+        }
+        
+        ctx.translate(-screenPos.x, -screenPos.y)
     }
 }
 
@@ -1182,6 +1491,15 @@ const drawFocusRing = (ctx, comp, index, screenPos) => {
 /* ================= SCENE FUNCTIONS ================= */
 const addScene = () => {
   if (!popupNode.value) return
+  
+  // CASE 3: Check if the last scene has an 'options' component
+  if (nodeScenes.value.length > 0) {
+      const lastScene = nodeScenes.value[nodeScenes.value.length - 1];
+      if (lastScene.components && lastScene.components.some(c => c.type === 'options')) {
+          alert("Cannot add more scenes. The final scene contains an Options component.");
+          return;
+      }
+  }
   
   const newSceneId = nodeScenes.value.length + 1
   const newScene = {
@@ -1735,8 +2053,47 @@ const initializePreviewCanvas = () => {
 
 const resizePreviewCanvas = () => {
     if (previewCanvasRef.value) {
-        previewCanvasRef.value.width = window.innerWidth
-        previewCanvasRef.value.height = window.innerHeight
+        // --- UPDATED PREVIEW CALCULATION LOGIC ---
+        
+        // 1. Get Reference Dimensions from Canvas_Status
+        let refW = 0, refH = 0;
+        
+        if (popupNode.value) {
+             const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
+             if (status && status.referenceWidth && status.referenceHeight) {
+                 refW = status.referenceWidth;
+                 refH = status.referenceHeight;
+             }
+        }
+        
+        // Fallback if not stored (e.g. legacy nodes or weird refresh)
+        if (!refW || !refH) {
+             refW = window.innerWidth * 0.75;
+             refH = window.innerHeight - 48;
+        }
+
+        const screenWidth = window.innerWidth;
+        const screenHeight = window.innerHeight;
+
+        // 2. Calculate the Constant 'k' (Multiplier)
+        // Logic: Keep multiplying ref dimensions until one side hits screen size
+        // This is equivalent to finding the minimum ratio
+        const scaleW = screenWidth / refW;
+        const scaleH = screenHeight / refH;
+        const k = Math.min(scaleW, scaleH);
+        
+        previewScale.value = k; // Store for drawing
+
+        // 3. Set Canvas Size based on Reference * Constant
+        const canvasWidth = refW * k;
+        const canvasHeight = refH * k;
+
+        previewCanvasRef.value.width = canvasWidth;
+        previewCanvasRef.value.height = canvasHeight;
+        
+        // Apply styles to force the calculated size
+        previewCanvasRef.value.style.width = `${canvasWidth}px`;
+        previewCanvasRef.value.style.height = `${canvasHeight}px`;
     }
 }
 
@@ -1752,12 +2109,8 @@ const advancePreview = () => {
         // Go to next scene
         if (currentPreviewSceneIndex.value < nodeScenes.value.length - 1) {
             currentPreviewSceneIndex.value++
-            currentPreviewComponentIndex.value = 0 // Show first component of new scene immediately? Or -1 to wait for click?
-            // "once you reach the final component of a scene... another click means go to the next scene... and render whatever's inside there"
-            // Let's interpret "render whatever's inside there" as loading the scene background, maybe start with 1st component or 0.
-            // Let's reset to -1 so first click in new scene shows first component, OR if you want seamless flow:
-            // "loading whatever the first component of the screen is" -> reset to 0
-             currentPreviewComponentIndex.value = 0
+            // Reset to -1 so next scene starts blank, requiring a click to show first element
+            currentPreviewComponentIndex.value = -1 
         } else {
             // End of sequence
             exitPreview()
@@ -1776,26 +2129,34 @@ const drawPreview = () => {
     // Clear
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     
+    // --- APPLY SCALE FOR PREVIEW ---
+    const scale = previewScale.value;
+    ctx.save();
+    ctx.scale(scale, scale);
+    
+    // Since we scaled the context, the 'canvas.width' (which is refW * scale) 
+    // now behaves like 'refW' in the coordinate system.
+    // We need to calculate center based on the *logical* (unscaled) dimensions.
+    const logicalWidth = canvas.width / scale;
+    const logicalHeight = canvas.height / scale;
+
     // 1. Draw Background of current scene
     const scene = nodeScenes.value[currentPreviewSceneIndex.value]
     if (scene) {
         ctx.fillStyle = scene.backgroundColor || '#000000'
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        // Fill rect based on logical dimensions
+        ctx.fillRect(0, 0, logicalWidth, logicalHeight)
         
         // 2. Draw Components up to current index
         const components = scene.components || []
         
-        // We need to map the graph coordinates (centered at 0,0) to screen coordinates
-        // The preview should probably center the graph view like the editor
-        const centerX = canvas.width / 2
-        const centerY = canvas.height / 2
+        const centerX = logicalWidth / 2
+        const centerY = logicalHeight / 2
         
-        // Draw all components up to the current index
         for (let i = 0; i <= currentPreviewComponentIndex.value; i++) {
             const comp = components[i]
             if (!comp) continue;
 
-            // Map coords (pixelsPerUnit = 2 as per editor)
             const pixelsPerUnit = 2
             const screenX = centerX + (comp.x * pixelsPerUnit)
             const screenY = centerY - (comp.y * pixelsPerUnit)
@@ -1807,12 +2168,13 @@ const drawPreview = () => {
             ctx.rotate((comp.rotation || 0) * Math.PI / 180)
             ctx.translate(-screenPos.x, -screenPos.y)
             
-            // Re-use the render logic
             renderComponent(ctx, comp, screenPos)
             
             ctx.restore()
         }
     }
+    
+    ctx.restore(); // Restore scale
 }
 
 const exitPreview = () => {
@@ -2092,6 +2454,10 @@ window.addEventListener('resize', () => {
                             style="max-width: 100%; max-height: 100%;"
                             controls
                           ></video>
+                        <div v-else-if="activeComponent.type === 'options'" 
+                             :style="{ width: '100px', height: '50px', border: '2px dashed #f87171', backgroundColor: 'rgba(31,41,55,0.5)', display: 'flex', alignItems:'center', justifyContent: 'center', color: '#f87171' }">
+                             Opt
+                        </div>
                         <div v-else style="color:white">?</div>
                     </div>
 
@@ -2103,6 +2469,109 @@ window.addEventListener('resize', () => {
                             @change="updateSceneContentDisplay"
                         />
                     </div>
+
+                    <div class="detail-section">
+                        <label class="detail-label">Layering:</label>
+                        <div class="layering-controls">
+                            <button class="layer-btn" @click="changeLayer('top')" title="Bring to Front">⇈</button>
+                            <button class="layer-btn" @click="changeLayer('up')" title="Bring Forward">↑</button>
+                            <button class="layer-btn" @click="changeLayer('down')" title="Send Backward">↓</button>
+                            <button class="layer-btn" @click="changeLayer('bottom')" title="Send to Back">⇊</button>
+                        </div>
+                    </div>
+                    
+                    <div class="separator"></div>
+
+                    <div v-if="activeComponent.type === 'options'" class="options-editor-panel">
+                        <div class="detail-section">
+                            <div class="scene-panel-header" style="margin-bottom: 12px; border-bottom: 0; padding: 0;">
+                                <span class="detail-label" style="font-size: 1rem;">Options List</span>
+                                <button class="add-content-btn" @click="addOptionToComponent" style="padding: 4px 8px;">+ Add Option</button>
+                            </div>
+                            
+                            <div class="options-list-container">
+                                <div v-for="(opt, index) in activeComponent.optionsList" :key="opt.id" class="option-list-item">
+                                    <input v-model="opt.text" class="detail-input" @input="drawComponents" />
+                                    <button class="remove-image-btn" @click="removeOptionFromComponent(index)">🗑️</button>
+                                </div>
+                                <div v-if="activeComponent.optionsList.length === 0" style="text-align:center; color: #6b7280; font-style:italic; padding: 10px;">
+                                    No options.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="detail-section">
+                            <label class="detail-label">Button Styles:</label>
+                            
+                            <div class="style-tabs">
+                                <button 
+                                    class="style-tab-btn" 
+                                    :class="{ active: activeStyleState === 'normal' }" 
+                                    @click="activeStyleState = 'normal'"
+                                >
+                                    Normal
+                                </button>
+                                <button 
+                                    class="style-tab-btn" 
+                                    :class="{ active: activeStyleState === 'hovered' }" 
+                                    @click="activeStyleState = 'hovered'"
+                                >
+                                    Hovered
+                                </button>
+                                <button 
+                                    class="style-tab-btn" 
+                                    :class="{ active: activeStyleState === 'clicked' }" 
+                                    @click="activeStyleState = 'clicked'"
+                                >
+                                    Clicked
+                                </button>
+                            </div>
+
+                            <div class="style-editor-box">
+                                <div class="detail-section">
+                                    <label class="detail-label">Background Color:</label>
+                                     <div class="color-picker-container">
+                                        <input type="color" v-model="activeComponent.styles[activeStyleState].backgroundColor" class="color-input" @input="drawComponents" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].backgroundColor }"></div>
+                                     </div>
+                                </div>
+                                
+                                <div class="detail-section">
+                                    <label class="detail-label">Text Color:</label>
+                                     <div class="color-picker-container">
+                                        <input type="color" v-model="activeComponent.styles[activeStyleState].color" class="color-input" @input="drawComponents" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].color }"></div>
+                                     </div>
+                                </div>
+                                
+                                <div class="detail-section">
+                                    <label class="detail-label">Border Color:</label>
+                                     <div class="color-picker-container">
+                                        <input type="color" v-model="activeComponent.styles[activeStyleState].borderColor" class="color-input" @input="drawComponents" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].borderColor }"></div>
+                                     </div>
+                                </div>
+
+                                <div class="detail-section">
+                                    <label class="detail-label">Border Width:</label>
+                                    <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderWidth" class="detail-input" @input="drawComponents" />
+                                </div>
+
+                                <div class="detail-section">
+                                    <label class="detail-label">Border Radius:</label>
+                                    <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderRadius" class="detail-input" @input="drawComponents" />
+                                </div>
+                                
+                                <div class="detail-section">
+                                    <label class="detail-label">Font Size:</label>
+                                    <input type="number" v-model.number="activeComponent.styles[activeStyleState].fontSize" class="detail-input" @input="drawComponents" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <div class="separator"></div>
 
                     <div class="detail-section">
                         <label class="detail-label">Position X:</label>
@@ -2118,6 +2587,7 @@ window.addEventListener('resize', () => {
                             <input type="number" v-model.number="activeComponent.y" class="number-input" @input="updateActiveComponentPosition" />
                         </div>
                     </div>
+                    
                     <div class="detail-section">
                         <label class="detail-label">Width (px):</label>
                         <div class="input-row">
@@ -2127,10 +2597,20 @@ window.addEventListener('resize', () => {
                     </div>
                     
                     <div class="detail-section">
-                        <label class="detail-label">Rotation (deg):</label>
+                        <label class="detail-label">Height (px):</label>
                         <div class="input-row">
-                            <input type="range" v-model.number="activeComponent.rotation" min="0" max="360" class="range-input" @input="updateActiveComponentPosition" />
-                            <input type="number" v-model.number="activeComponent.rotation" class="number-input" @input="updateActiveComponentPosition" />
+                            <input type="range" v-model.number="activeComponent.height" min="10" max="600" class="range-input" @input="updateActiveComponentSize" />
+                            <input type="number" v-model.number="activeComponent.height" class="number-input" @input="updateActiveComponentSize" />
+                        </div>
+                    </div>
+
+                    <div v-if="activeComponent.type !== 'options'">
+                        <div class="detail-section">
+                            <label class="detail-label">Rotation (deg):</label>
+                            <div class="input-row">
+                                <input type="range" v-model.number="activeComponent.rotation" min="0" max="360" class="range-input" @input="updateActiveComponentPosition" />
+                                <input type="number" v-model.number="activeComponent.rotation" class="number-input" @input="updateActiveComponentPosition" />
+                            </div>
                         </div>
                     </div>
 
@@ -2213,16 +2693,6 @@ window.addEventListener('resize', () => {
                         </div>
                     </div>
 
-                    <div class="detail-section">
-                        <label class="detail-label">Layering:</label>
-                        <div class="layering-controls">
-                            <button class="layer-btn" @click="changeLayer('top')" title="Bring to Front">⇈</button>
-                            <button class="layer-btn" @click="changeLayer('up')" title="Bring Forward">↑</button>
-                            <button class="layer-btn" @click="changeLayer('down')" title="Send Backward">↓</button>
-                            <button class="layer-btn" @click="changeLayer('bottom')" title="Send to Back">⇊</button>
-                        </div>
-                    </div>
-
                 </div>
               </div>
 
@@ -2245,7 +2715,6 @@ window.addEventListener('resize', () => {
 
   </div>
 </template>
-
 <style scoped>
   .wrapper { 
     width: 100vw; 
@@ -2569,7 +3038,7 @@ window.addEventListener('resize', () => {
       min-height: 200px; /* Ensure scenes always have space */
       overflow: hidden; /* Contain inner scroll */
   }
-  
+   
   .audio-box {
       flex-shrink: 0;
       background: rgba(0, 0, 0, 0.2);
@@ -2728,7 +3197,7 @@ window.addEventListener('resize', () => {
       padding: 4px;
       line-height: 1;
   }
-  
+   
   .remove-audio-btn:hover {
       background: rgba(248, 113, 113, 0.2);
       border-radius: 4px;
@@ -2835,7 +3304,7 @@ window.addEventListener('resize', () => {
     align-items: center;
     gap: 12px;
   }
-  
+   
   /* Checkbox Row */
   .checkbox-row {
     display: flex;
@@ -2867,7 +3336,7 @@ window.addEventListener('resize', () => {
     border-color: #00ff88;
     color: #00ff88;
   }
-  
+   
   /* Formatting Controls */
   .formatting-controls {
     display: flex;
@@ -2875,7 +3344,7 @@ window.addEventListener('resize', () => {
     margin-top: 8px;
     align-items: center;
   }
-  
+   
   .format-btn {
     width: 30px;
     height: 30px;
@@ -2887,17 +3356,17 @@ window.addEventListener('resize', () => {
     font-weight: bold;
     font-size: 14px;
   }
-  
+   
   .format-btn:hover {
     background: rgba(255,255,255,0.1);
   }
-  
+   
   .format-btn.active {
     background: #00ff88;
     color: #000;
     border-color: #00ff88;
   }
-  
+   
   .mini-color-input {
       width: 30px;
       height: 30px;
@@ -3038,6 +3507,8 @@ window.addEventListener('resize', () => {
   .hover-green:hover { background-color: rgba(0, 255, 136, 0.2); }
   .hover-blue:hover { background-color: rgba(59, 130, 246, 0.2); }
   .hover-yellow:hover { background-color: rgba(234, 179, 8, 0.2); }
+  .hover-red:hover { background-color: rgba(248, 113, 113, 0.2); } /* Red for options */
+
 
   /* Scene Content Body Styles - UPDATED FOR SEPARATE IMAGE CONTAINERS */
   .scene-content-body {
@@ -3059,9 +3530,9 @@ window.addEventListener('resize', () => {
   }
 
   /* ==========================================================================
-      UPDATED IMAGE CONTAINER STYLES (Single Line Layout)
-      ========================================================================== */
-  
+     UPDATED IMAGE CONTAINER STYLES (Single Line Layout)
+     ========================================================================== */
+   
   :deep(.image-container) {
     background: rgba(255, 255, 255, 0.08);
     border-radius: 6px;
@@ -3111,10 +3582,11 @@ window.addEventListener('resize', () => {
     left: 0;
     top: 0;
   }
-  
+   
   :deep(.bg-green) { background-color: #00ff88; }
   :deep(.bg-blue) { background-color: #3b82f6; }
   :deep(.bg-yellow) { background-color: #eab308; }
+  :deep(.bg-red) { background-color: #f87171; } /* Red for options */
 
   /* Drag Handle (New) */
   :deep(.image-drag-handle) {
@@ -3125,7 +3597,7 @@ window.addEventListener('resize', () => {
     order: 4; /* Pushed to the end visually as requested */
     margin-left: 4px;
   }
-  
+   
   :deep(.image-drag-handle:hover) {
     color: rgba(255, 255, 255, 0.8);
   }
@@ -3300,7 +3772,7 @@ window.addEventListener('resize', () => {
   .preview-close-btn:hover {
       background: #ff0000;
   }
-  
+   
   .preview-hint {
       position: absolute;
       bottom: 20px;
@@ -3322,5 +3794,67 @@ window.addEventListener('resize', () => {
   .fade-enter-from,
   .fade-leave-to {
     opacity: 0;
+  }
+  
+  /* Separator */
+  .separator {
+      height: 1px;
+      background: rgba(255,255,255,0.1);
+      margin: 16px 0;
+  }
+  
+  /* OPTIONS EDITOR STYLES */
+  .options-editor-panel {
+      background: rgba(0,0,0,0.2);
+      padding: 12px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.05);
+  }
+  
+  .options-list-container {
+      max-height: 150px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 16px;
+  }
+  
+  .option-list-item {
+      display: flex;
+      gap: 8px;
+  }
+  
+  .style-tabs {
+      display: flex;
+      background: rgba(255,255,255,0.05);
+      border-radius: 6px;
+      padding: 4px;
+      margin-bottom: 12px;
+  }
+  
+  .style-tab-btn {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: #9ca3af;
+      padding: 6px;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      transition: all 0.2s;
+  }
+  
+  .style-tab-btn.active {
+      background: #374151;
+      color: #fff;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+  }
+  
+  .style-editor-box {
+      border: 1px solid rgba(255,255,255,0.05);
+      padding: 12px;
+      border-radius: 6px;
   }
 </style>
