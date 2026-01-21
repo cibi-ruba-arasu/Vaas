@@ -55,11 +55,12 @@ let dragOffset = { x: 0, y: 0 }
 let menuDragging = false
 
 const NODE_W = 180
-const NODE_H = 110
+const NODE_H = 110 // Base Height
 const HEADER_H = 28
 const NODE_RADIUS = 12
 const ARROW_OFFSET = 14
 const ARROW_HIT_R = 10
+const OPTION_ROW_H = 30 // Height per option row
 
 let hoveredArrow = null
 let connectingLine = null 
@@ -68,7 +69,7 @@ let connectingLine = null
 const showPopup = ref(false)
 const popupNode = ref(null)
 const popupAnimation = ref(false)
-let animationFrameId = null // To handle the video render loop
+let animationFrameId = null 
 
 /* ================= PREVIEW MODE STATE ================= */
 const isPreviewMode = ref(false)
@@ -77,7 +78,7 @@ let previewCtx = null
 const currentPreviewSceneIndex = ref(0)
 const currentPreviewComponentIndex = ref(-1) 
 const previewAudioElement = ref(null)
-const previewScale = ref(1) // Stores the calculated constant factor
+const previewScale = ref(1) 
 
 /* ================= GRAPH SETTINGS ================= */
 const graphCanvasRef = ref(null)
@@ -109,7 +110,7 @@ const activeComponent = ref(null)
 // Text Selection State
 const textSelection = ref({ start: 0, end: 0, text: '' })
 // Options Component Style Editor State
-const activeStyleState = ref('normal') // 'normal', 'hovered', 'clicked'
+const activeStyleState = ref('normal') 
 
 /* ================= SCENE SETTINGS ================= */
 const sceneSettings = ref({
@@ -128,28 +129,23 @@ const handleAudioUpload = (event) => {
   const file = event.target.files[0]
   if (!file) return
 
-  // Store minimal details with default volume and loop
   sequenceAudio.value = {
     name: file.name,
     url: URL.createObjectURL(file),
-    volume: 1.0, // Default 100%
-    loop: true   // Default Loop on
+    volume: 1.0, 
+    loop: true   
   }
 
-  // Update Status immediately
   updateNodeAudioInStatus()
-   
-  // Reset input so same file can be selected again if needed
   event.target.value = ''
 }
 
 const removeAudio = (e) => {
-  if (e) e.stopPropagation() // Prevent triggering upload
+  if (e) e.stopPropagation() 
   sequenceAudio.value = null
   updateNodeAudioInStatus()
 }
 
-// Ensure volume/loop updates are saved
 const updateAudioProperties = () => {
     updateNodeAudioInStatus()
 }
@@ -161,7 +157,6 @@ const updateNodeAudioInStatus = () => {
     if (nodeStatusIndex !== -1) {
         Canvas_Status.value[nodeStatusIndex].audio = sequenceAudio.value
     } else {
-         // Create if doesn't exist (edge case, usually created on drag)
         Canvas_Status.value.push({ 
             index: popupNode.value.id, 
             x: popupNode.value.x, 
@@ -170,10 +165,64 @@ const updateNodeAudioInStatus = () => {
             Next: null, 
             scenes: [],
             audio: sequenceAudio.value,
+            options: [],
             Node_name: `Node ${popupNode.value.id}` 
         })
     }
 }
+
+/* ================= SYNC OPTIONS TO CANVAS STATUS ================= */
+const updateNodeOptionsInStatus = () => {
+    if (!popupNode.value) return
+    const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
+    if (!status) return
+
+    // Logic: Options must be in the LAST scene
+    // We check nodeScenes (and if we are currently editing the last scene, we check sceneComponents)
+    
+    // 1. Get List of scenes
+    // We use the local 'nodeScenes' ref because it tracks the state in popup
+    const scenes = nodeScenes.value || []
+    if (scenes.length === 0) {
+        status.options = []
+        return
+    }
+
+    const lastScene = scenes[scenes.length - 1]
+    
+    // 2. Get components for the last scene
+    let comps = lastScene.components || []
+    
+    // If we are currently editing the last scene, use the live 'sceneComponents'
+    if (selectedScene.value && selectedScene.value.id === lastScene.id) {
+        comps = sceneComponents.value
+    }
+
+    // 3. Find Options Component
+    const optionsComp = comps.find(c => c.type === 'options')
+
+    if (optionsComp && optionsComp.optionsList) {
+        // 4. Map to Status
+        // Preserve 'next' connection if the ID matches an existing option
+        const oldOptions = status.options || []
+        
+        status.options = optionsComp.optionsList.map(opt => {
+            const existing = oldOptions.find(o => o.id === opt.id)
+            return {
+                id: opt.id,
+                text: opt.text,
+                // Preserve the next connection if it exists, otherwise null
+                next: existing ? existing.next : null 
+            }
+        })
+    } else {
+        status.options = []
+    }
+    
+    // Trigger main canvas redraw to show new arrowheads
+    draw() 
+}
+
 
 /* ================= SCENES MANAGEMENT ================= */
 const nodeScenes = ref([]) 
@@ -187,7 +236,7 @@ const addDropdownOptions = [
   { id: 'image', label: 'Image', colorClass: 'hover-green' },
   { id: 'text', label: 'Text', colorClass: 'hover-blue' },
   { id: 'video', label: 'Video', colorClass: 'hover-yellow' },
-  { id: 'options', label: 'Options', colorClass: 'hover-red' } // Added Options
+  { id: 'options', label: 'Options', colorClass: 'hover-red' } 
 ]
 
 const toggleAddDropdown = () => {
@@ -195,7 +244,6 @@ const toggleAddDropdown = () => {
 }
 
 const selectAddOption = (option) => {
-  // CASE 1 & 2: Check if current scene is the last scene
   const isLastScene = selectedScene.value && nodeScenes.value.length > 0 && selectedScene.value.id === nodeScenes.value[nodeScenes.value.length - 1].id;
 
   if (option.id === 'options') {
@@ -204,7 +252,6 @@ const selectAddOption = (option) => {
           showAddDropdown.value = false;
           return;
       }
-      // Check if options already exist in this scene
       const hasOptions = sceneComponents.value.some(c => c.type === 'options');
       if (hasOptions) {
            alert("This scene already has an Options component.");
@@ -228,7 +275,6 @@ const closeAddDropdown = () => {
 
 /* ================= OPTIONS HANDLING ================= */
 const addOptionsComponent = () => {
-    // Default Styles Template
     const defaultBtnStyle = {
         backgroundColor: '#374151',
         color: '#ffffff',
@@ -252,18 +298,19 @@ const addOptionsComponent = () => {
             { id: 1, text: 'Option 1' },
             { id: 2, text: 'Option 2' }
         ],
-        // Styles for different states
         styles: {
             normal: { ...defaultBtnStyle },
             hovered: { ...defaultBtnStyle, backgroundColor: '#4b5563', borderColor: '#00ff88' },
             clicked: { ...defaultBtnStyle, backgroundColor: '#1f2937', borderColor: '#00ff88', borderWidth: 2 }
         },
-        // Runtime State
         _hoveredOptionIndex: -1,
         _clickedOptionIndex: -1
     }
-    // Options always goes to the end
     sceneComponents.value.push(newOption)
+    
+    // Sync to Node Status immediately
+    updateNodeOptionsInStatus()
+    
     updateSceneContentDisplay()
     drawComponents()
 }
@@ -274,14 +321,31 @@ const addOptionToComponent = () => {
         ? Math.max(...activeComponent.value.optionsList.map(o => o.id)) + 1 
         : 1;
     activeComponent.value.optionsList.push({ id: newId, text: `Option ${newId}` });
+    
+    // Sync
+    updateNodeOptionsInStatus()
+    
     drawComponents();
 }
 
 const removeOptionFromComponent = (index) => {
     if(!activeComponent.value || activeComponent.value.type !== 'options') return;
     activeComponent.value.optionsList.splice(index, 1);
+    
+    // Sync
+    updateNodeOptionsInStatus()
+    
     drawComponents();
 }
+
+// Watch active component to sync text changes in options
+watch(() => activeComponent.value?.optionsList, (newVal) => {
+    if (activeComponent.value && activeComponent.value.type === 'options') {
+        updateNodeOptionsInStatus()
+        drawComponents() // Redraw to update text
+    }
+}, { deep: true })
+
 
 /* ================= TEXT HANDLING ================= */
 const addTextComponent = () => {
@@ -310,7 +374,6 @@ const addTextComponent = () => {
     url: '', 
   }
    
-  // Insert logic: If options exists, insert BEFORE it.
   const optionsIndex = sceneComponents.value.findIndex(c => c.type === 'options');
   if (optionsIndex !== -1) {
       sceneComponents.value.splice(optionsIndex, 0, newText);
@@ -322,7 +385,6 @@ const addTextComponent = () => {
   drawComponents()
 }
 
-// Text Selection Handler
 const handleTextSelect = (e) => {
     const input = e.target
     if (input.selectionStart !== input.selectionEnd) {
@@ -379,15 +441,13 @@ const handleVideoUpload = (event) => {
   reader.onload = (e) => {
     const videoUrl = e.target.result
     
-    // Create DOM video element
     const vid = document.createElement('video')
     vid.src = videoUrl
-    vid.loop = true // Default loop
-    vid.muted = false // Default unmuted
+    vid.loop = true 
+    vid.muted = false 
     vid.autoplay = true
     vid.playsInline = true
     
-    // We need to wait for metadata to get dimensions
     vid.onloadedmetadata = () => {
       const maxSize = 300
       let width = vid.videoWidth
@@ -415,15 +475,14 @@ const handleVideoUpload = (event) => {
         height: height,
         rotation: 0,
         aspectRatio: ratio,
-        videoElement: vid, // Store the DOM element to draw it
+        videoElement: vid, 
         isLoop: true,
         isMuted: false,
-        bgMusicVolume: 0.2 // Default background ducking volume (20%)
+        bgMusicVolume: 0.2 
       }
 
-      vid.play() // Start playing in Editor
+      vid.play() 
       
-      // Insert logic: Before Options if exists
       const optionsIndex = sceneComponents.value.findIndex(c => c.type === 'options');
       if (optionsIndex !== -1) {
           sceneComponents.value.splice(optionsIndex, 0, newVideo);
@@ -463,8 +522,6 @@ const handleImageUpload = (event) => {
    
   reader.onload = (e) => {
     const imageUrl = e.target.result
-    
-    // Preload Image Object here
     const img = new Image()
     
     const newImage = {
@@ -479,7 +536,7 @@ const handleImageUpload = (event) => {
       rotation: 0,
       originalFile: file, 
       aspectRatio: 1,
-      imgObject: img // Store the loaded image object
+      imgObject: img 
     }
     
     img.onload = () => {
@@ -505,7 +562,6 @@ const handleImageUpload = (event) => {
       newImage.naturalWidth = img.width
       newImage.naturalHeight = img.height
       
-      // Insert logic: Before Options if exists
       const optionsIndex = sceneComponents.value.findIndex(c => c.type === 'options');
       if (optionsIndex !== -1) {
           sceneComponents.value.splice(optionsIndex, 0, newImage);
@@ -514,7 +570,7 @@ const handleImageUpload = (event) => {
       }
       
       updateSceneContentDisplay()
-      drawComponents() // Force a draw once loaded
+      drawComponents() 
     }
     img.src = imageUrl
   }
@@ -525,7 +581,6 @@ const handleImageUpload = (event) => {
 
 /* ================= LIST REORDERING & DOM DISPLAY ================= */
 const updateSceneContentDisplay = () => {
-  // Use nextTick to ensure DOM is updated if view just changed
   nextTick(() => {
     const contentBody = document.querySelector('.scene-content-body')
     if (contentBody) {
@@ -537,7 +592,6 @@ const updateSceneContentDisplay = () => {
             imageContainer.className = 'image-container'
             imageContainer.dataset.index = index
             
-            // Disable drag for 'options' component
             if (comp.type !== 'options') {
                 imageContainer.draggable = true 
             }
@@ -547,16 +601,14 @@ const updateSceneContentDisplay = () => {
             if (comp.type === 'image') indicator.classList.add('bg-green')
             else if (comp.type === 'text') indicator.classList.add('bg-blue')
             else if (comp.type === 'video') indicator.classList.add('bg-yellow')
-            else if (comp.type === 'options') indicator.classList.add('bg-red') // Red for options
+            else if (comp.type === 'options') indicator.classList.add('bg-red') 
             
-            // Only show drag handle for non-options
             if (comp.type !== 'options') {
                 const dragHandle = document.createElement('div')
                 dragHandle.className = 'image-drag-handle'
                 dragHandle.innerHTML = '⋮⋮⋮⋮' 
                 dragHandle.title = 'Drag to reorder'
                 
-                // Listen to Handle Interaction
                 dragHandle.addEventListener('mousedown', () => { isHandleActive = true })
                 dragHandle.addEventListener('mouseup', () => { isHandleActive = false })
                 
@@ -623,10 +675,8 @@ const updateSceneContentDisplay = () => {
             })
 
             /* --- DRAG AND DROP EVENTS --- */
-            // Skip drag events for options
             if (comp.type !== 'options') {
                 imageContainer.addEventListener('dragstart', (e) => {
-                    // Only allow drag if handle was grabbed
                     if (!isHandleActive) {
                         e.preventDefault()
                         return
@@ -637,7 +687,7 @@ const updateSceneContentDisplay = () => {
                 })
 
                 imageContainer.addEventListener('dragover', (e) => {
-                    e.preventDefault() // Necessary to allow dropping
+                    e.preventDefault() 
                     e.dataTransfer.dropEffect = 'move'
                     imageContainer.classList.add('over')
                     return false
@@ -655,22 +705,16 @@ const updateSceneContentDisplay = () => {
                     e.stopPropagation()
                     e.preventDefault()
                     
-                    // Swap Logic
                     if (dragSourceIndex !== null && dragSourceIndex !== index) {
-                        // Remove from old index
                         const item = sceneComponents.value.splice(dragSourceIndex, 1)[0]
-                        // Insert at new index
                         sceneComponents.value.splice(index, 0, item)
                         
-                        // Enforce: If options exists, move it to the end
-                        // This prevents dragging items visually below the Options component
                         const optIdx = sceneComponents.value.findIndex(c => c.type === 'options');
                         if (optIdx !== -1 && optIdx !== sceneComponents.value.length - 1) {
                              const opt = sceneComponents.value.splice(optIdx, 1)[0];
                              sceneComponents.value.push(opt);
                         }
                         
-                        // Refresh View
                         updateSceneContentDisplay()
                         drawComponents()
                     }
@@ -680,7 +724,6 @@ const updateSceneContentDisplay = () => {
                 imageContainer.addEventListener('dragend', () => {
                     isHandleActive = false
                     dragSourceIndex = null
-                    // Cleanup visuals
                     document.querySelectorAll('.image-container').forEach(el => {
                         el.classList.remove('over')
                         el.classList.remove('dragging')
@@ -707,7 +750,16 @@ const removeComponent = (index) => {
   if (activeComponent.value && sceneComponents.value[index].id === activeComponent.value.id) {
     closeComponentEditor()
   }
+  
+  // Update Status if we removed the options component
+  const wasOptions = sceneComponents.value[index].type === 'options'
+  
   sceneComponents.value.splice(index, 1)
+  
+  if (wasOptions) {
+      updateNodeOptionsInStatus()
+  }
+
   updateSceneContentDisplay()
   drawComponents()
 }
@@ -724,10 +776,7 @@ const onGraphMouseDown = (event) => {
     
     const coords = screenToGraphCoords(mouseX, mouseY)
     
-    // Check backwards for top-most (Visual layering check)
     let clickedComp = null
-    // sceneComponents is ordered Bottom -> Top for drawing.
-    // Iterating backwards finds the "Top" element first.
     for (let i = sceneComponents.value.length - 1; i >= 0; i--) {
       const comp = sceneComponents.value[i]
       const halfW = comp.width / 2
@@ -742,21 +791,13 @@ const onGraphMouseDown = (event) => {
         
         clickedComp = comp
         
-        // --- Option Button Click Handling ---
         if (comp.type === 'options' && comp.optionsList) {
-             // We need to check if we clicked a specific button inside
-             // Transform world coord to local component space
-             // Since we handle rotation at center:
-             // 1. Translate point relative to center
-             // 2. Rotate point backwards
-             
              const dx = coords.x - comp.x;
              const dy = coords.y - comp.y;
              const rad = -(comp.rotation || 0) * Math.PI / 180;
              const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
              const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
              
-             // Reconstruct Button Layout Logic (must match renderComponent)
              const btnHeight = 40;
              const btnGap = 10;
              const totalHeight = (comp.optionsList.length * btnHeight) + ((comp.optionsList.length - 1) * btnGap);
@@ -770,7 +811,6 @@ const onGraphMouseDown = (event) => {
                     comp._clickedOptionIndex = j;
                     drawComponents();
                     setTimeout(() => { comp._clickedOptionIndex = -1; drawComponents(); }, 150);
-                    // Prevent dragging if button clicked? Maybe. For now allow selection.
                 }
              }
         }
@@ -784,7 +824,6 @@ const onGraphMouseDown = (event) => {
         
         if (viewMode.value === 'componentEditor') {
             activeComponent.value = clickedComp
-            // Reset text selection if switching
             textSelection.value = { start: 0, end: 0, text: '' }
             if (activeComponent.value.type === 'options') {
                 activeStyleState.value = 'normal';
@@ -819,7 +858,6 @@ const onGraphMouseMove = (event) => {
   if (mouseX >= rect.left && mouseX <= rect.right && 
       mouseY >= rect.top && mouseY <= rect.bottom) {
     
-    // Check for hovers on options components
     const coords = screenToGraphCoords(mouseX, mouseY)
     let needsRedraw = false;
     
@@ -827,14 +865,11 @@ const onGraphMouseMove = (event) => {
         if (comp.type === 'options') {
              const dx = coords.x - comp.x;
              const dy = coords.y - comp.y;
-             // Inverse Rotate
              const rad = -(comp.rotation || 0) * Math.PI / 180;
              const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
              const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
              
-             // Check bounds
              if (Math.abs(localX) <= comp.width/2 && Math.abs(localY) <= comp.height/2) {
-                 // Inside box, check buttons
                  const btnHeight = 40;
                  const btnGap = 10;
                  const totalHeight = (comp.optionsList.length * btnHeight) + ((comp.optionsList.length - 1) * btnGap);
@@ -843,7 +878,6 @@ const onGraphMouseMove = (event) => {
                  
                  for (let j = 0; j < comp.optionsList.length; j++) {
                     const btnY = startY + (j * (btnHeight + btnGap));
-                    // Buttons have 20px padding from sides
                     if (localX >= -(comp.width/2 - 20) && localX <= (comp.width/2 - 20) &&
                         localY >= btnY && localY <= btnY + btnHeight) {
                         foundHover = j;
@@ -871,8 +905,6 @@ const onGraphMouseMove = (event) => {
       comp.x = coords.x - dragComponentOffset.value.x
       comp.y = coords.y - dragComponentOffset.value.y
       
-      // We rely on the animation loop for continuous drawing, 
-      // but drawing here makes drag smoother if loop is slow
       drawComponents()
     }
   }
@@ -890,7 +922,7 @@ const onGraphMouseUp = () => {
 const openComponentEditor = (comp) => {
     activeComponent.value = comp
     viewMode.value = 'componentEditor'
-    textSelection.value = { start: 0, end: 0, text: '' } // Reset
+    textSelection.value = { start: 0, end: 0, text: '' } 
     if (comp.type === 'options') {
         activeStyleState.value = 'normal';
     }
@@ -902,7 +934,6 @@ const closeComponentEditor = () => {
     viewMode.value = 'sceneDetails'
     drawComponents() 
     
-    // Use nextTick to ensure the view has switched and the DOM element .scene-content-body exists
     nextTick(() => {
         updateSceneContentDisplay() 
     })
@@ -934,19 +965,12 @@ const changeLayer = (action) => {
     const hasOptions = arr.some(c => c.type === 'options');
     const isOptions = activeComponent.value.type === 'options';
 
-    // Rule: Options component must always be last (highest Z).
-    // If active is Options, it cannot move down if it's already last, and up/top is irrelevant.
-    // Actually, if it's Options, it CANNOT change layer because it must stay on top.
     if (isOptions) {
-        // Options is strictly locked to top.
         return;
     }
-
-    // If active is NOT options, it cannot move past options.
-    // 'Top' means 'index before options'.
     
     const lastIndex = arr.length - 1;
-    const maxIndex = hasOptions ? lastIndex - 1 : lastIndex; // If options exist, max index for normal items is len-2
+    const maxIndex = hasOptions ? lastIndex - 1 : lastIndex; 
 
     if (action === 'up') {
         if (idx < maxIndex) {
@@ -961,13 +985,7 @@ const changeLayer = (action) => {
             arr[idx - 1] = temp
         }
     } else if (action === 'top') {
-        // Move to maxIndex
         const [item] = arr.splice(idx, 1)
-        // If hasOptions, insert at len-1 (which is index of options, pushing options to len)
-        // Wait, splice insert at index X puts it BEFORE item at X.
-        // If we want it at maxIndex (visually top of normal items):
-        // If array is [A, B, Options], len=3. Options at 2. maxIndex = 1.
-        // We want [A, Item, Options]. Splice at 2 puts it before options.
         if (hasOptions) {
              const insertPos = arr.findIndex(c => c.type === 'options');
              arr.splice(insertPos, 0, item);
@@ -1047,10 +1065,9 @@ const startRenderLoop = () => {
     if (showPopup.value) {
         drawComponents()
     }
-    // Also render preview if active
     if (isPreviewMode.value) {
         drawPreview()
-        checkAudioDucking() // Check if volume needs to be adjusted
+        checkAudioDucking() 
     }
     animationFrameId = requestAnimationFrame(loop)
   }
@@ -1062,8 +1079,10 @@ const closePopup = () => {
     updateSceneDetails()
   }
   
-  // STOP VIDEOS WHEN CLOSING POPUP
   stopEditorVideos()
+
+  // FINAL SYNC of Options before closing to ensure main graph is updated
+  updateNodeOptionsInStatus()
 
   popupAnimation.value = false
   isDraggingComponent.value = false
@@ -1084,7 +1103,7 @@ const closePopup = () => {
     sceneComponents.value = []
     viewMode.value = 'scenes'
     editingNodeName.value = "" 
-    sequenceAudio.value = null // Clear audio selection on close
+    sequenceAudio.value = null 
   }, 300) 
 }
 
@@ -1106,7 +1125,7 @@ const initializeGraphCanvas = () => {
   
   if (selectedScene.value) {
     drawGraph()
-    startRenderLoop() // Start rendering loop for animations/videos
+    startRenderLoop() 
   }
 }
 
@@ -1121,7 +1140,6 @@ const resizeGraphCanvas = () => {
     imagesCanvasRef.value.width = rect.width
     imagesCanvasRef.value.height = rect.height
 
-    // --- STORE REFERENCE DIMENSIONS IN CANVAS_STATUS ---
     if (popupNode.value) {
         const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
         if (status) {
@@ -1299,24 +1317,21 @@ const drawComponents = () => {
   
   if (sceneComponents.value.length === 0) return
   
-  // Draw all components in array order (Array order dictates Z-index)
   sceneComponents.value.forEach((comp, index) => {
     const screenPos = graphToScreenCoords(comp.x, comp.y)
     
     ctx.save()
-    // Handle Rotation
     ctx.translate(screenPos.x, screenPos.y)
     ctx.rotate( (comp.rotation || 0) * Math.PI / 180)
     ctx.translate(-screenPos.x, -screenPos.y)
 
-    renderComponent(ctx, comp, screenPos) // Refactored drawing logic into helper
+    renderComponent(ctx, comp, screenPos) 
 
-    ctx.restore() // Restore rotation context
+    ctx.restore() 
     drawFocusRing(ctx, comp, index, screenPos)
   })
 }
 
-// Helper: Renders a single component on a canvas context
 const renderComponent = (ctx, comp, screenPos) => {
     if (comp.type === 'image') {
         if (comp.imgObject) {
@@ -1398,35 +1413,28 @@ const renderComponent = (ctx, comp, screenPos) => {
         
         ctx.translate(-screenPos.x, -screenPos.y)
     } else if (comp.type === 'options') {
-        // Render Options Component
         ctx.translate(screenPos.x, screenPos.y) 
         
-        // Background - Transparent with border container
         ctx.fillStyle = 'rgba(31, 41, 55, 0.3)'; 
-        // Dashed border for visual distinction of the container
         ctx.setLineDash([5, 5]);
-        ctx.strokeStyle = '#f87171'; // Red border
+        ctx.strokeStyle = '#f87171'; 
         ctx.lineWidth = 1;
         drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, 8);
         ctx.fill();
         ctx.stroke();
-        ctx.setLineDash([]); // Reset dash for buttons
+        ctx.setLineDash([]); 
         
-        // --- DRAW OPTION BUTTONS ---
         if (comp.optionsList && comp.optionsList.length > 0) {
             const btnHeight = 40;
             const btnGap = 10;
-            // Center buttons vertically
             const totalContentHeight = (comp.optionsList.length * btnHeight) + ((comp.optionsList.length - 1) * btnGap);
             const startY = - (totalContentHeight / 2);
             
-            // Width with some padding inside the container
             const btnWidth = comp.width - 40;
             
             comp.optionsList.forEach((option, index) => {
                 const yPos = startY + (index * (btnHeight + btnGap));
                 
-                // Determine Style State
                 let style = comp.styles.normal;
                 if (comp._clickedOptionIndex === index) {
                     style = comp.styles.clicked;
@@ -1434,14 +1442,12 @@ const renderComponent = (ctx, comp, screenPos) => {
                     style = comp.styles.hovered;
                 }
                 
-                // Draw Button Background
                 if (style.backgroundColor && style.backgroundColor !== 'transparent') {
                     ctx.fillStyle = style.backgroundColor;
                     drawRoundedRectPaths(ctx, -(btnWidth/2), yPos, btnWidth, btnHeight, style.borderRadius);
                     ctx.fill();
                 }
                 
-                // Draw Button Border
                 if (style.borderWidth > 0 && style.borderColor && style.borderColor !== 'transparent') {
                     ctx.strokeStyle = style.borderColor;
                     ctx.lineWidth = style.borderWidth;
@@ -1449,7 +1455,6 @@ const renderComponent = (ctx, comp, screenPos) => {
                     ctx.stroke();
                 }
                 
-                // Draw Text
                 ctx.fillStyle = style.color;
                 ctx.font = `${style.fontSize}px ${style.fontFamily || 'sans-serif'}`;
                 ctx.textAlign = 'center';
@@ -1462,7 +1467,6 @@ const renderComponent = (ctx, comp, screenPos) => {
     }
 }
 
-// Helper to draw rounded rect path
 const drawRoundedRectPaths = (ctx, x, y, w, h, r) => {
     ctx.beginPath()
     ctx.moveTo(x + r, y)
@@ -1503,7 +1507,6 @@ const drawFocusRing = (ctx, comp, index, screenPos) => {
 const addScene = () => {
   if (!popupNode.value) return
   
-  // CASE 3: Check if the last scene has an 'options' component
   if (nodeScenes.value.length > 0) {
       const lastScene = nodeScenes.value[nodeScenes.value.length - 1];
       if (lastScene.components && lastScene.components.some(c => c.type === 'options')) {
@@ -1542,7 +1545,6 @@ const deleteScene = (sceneId) => {
   updateNodeScenesInStatus()
 }
 
-// HELPER TO STOP VIDEOS WHEN LEAVING EDITOR
 const stopEditorVideos = () => {
     sceneComponents.value.forEach(comp => {
         if (comp.type === 'video' && comp.videoElement) {
@@ -1564,14 +1566,16 @@ const selectScene = (scene) => {
     imagesCtx.clearRect(0, 0, imagesCanvasRef.value.width, imagesCanvasRef.value.height)
   }
   drawGraph()
-  startRenderLoop() // Ensure render loop starts if we select scene directly
+  startRenderLoop() 
 }
 
 const saveSceneAndGoBack = () => {
   if (!selectedScene.value) return
   
-  // STOP VIDEOS before leaving
   stopEditorVideos();
+
+  // Sync options before saving
+  updateNodeOptionsInStatus()
 
   updateSceneDetails()
   
@@ -1591,8 +1595,10 @@ const saveSceneAndGoBack = () => {
 
 const goBackToScenes = () => {
   if (selectedScene.value) {
-    // STOP VIDEOS before leaving
     stopEditorVideos();
+
+    // Sync options before going back
+    updateNodeOptionsInStatus()
 
     updateSceneDetails()
     
@@ -1650,6 +1656,7 @@ const updateNodeScenesInStatus = () => {
         components: scene.components || [] 
       })),
       audio: sequenceAudio.value,
+      options: [],
       Node_name: `Node ${popupNode.value.id}` 
     })
   }
@@ -1679,24 +1686,67 @@ const drawRoundedRect = (x, y, w, h, r) => {
 }
 
 const arrowHit = (n, wx, wy) => {
-  const leftAy = n.y - NODE_H / 2 + HEADER_H / 2
-  const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
+  // Check if node has multiple options in status
+  const status = Canvas_Status.value.find(s => s.index === n.id);
+  const hasOptions = status && status.options && status.options.length > 0;
 
-  const rightAy = n.y + HEADER_H / 2
-  const rightAx = n.x + NODE_W / 2 - ARROW_OFFSET
+  if (hasOptions) {
+      // Logic for multiple outputs
+      const options = status.options;
+      const totalH = Math.max(NODE_H, HEADER_H + (options.length * OPTION_ROW_H) + 10);
+      const startY = n.y - totalH / 2 + HEADER_H + 20; // 20px padding below header
 
-  if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) return { node: n, side: "left", x: leftAx, y: leftAy }
-  if (Math.hypot(wx - rightAx, wy - rightAy) < ARROW_HIT_R) return { node: n, side: "right", x: rightAx, y: rightAy }
+      // Check each option arrow
+      for (let i = 0; i < options.length; i++) {
+          const optY = startY + (i * OPTION_ROW_H);
+          const optX = n.x + NODE_W / 2 - ARROW_OFFSET; // Right side
+          
+          if (Math.hypot(wx - optX, wy - optY) < ARROW_HIT_R) {
+              return { 
+                  node: n, 
+                  side: "right", 
+                  x: optX, 
+                  y: optY,
+                  optionIndex: i,
+                  optionId: options[i].id
+              }
+          }
+      }
+      
+      // Left Side (Input) remains standard
+      const leftAy = n.y - totalH / 2 + HEADER_H / 2
+      const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
+      if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) 
+          return { node: n, side: "left", x: leftAx, y: leftAy }
+
+  } else {
+      // STANDARD Single Output Logic
+      const leftAy = n.y - NODE_H / 2 + HEADER_H / 2
+      const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
+
+      const rightAy = n.y + HEADER_H / 2
+      const rightAx = n.x + NODE_W / 2 - ARROW_OFFSET
+
+      if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) return { node: n, side: "left", x: leftAx, y: leftAy }
+      if (Math.hypot(wx - rightAx, wy - rightAy) < ARROW_HIT_R) return { node: n, side: "right", x: rightAx, y: rightAy }
+  }
+  
   return null
 }
 
 const getNodeAt = (wx, wy) =>
   nodes.value.find(
-    n =>
-      wx >= n.x - NODE_W / 2 &&
-      wx <= n.x + NODE_W / 2 &&
-      wy >= n.y - NODE_H / 2 &&
-      wy <= n.y + NODE_H / 2
+    n => {
+       const status = Canvas_Status.value.find(s => s.index === n.id);
+       const h = (status && status.options && status.options.length > 0) 
+           ? Math.max(NODE_H, HEADER_H + (status.options.length * OPTION_ROW_H) + 10) 
+           : NODE_H;
+       
+       return wx >= n.x - NODE_W / 2 &&
+              wx <= n.x + NODE_W / 2 &&
+              wy >= n.y - h / 2 &&
+              wy <= n.y + h / 2
+    }
   )
 
 /* ================= DRAW ================= */
@@ -1777,33 +1827,40 @@ const drawAxes = (w, h) => {
   ctx.stroke()
 }
 
-/* ================= DRAW NODES ================= */
+/* ================= DRAW NODES (UPDATED) ================= */
 const drawNodes = () => {
   for (const n of nodes.value) {
     const x = n.x
     const y = n.y
+    const status = Canvas_Status.value.find(s => s.index === n.id)
+    
+    // Check for Options to determine height
+    const hasOptions = status && status.options && status.options.length > 0;
+    const currentH = hasOptions 
+        ? Math.max(NODE_H, HEADER_H + (status.options.length * OPTION_ROW_H) + 10) 
+        : NODE_H;
 
     if (n.id === selectedNodeId.value) {
       ctx.strokeStyle = "#fff"
       ctx.lineWidth = 3 / scale
-      drawRoundedRect(x - NODE_W / 2 - 4, y - NODE_H / 2 - 4, NODE_W + 8, NODE_H + 8, NODE_RADIUS + 2)
+      drawRoundedRect(x - NODE_W / 2 - 4, y - currentH / 2 - 4, NODE_W + 8, currentH + 8, NODE_RADIUS + 2)
       ctx.stroke()
     }
 
     ctx.fillStyle = "#5f6f82"
-    drawRoundedRect(x - NODE_W / 2, y - NODE_H / 2, NODE_W, NODE_H, NODE_RADIUS)
+    drawRoundedRect(x - NODE_W / 2, y - currentH / 2, NODE_W, currentH, NODE_RADIUS)
     ctx.fill()
 
-    const grad = ctx.createLinearGradient(x - NODE_W / 2, y - NODE_H / 2, x + NODE_W / 2, y - NODE_H / 2)
+    const grad = ctx.createLinearGradient(x - NODE_W / 2, y - currentH / 2, x + NODE_W / 2, y - currentH / 2)
     grad.addColorStop(0, "#ff2a2a")
     grad.addColorStop(1, "#000")
     ctx.fillStyle = grad
-    drawRoundedRect(x - NODE_W / 2, y - NODE_H / 2, NODE_W, HEADER_H, NODE_RADIUS)
+    drawRoundedRect(x - NODE_W / 2, y - currentH / 2, NODE_W, HEADER_H, NODE_RADIUS)
     ctx.fill()
 
     ctx.strokeStyle = "#cbd5e1"
     ctx.lineWidth = 2
-    drawRoundedRect(x - NODE_W / 2, y - NODE_H / 2, NODE_W, NODE_H, NODE_RADIUS)
+    drawRoundedRect(x - NODE_W / 2, y - currentH / 2, NODE_W, currentH, NODE_RADIUS)
     ctx.stroke()
 
     ctx.fillStyle = "#fff"
@@ -1811,9 +1868,7 @@ const drawNodes = () => {
     ctx.textAlign = "center"
     ctx.textBaseline = "middle"
     
-    const status = Canvas_Status.value.find(s => s.index === n.id)
     let label = status ? (status.Node_name || `Node ${n.id}`) : "General Node"
-    
     const maxWidth = NODE_W - 30 
     
     if (ctx.measureText(label).width > maxWidth) {
@@ -1823,51 +1878,135 @@ const drawNodes = () => {
       label += "..."
     }
     
-    ctx.fillText(label, x, y - NODE_H / 2 + HEADER_H / 2)
+    ctx.fillText(label, x, y - currentH / 2 + HEADER_H / 2)
 
-    const leftAy = y - NODE_H / 2 + HEADER_H / 2
+    // Left Input Arrow (Always present)
+    const leftAy = y - currentH / 2 + HEADER_H / 2
     const leftAx = x - NODE_W / 2 + ARROW_OFFSET
-
-    const rightAy = y + HEADER_H / 2
-    const rightAx = x + NODE_W / 2 - ARROW_OFFSET
-
-    if (hoveredArrow?.node === n) {
-      ctx.beginPath()
-      ctx.arc(hoveredArrow.x, hoveredArrow.y, 9, 0, Math.PI * 2)
-      ctx.strokeStyle = "#fff"
-      ctx.lineWidth = 2 / scale
-      ctx.stroke()
-    }
-
+    
     ctx.fillStyle = "#fff"
     ctx.font = "16px sans-serif"
-    ctx.textAlign = "center"
-    ctx.textBaseline = "middle"
     ctx.fillText("▷", leftAx, leftAy)
-    ctx.fillText("▷", rightAx, rightAy)
+
+    // Right Output Arrows (Conditional)
+    if (hasOptions) {
+        // Draw Multiple Option Arrows
+        const startY = y - currentH / 2 + HEADER_H + 20;
+        
+        status.options.forEach((opt, idx) => {
+             const optY = startY + (idx * OPTION_ROW_H);
+             const optX = x + NODE_W / 2 - ARROW_OFFSET;
+
+             // Draw Hover Circle
+             if (hoveredArrow?.node === n && hoveredArrow.optionIndex === idx) {
+                 ctx.beginPath()
+                 ctx.arc(optX, optY, 9, 0, Math.PI * 2)
+                 ctx.strokeStyle = "#fff"
+                 ctx.lineWidth = 2 / scale
+                 ctx.stroke()
+             }
+             
+             // Draw Arrow
+             ctx.fillStyle = "#fff"
+             ctx.textAlign = "center"
+             ctx.fillText("▷", optX, optY)
+             
+             // Draw Option Label
+             ctx.textAlign = "right"
+             ctx.font = "11px sans-serif"
+             ctx.fillStyle = "#e2e8f0"
+             
+             let optLabel = opt.text || `Option ${idx+1}`
+             // Truncate
+             if (ctx.measureText(optLabel).width > NODE_W - 50) {
+                  optLabel = optLabel.substring(0, 15) + "..."
+             }
+             ctx.fillText(optLabel, optX - 15, optY)
+        });
+
+    } else {
+        // Standard Single Output
+        const rightAy = y + HEADER_H / 2
+        const rightAx = x + NODE_W / 2 - ARROW_OFFSET
+
+        if (hoveredArrow?.node === n && hoveredArrow.side === "right") {
+            ctx.beginPath()
+            ctx.arc(hoveredArrow.x, hoveredArrow.y, 9, 0, Math.PI * 2)
+            ctx.strokeStyle = "#fff"
+            ctx.lineWidth = 2 / scale
+            ctx.stroke()
+        }
+        
+        ctx.fillStyle = "#fff"
+        ctx.font = "16px sans-serif"
+        ctx.textAlign = "center"
+        ctx.fillText("▷", rightAx, rightAy)
+    }
   }
 }
 
-/* ================= DRAW CONNECTIONS ================= */
+/* ================= DRAW CONNECTIONS (UPDATED) ================= */
 const drawConnections = () => {
   ctx.strokeStyle = "#fff"
   ctx.lineWidth = 4 / scale
   for (const n of Canvas_Status.value) {
-    if (n.Next != null) {
+      
+    // 1. Draw Option Connections
+    if (n.options && n.options.length > 0) {
+        const fromNode = nodes.value.find(nd => nd.id === n.index)
+        if (fromNode) {
+            // Recalc height to find start position
+            const h = Math.max(NODE_H, HEADER_H + (n.options.length * OPTION_ROW_H) + 10);
+            const startY = fromNode.y - h / 2 + HEADER_H + 20;
+
+            n.options.forEach((opt, idx) => {
+                if (opt.next) {
+                    const toNode = nodes.value.find(nd => nd.id === opt.next)
+                    if (toNode) {
+                        const fromX = fromNode.x + NODE_W / 2 - ARROW_OFFSET
+                        const fromY = startY + (idx * OPTION_ROW_H)
+                        
+                        // Check target node height for input position
+                        const targetStatus = Canvas_Status.value.find(s => s.index === toNode.id)
+                        const targetH = (targetStatus && targetStatus.options && targetStatus.options.length > 0) 
+                             ? Math.max(NODE_H, HEADER_H + (targetStatus.options.length * OPTION_ROW_H) + 10) 
+                             : NODE_H;
+                        
+                        const toX = toNode.x - NODE_W / 2 + ARROW_OFFSET
+                        const toY = toNode.y - targetH / 2 + HEADER_H / 2
+                        
+                        ctx.beginPath()
+                        ctx.moveTo(fromX, fromY)
+                        ctx.lineTo(toX, toY)
+                        ctx.stroke()
+                    }
+                }
+            })
+        }
+    } 
+    // 2. Draw Standard 'Next' Connection (Only if no options, or as fallback)
+    else if (n.Next != null) {
       const fromNode = nodes.value.find(nd => nd.id === n.index)
       const toNode = nodes.value.find(nd => nd.id === n.Next)
-      if (!fromNode || !toNode) continue
-      
-      const fromX = fromNode.x + NODE_W / 2 - ARROW_OFFSET
-      const fromY = fromNode.y + HEADER_H / 2
+      if (fromNode && toNode) {
+          
+        const fromX = fromNode.x + NODE_W / 2 - ARROW_OFFSET
+        const fromY = fromNode.y + HEADER_H / 2
+        
+        // Check target node height
+        const targetStatus = Canvas_Status.value.find(s => s.index === toNode.id)
+        const targetH = (targetStatus && targetStatus.options && targetStatus.options.length > 0) 
+                ? Math.max(NODE_H, HEADER_H + (targetStatus.options.length * OPTION_ROW_H) + 10) 
+                : NODE_H;
 
-      const toX = toNode.x - NODE_W / 2 + ARROW_OFFSET
-      const toY = toNode.y - NODE_H / 2 + HEADER_H / 2
+        const toX = toNode.x - NODE_W / 2 + ARROW_OFFSET
+        const toY = toNode.y - targetH / 2 + HEADER_H / 2
 
-      ctx.beginPath()
-      ctx.moveTo(fromX, fromY)
-      ctx.lineTo(toX, toY)
-      ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(fromX, fromY)
+        ctx.lineTo(toX, toY)
+        ctx.stroke()
+      }
     }
   }
 }
@@ -1894,7 +2033,13 @@ const onMouseDown = e => {
   for (const n of nodes.value) {
     const hit = arrowHit(n, w.x, w.y)
     if (hit?.side === "right") {
-      outputDragging = { node: n, fromX: hit.x, fromY: hit.y }
+      outputDragging = { 
+          node: n, 
+          fromX: hit.x, 
+          fromY: hit.y,
+          optionIndex: hit.optionIndex, // Capture specific option
+          optionId: hit.optionId 
+      }
       connectingLine = { fromNode: n, fromX: hit.x, fromY: hit.y, toX: hit.x, toY: hit.y }
       return
     }
@@ -1969,9 +2114,21 @@ const onMouseUp = e => {
       const hit = arrowHit(nd, w.x, w.y)
       return hit?.side === "left" && nd.id !== outputDragging.node.id
     })
+    
     if (targetNode) {
       const cs = Canvas_Status.value.find(s => s.index === outputDragging.node.id)
-      if (cs) cs.Next = targetNode.id
+      if (cs) {
+          // Check if dragging from an option
+          if (outputDragging.optionIndex !== undefined && cs.options) {
+               // Update specific option target
+               if (cs.options[outputDragging.optionIndex]) {
+                   cs.options[outputDragging.optionIndex].next = targetNode.id
+               }
+          } else {
+               // Standard update
+               cs.Next = targetNode.id
+          }
+      }
     }
     connectingLine = null
     outputDragging = null
@@ -1990,6 +2147,7 @@ const onMouseUp = e => {
       Next: null, 
       scenes: [],
       audio: null,
+      options: [],
       Node_name: `Node ${id}` 
     })
     selectedNodeId.value = id
@@ -2050,22 +2208,19 @@ const startPreview = () => {
         return
     }
 
-    // Stop any existing videos to ensure clean start
     stopAllVideos();
 
     isPreviewMode.value = true
     currentPreviewSceneIndex.value = 0
-    currentPreviewComponentIndex.value = -1 // Start with blank slate, first click shows first component
+    currentPreviewComponentIndex.value = -1 
     
-    // Play Audio
     if (sequenceAudio.value && sequenceAudio.value.url) {
         previewAudioElement.value = new Audio(sequenceAudio.value.url)
-        previewAudioElement.value.volume = sequenceAudio.value.volume || 1.0 // Set Volume
-        previewAudioElement.value.loop = (sequenceAudio.value.loop !== false) // Set Loop (Default true)
+        previewAudioElement.value.volume = sequenceAudio.value.volume || 1.0 
+        previewAudioElement.value.loop = (sequenceAudio.value.loop !== false) 
         previewAudioElement.value.play().catch(e => console.log("Autoplay prevented:", e))
     }
 
-    // Go full screen
     const previewContainer = document.querySelector('.preview-overlay')
     if (previewContainer && previewContainer.requestFullscreen) {
         previewContainer.requestFullscreen()
@@ -2085,9 +2240,6 @@ const initializePreviewCanvas = () => {
 
 const resizePreviewCanvas = () => {
     if (previewCanvasRef.value) {
-        // --- UPDATED PREVIEW CALCULATION LOGIC ---
-        
-        // 1. Get Reference Dimensions from Canvas_Status
         let refW = 0, refH = 0;
         
         if (popupNode.value) {
@@ -2098,7 +2250,6 @@ const resizePreviewCanvas = () => {
              }
         }
         
-        // Fallback if not stored (e.g. legacy nodes or weird refresh)
         if (!refW || !refH) {
              refW = window.innerWidth * 0.75;
              refH = window.innerHeight - 48;
@@ -2107,35 +2258,29 @@ const resizePreviewCanvas = () => {
         const screenWidth = window.innerWidth;
         const screenHeight = window.innerHeight;
 
-        // 2. Calculate the Constant 'k' (Multiplier)
-        // Logic: Keep multiplying ref dimensions until one side hits screen size
-        // This is equivalent to finding the minimum ratio
         const scaleW = screenWidth / refW;
         const scaleH = screenHeight / refH;
         const k = Math.min(scaleW, scaleH);
         
-        previewScale.value = k; // Store for drawing
+        previewScale.value = k; 
 
-        // 3. Set Canvas Size based on Reference * Constant
         const canvasWidth = refW * k;
         const canvasHeight = refH * k;
 
         previewCanvasRef.value.width = canvasWidth;
         previewCanvasRef.value.height = canvasHeight;
         
-        // Apply styles to force the calculated size
         previewCanvasRef.value.style.width = `${canvasWidth}px`;
         previewCanvasRef.value.style.height = `${canvasHeight}px`;
     }
 }
 
-// === NEW HELPER FUNCTIONS FOR VIDEO ===
 const stopVideosInScene = (scene) => {
     if (!scene || !scene.components) return;
     scene.components.forEach(comp => {
         if (comp.type === 'video' && comp.videoElement) {
             comp.videoElement.pause();
-            comp.videoElement.currentTime = 0; // Reset video
+            comp.videoElement.currentTime = 0; 
         }
     })
 }
@@ -2145,15 +2290,12 @@ const stopAllVideos = () => {
 }
 
 const advancePreview = () => {
-    // Current Scene
     const currentScene = nodeScenes.value[currentPreviewSceneIndex.value]
     const components = currentScene.components || []
 
-    // Logic: Increment component index. If we pass the last component, go to next scene.
     if (currentPreviewComponentIndex.value < components.length - 1) {
         currentPreviewComponentIndex.value++
         
-        // Play video if the revealed component is a video
         const comp = components[currentPreviewComponentIndex.value]
         if (comp.type === 'video' && comp.videoElement) {
              comp.videoElement.currentTime = 0;
@@ -2161,25 +2303,20 @@ const advancePreview = () => {
         }
 
     } else {
-        // Go to next scene
         if (currentPreviewSceneIndex.value < nodeScenes.value.length - 1) {
-            // STOP ALL VIDEOS IN PREVIOUS SCENE
             stopVideosInScene(currentScene);
 
             currentPreviewSceneIndex.value++
-            // Reset to -1 so next scene starts blank, requiring a click to show first element
             currentPreviewComponentIndex.value = -1 
         } else {
-            // End of sequence
             exitPreview()
             return
         }
     }
     drawPreview()
-    checkAudioDucking() // Check if volume needs to be ducked for video
+    checkAudioDucking() 
 }
 
-// Logic to fade volume if current component is video
 const checkAudioDucking = () => {
     if (!previewAudioElement.value || !sequenceAudio.value) return;
 
@@ -2192,36 +2329,26 @@ const checkAudioDucking = () => {
     const comp = components[currentPreviewComponentIndex.value]
 
     if (comp && comp.type === 'video') {
-        // Video is active component
         const vidEl = comp.videoElement;
         
-        // If video is looping, it never 'ends', so we stay ducked.
-        // If video is NOT looping, we check if it has ended.
         const isLooping = comp.isLoop; 
         const hasEnded = vidEl ? vidEl.ended : false;
 
-        // Use the per-video background volume, defaulting to 0.2 if not set
         const duckVolume = comp.bgMusicVolume !== undefined ? comp.bgMusicVolume : 0.2;
 
         if (isLooping) {
-            // Keep ducked
             targetVolume = baseVolume * duckVolume; 
         } else {
-            // Not looping
             if (!hasEnded) {
-                // Still playing, duck
                 targetVolume = baseVolume * duckVolume;
             } else {
-                // Ended, fade back up
                 targetVolume = baseVolume;
             }
         }
     } 
-    // Else (image/text/options) -> targetVolume remains baseVolume
 
-    // Apply smooth fade
     const currentVol = previewAudioElement.value.volume;
-    const step = 0.02; // Slower fade for smoothness
+    const step = 0.02; 
 
     if (Math.abs(currentVol - targetVolume) > 0.01) {
         if (currentVol < targetVolume) {
@@ -2238,28 +2365,20 @@ const drawPreview = () => {
     const canvas = previewCanvasRef.value
     const ctx = previewCtx
     
-    // Clear
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     
-    // --- APPLY SCALE FOR PREVIEW ---
     const scale = previewScale.value;
     ctx.save();
     ctx.scale(scale, scale);
     
-    // Since we scaled the context, the 'canvas.width' (which is refW * scale) 
-    // now behaves like 'refW' in the coordinate system.
-    // We need to calculate center based on the *logical* (unscaled) dimensions.
     const logicalWidth = canvas.width / scale;
     const logicalHeight = canvas.height / scale;
 
-    // 1. Draw Background of current scene
     const scene = nodeScenes.value[currentPreviewSceneIndex.value]
     if (scene) {
         ctx.fillStyle = scene.backgroundColor || '#000000'
-        // Fill rect based on logical dimensions
         ctx.fillRect(0, 0, logicalWidth, logicalHeight)
         
-        // 2. Draw Components up to current index
         const components = scene.components || []
         
         const centerX = logicalWidth / 2
@@ -2286,7 +2405,7 @@ const drawPreview = () => {
         }
     }
     
-    ctx.restore(); // Restore scale
+    ctx.restore(); 
 }
 
 const exitPreview = () => {
@@ -2298,13 +2417,11 @@ const exitPreview = () => {
         previewAudioElement.value = null
     }
     
-    // STOP ALL VIDEOS ON EXIT
     stopAllVideos();
 
     isPreviewMode.value = false
 }
 
-// Hook resize for preview too
 window.addEventListener('resize', () => {
     if (isPreviewMode.value) {
         resizePreviewCanvas()
