@@ -1,7 +1,4 @@
-{
-type: "file_content",
-fileName: "Canvas.vue",
-fullContent: `<script setup>
+<script setup>
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from "vue"
 import { useRoute } from "vue-router"
 
@@ -131,11 +128,12 @@ const handleAudioUpload = (event) => {
   const file = event.target.files[0]
   if (!file) return
 
-  // Store minimal details
+  // Store minimal details with default volume and loop
   sequenceAudio.value = {
     name: file.name,
-    // In a real app, you might upload this and get a URL, or create an ObjectURL
-    url: URL.createObjectURL(file) 
+    url: URL.createObjectURL(file),
+    volume: 1.0, // Default 100%
+    loop: true   // Default Loop on
   }
 
   // Update Status immediately
@@ -146,9 +144,14 @@ const handleAudioUpload = (event) => {
 }
 
 const removeAudio = (e) => {
-  e.stopPropagation() // Prevent triggering upload
+  if (e) e.stopPropagation() // Prevent triggering upload
   sequenceAudio.value = null
   updateNodeAudioInStatus()
+}
+
+// Ensure volume/loop updates are saved
+const updateAudioProperties = () => {
+    updateNodeAudioInStatus()
 }
 
 const updateNodeAudioInStatus = () => {
@@ -414,10 +417,11 @@ const handleVideoUpload = (event) => {
         aspectRatio: ratio,
         videoElement: vid, // Store the DOM element to draw it
         isLoop: true,
-        isMuted: false
+        isMuted: false,
+        bgMusicVolume: 0.2 // Default background ducking volume (20%)
       }
 
-      vid.play() // Start playing
+      vid.play() // Start playing in Editor
       
       // Insert logic: Before Options if exists
       const optionsIndex = sceneComponents.value.findIndex(c => c.type === 'options');
@@ -1046,6 +1050,7 @@ const startRenderLoop = () => {
     // Also render preview if active
     if (isPreviewMode.value) {
         drawPreview()
+        checkAudioDucking() // Check if volume needs to be adjusted
     }
     animationFrameId = requestAnimationFrame(loop)
   }
@@ -1057,6 +1062,9 @@ const closePopup = () => {
     updateSceneDetails()
   }
   
+  // STOP VIDEOS WHEN CLOSING POPUP
+  stopEditorVideos()
+
   popupAnimation.value = false
   isDraggingComponent.value = false
   draggingComponentIndex.value = null
@@ -1534,6 +1542,15 @@ const deleteScene = (sceneId) => {
   updateNodeScenesInStatus()
 }
 
+// HELPER TO STOP VIDEOS WHEN LEAVING EDITOR
+const stopEditorVideos = () => {
+    sceneComponents.value.forEach(comp => {
+        if (comp.type === 'video' && comp.videoElement) {
+            comp.videoElement.pause();
+        }
+    })
+}
+
 const selectScene = (scene) => {
   selectedScene.value = { ...scene }
   viewMode.value = 'sceneDetails'
@@ -1552,6 +1569,10 @@ const selectScene = (scene) => {
 
 const saveSceneAndGoBack = () => {
   if (!selectedScene.value) return
+  
+  // STOP VIDEOS before leaving
+  stopEditorVideos();
+
   updateSceneDetails()
   
   const sceneIndex = nodeScenes.value.findIndex(scene => scene.id === selectedScene.value.id)
@@ -1570,6 +1591,9 @@ const saveSceneAndGoBack = () => {
 
 const goBackToScenes = () => {
   if (selectedScene.value) {
+    // STOP VIDEOS before leaving
+    stopEditorVideos();
+
     updateSceneDetails()
     
     const sceneIndex = nodeScenes.value.findIndex(scene => scene.id === selectedScene.value.id)
@@ -2026,6 +2050,9 @@ const startPreview = () => {
         return
     }
 
+    // Stop any existing videos to ensure clean start
+    stopAllVideos();
+
     isPreviewMode.value = true
     currentPreviewSceneIndex.value = 0
     currentPreviewComponentIndex.value = -1 // Start with blank slate, first click shows first component
@@ -2033,6 +2060,8 @@ const startPreview = () => {
     // Play Audio
     if (sequenceAudio.value && sequenceAudio.value.url) {
         previewAudioElement.value = new Audio(sequenceAudio.value.url)
+        previewAudioElement.value.volume = sequenceAudio.value.volume || 1.0 // Set Volume
+        previewAudioElement.value.loop = (sequenceAudio.value.loop !== false) // Set Loop (Default true)
         previewAudioElement.value.play().catch(e => console.log("Autoplay prevented:", e))
     }
 
@@ -2100,17 +2129,43 @@ const resizePreviewCanvas = () => {
     }
 }
 
+// === NEW HELPER FUNCTIONS FOR VIDEO ===
+const stopVideosInScene = (scene) => {
+    if (!scene || !scene.components) return;
+    scene.components.forEach(comp => {
+        if (comp.type === 'video' && comp.videoElement) {
+            comp.videoElement.pause();
+            comp.videoElement.currentTime = 0; // Reset video
+        }
+    })
+}
+
+const stopAllVideos = () => {
+    nodeScenes.value.forEach(scene => stopVideosInScene(scene));
+}
+
 const advancePreview = () => {
     // Current Scene
-    const scene = nodeScenes.value[currentPreviewSceneIndex.value]
-    const components = scene.components || []
+    const currentScene = nodeScenes.value[currentPreviewSceneIndex.value]
+    const components = currentScene.components || []
 
     // Logic: Increment component index. If we pass the last component, go to next scene.
     if (currentPreviewComponentIndex.value < components.length - 1) {
         currentPreviewComponentIndex.value++
+        
+        // Play video if the revealed component is a video
+        const comp = components[currentPreviewComponentIndex.value]
+        if (comp.type === 'video' && comp.videoElement) {
+             comp.videoElement.currentTime = 0;
+             comp.videoElement.play().catch(e => console.error("Auto-play prevented", e));
+        }
+
     } else {
         // Go to next scene
         if (currentPreviewSceneIndex.value < nodeScenes.value.length - 1) {
+            // STOP ALL VIDEOS IN PREVIOUS SCENE
+            stopVideosInScene(currentScene);
+
             currentPreviewSceneIndex.value++
             // Reset to -1 so next scene starts blank, requiring a click to show first element
             currentPreviewComponentIndex.value = -1 
@@ -2121,6 +2176,60 @@ const advancePreview = () => {
         }
     }
     drawPreview()
+    checkAudioDucking() // Check if volume needs to be ducked for video
+}
+
+// Logic to fade volume if current component is video
+const checkAudioDucking = () => {
+    if (!previewAudioElement.value || !sequenceAudio.value) return;
+
+    const baseVolume = sequenceAudio.value.volume || 1.0;
+    let targetVolume = baseVolume;
+
+    const scene = nodeScenes.value[currentPreviewSceneIndex.value];
+    if (!scene) return;
+    const components = scene.components || []
+    const comp = components[currentPreviewComponentIndex.value]
+
+    if (comp && comp.type === 'video') {
+        // Video is active component
+        const vidEl = comp.videoElement;
+        
+        // If video is looping, it never 'ends', so we stay ducked.
+        // If video is NOT looping, we check if it has ended.
+        const isLooping = comp.isLoop; 
+        const hasEnded = vidEl ? vidEl.ended : false;
+
+        // Use the per-video background volume, defaulting to 0.2 if not set
+        const duckVolume = comp.bgMusicVolume !== undefined ? comp.bgMusicVolume : 0.2;
+
+        if (isLooping) {
+            // Keep ducked
+            targetVolume = baseVolume * duckVolume; 
+        } else {
+            // Not looping
+            if (!hasEnded) {
+                // Still playing, duck
+                targetVolume = baseVolume * duckVolume;
+            } else {
+                // Ended, fade back up
+                targetVolume = baseVolume;
+            }
+        }
+    } 
+    // Else (image/text/options) -> targetVolume remains baseVolume
+
+    // Apply smooth fade
+    const currentVol = previewAudioElement.value.volume;
+    const step = 0.02; // Slower fade for smoothness
+
+    if (Math.abs(currentVol - targetVolume) > 0.01) {
+        if (currentVol < targetVolume) {
+            previewAudioElement.value.volume = Math.min(targetVolume, currentVol + step);
+        } else {
+            previewAudioElement.value.volume = Math.max(targetVolume, currentVol - step);
+        }
+    }
 }
 
 const drawPreview = () => {
@@ -2188,6 +2297,10 @@ const exitPreview = () => {
         previewAudioElement.value.pause()
         previewAudioElement.value = null
     }
+    
+    // STOP ALL VIDEOS ON EXIT
+    stopAllVideos();
+
     isPreviewMode.value = false
 }
 
@@ -2200,7 +2313,6 @@ window.addEventListener('resize', () => {
 })
 
 </script>
-
 <template>
   <div class="wrapper">
     <canvas ref="canvasRef" class="canvas" @mousedown="onMouseDown" @wheel="onWheel" />
@@ -2360,12 +2472,38 @@ window.addEventListener('resize', () => {
                         <div v-if="!sequenceAudio" class="audio-upload-placeholder" @click="triggerAudioUpload">
                              <span>🎵 Click to add audio</span>
                         </div>
-                        <div v-else class="audio-file-display">
-                             <div class="audio-icon">🔊</div>
-                             <div class="audio-info">
-                                 <div class="audio-filename">{{ sequenceAudio.name }}</div>
+                        <div v-else>
+                             <div class="audio-file-display">
+                                 <div class="audio-icon">🔊</div>
+                                 <div class="audio-info">
+                                     <div class="audio-filename">{{ sequenceAudio.name }}</div>
+                                 </div>
+                                 <button class="remove-audio-btn" @click="removeAudio">✕</button>
                              </div>
-                             <button class="remove-audio-btn" @click="removeAudio">✕</button>
+
+                             <div class="audio-controls">
+                                <div class="audio-control-row">
+                                    <span class="audio-control-label">Volume:</span>
+                                    <input 
+                                        type="range" 
+                                        v-model.number="sequenceAudio.volume" 
+                                        min="0" max="1" step="0.05" 
+                                        class="range-input audio-range"
+                                        @change="updateAudioProperties"
+                                    />
+                                    <span class="audio-val-text">{{ Math.round((sequenceAudio.volume || 1) * 100) }}%</span>
+                                </div>
+                                <div class="audio-control-row">
+                                    <label class="audio-checkbox-label">
+                                        <input 
+                                            type="checkbox" 
+                                            v-model="sequenceAudio.loop"
+                                            @change="updateAudioProperties"
+                                        />
+                                        Loop Audio
+                                    </label>
+                                </div>
+                             </div>
                         </div>
                     </div>
                 </div>
@@ -2629,6 +2767,24 @@ window.addEventListener('resize', () => {
                                 <label class="detail-label" style="margin-bottom:0;">Mute:</label>
                                 <input type="checkbox" v-model="activeComponent.isMuted" @change="updateVideoProperties" />
                              </div>
+                        </div>
+                        
+                        <div class="detail-section">
+                            <label class="detail-label">Background Music Volume:</label>
+                            <div class="input-row">
+                                <input 
+                                    type="range" 
+                                    v-model.number="activeComponent.bgMusicVolume" 
+                                    min="0" max="1" step="0.05"
+                                    class="range-input"
+                                />
+                                <span style="color: #00ff88; font-family: monospace; width: 40px; text-align:right;">
+                                    {{ Math.round((activeComponent.bgMusicVolume || 0.2) * 100) }}%
+                                </span>
+                            </div>
+                            <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; font-style: italic;">
+                                Music volume when this video plays.
+                            </div>
                         </div>
                     </div>
 
@@ -3172,6 +3328,7 @@ window.addEventListener('resize', () => {
       background: rgba(255, 255, 255, 0.08);
       padding: 10px;
       border-radius: 6px;
+      margin-bottom: 12px;
   }
 
   .audio-icon {
@@ -3206,6 +3363,47 @@ window.addEventListener('resize', () => {
       border-radius: 4px;
   }
 
+  /* NEW AUDIO CONTROLS STYLES */
+  .audio-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 4px 0;
+  }
+
+  .audio-control-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #e2e8f0;
+      font-size: 0.9rem;
+  }
+
+  .audio-control-label {
+      min-width: 50px;
+      font-weight: 500;
+      color: #9ca3af;
+  }
+
+  .audio-range {
+      flex: 1;
+  }
+
+  .audio-val-text {
+      font-family: monospace;
+      font-size: 0.85rem;
+      color: #00ff88;
+      width: 40px;
+      text-align: right;
+  }
+
+  .audio-checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+  }
 
   /* Scene Details View Styles */
   .back-btn {
