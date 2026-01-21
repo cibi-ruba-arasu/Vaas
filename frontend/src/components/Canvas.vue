@@ -1,4 +1,7 @@
-<script setup>
+{
+type: "file_content",
+fileName: "Canvas.vue",
+fullContent: `<script setup>
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from "vue"
 import { useRoute } from "vue-router"
 
@@ -164,7 +167,7 @@ const updateNodeAudioInStatus = () => {
             Next: null, 
             scenes: [],
             audio: sequenceAudio.value,
-            Node_name: `Node ${popupNode.value.id}`
+            Node_name: `Node ${popupNode.value.id}` 
         })
     }
 }
