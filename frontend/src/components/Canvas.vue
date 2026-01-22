@@ -13,10 +13,35 @@ const toggleMenu = () => (menuOpen.value = !menuOpen.value)
 
 // --- NEW: Project Settings State ---
 const showProjectSettings = ref(false)
+const rootNodeId = ref(null) // Stores the ID of the starting node
 
 const toggleProjectSettings = () => {
   showProjectSettings.value = !showProjectSettings.value
 }
+
+// --- NEW: Play Project Logic ---
+const playProjectFromRoot = () => {
+  if (rootNodeId.value === null || rootNodeId.value === "") {
+    alert("Please set a Root Node (Starting Point) in the Project Settings first.")
+    showProjectSettings.value = true // Auto-open settings
+    return
+  }
+  
+  // Convert to number just in case the select value is a string
+  const targetId = Number(rootNodeId.value)
+  
+  // Check if node exists
+  const status = Canvas_Status.value.find(s => s.index === targetId)
+  if (!status) {
+      alert("The selected Root Node no longer exists.")
+      rootNodeId.value = null
+      return
+  }
+
+  // Reuse the existing preview loader to start the game loop
+  loadNodeForPreview(targetId)
+}
+
 // Fullscreen Logic
 const isFullscreen = ref(false)
 
@@ -2762,20 +2787,27 @@ const handleOptionNavigation = (compId, optionId) => {
 const loadNodeForPreview = (targetNodeId) => {
     const targetStatus = Canvas_Status.value.find(s => s.index === targetNodeId);
     if (!targetStatus) {
+        alert("Error: Target node data not found.");
         exitPreview();
         return;
     }
 
+    // 1. ACTIVATE PREVIEW MODE (This was missing!)
+    isPreviewMode.value = true;
+
+    // 2. Stop any existing media
     stopAllVideos();
     if (previewAudioElement.value) {
         previewAudioElement.value.pause();
         previewAudioElement.value = null;
     }
 
+    // 3. Load Node Data
     const realNode = nodes.value.find(n => n.id === targetNodeId);
     popupNode.value = realNode || { id: targetNodeId, x: 0, y: 0 }; 
 
     if (targetStatus.scenes) {
+      // Deep copy scenes to ensure we don't mutate original status during preview
       nodeScenes.value = targetStatus.scenes.map(s => ({
           ...s,
           components: s.components ? [...s.components] : [] 
@@ -2784,6 +2816,7 @@ const loadNodeForPreview = (targetNodeId) => {
       nodeScenes.value = [];
     }
 
+    // 4. Setup Audio
     sequenceAudio.value = targetStatus.audio || null;
     if (sequenceAudio.value && sequenceAudio.value.url) {
         previewAudioElement.value = new Audio(sequenceAudio.value.url);
@@ -2792,20 +2825,29 @@ const loadNodeForPreview = (targetNodeId) => {
         previewAudioElement.value.play().catch(e => console.log("Autoplay prevented:", e));
     }
 
+    // 5. Reset State
     currentPreviewSceneIndex.value = 0;
     currentPreviewComponentIndex.value = -1;
     componentStartTime.value = 0;
     
-    resizePreviewCanvas();
-    drawPreview();
+    // 6. Wait for DOM Update (Vital for v-if="isPreviewMode")
+    nextTick(() => {
+        if (!previewCanvasRef.value) return;
+        
+        // Re-acquire context in case it was lost or not yet initialized
+        previewCtx = previewCanvasRef.value.getContext('2d');
+        
+        resizePreviewCanvas();
+        drawPreview();
 
-    // --- FIX: Check Auto-Start for First Scene of New Node ---
-    const firstScene = nodeScenes.value[0]
-    if (firstScene && firstScene.components && firstScene.components.length > 0) {
-        if (firstScene.components[0].autoRender) {
-            setTimeout(() => advancePreview(), 50)
+        // 7. Check Auto-Start for First Scene
+        const firstScene = nodeScenes.value[0]
+        if (firstScene && firstScene.components && firstScene.components.length > 0) {
+            if (firstScene.components[0].autoRender) {
+                setTimeout(() => advancePreview(), 50)
+            }
         }
-    }
+    });
 }
 
 const hexToRgba = (hex, alpha) => {
@@ -2828,6 +2870,42 @@ window.addEventListener('resize', () => {
     }
 })
 
+// NEW: Handle Scrolling in Preview
+const onPreviewWheel = (e) => {
+    if (!isPreviewMode.value || !nodeScenes.value) return;
+    const scene = nodeScenes.value[currentPreviewSceneIndex.value];
+    if (!scene || !scene.components) return;
+    
+    // Find options component
+    const optComp = scene.components.find(c => c.type === 'options');
+    if (!optComp) return;
+
+    // Check if mouse is over it
+    const coords = getPreviewLogicalCoords(e);
+    const dx = coords.x - optComp.x;
+    const dy = coords.y - optComp.y;
+    
+    // Simple bounds check (ignoring rotation for scroll convenience)
+    if (Math.abs(dx) <= optComp.width/2 && Math.abs(dy) <= optComp.height/2) {
+        if(!previewCtx) return;
+        const layout = calculateOptionsLayout(optComp, previewCtx);
+        
+        if (layout.totalContentHeight > optComp.height) {
+            e.preventDefault(); // Stop page scroll
+            const maxScroll = layout.totalContentHeight - optComp.height + 20; // +20 buffer
+            
+            if (!optComp.scrollY) optComp.scrollY = 0;
+            optComp.scrollY += e.deltaY;
+            
+            // Clamp
+            if (optComp.scrollY < 0) optComp.scrollY = 0;
+            if (optComp.scrollY > maxScroll) optComp.scrollY = maxScroll;
+            
+            drawPreview();
+        }
+    }
+}
+
 </script>
 
 <template>
@@ -2840,6 +2918,10 @@ window.addEventListener('resize', () => {
         <div class="title">Weaver Project</div>
       </div>
       
+      <button class="play-project-btn" @click="playProjectFromRoot" title="Play Project from Start">
+        ▶
+      </button>
+
       <button class="settings-btn" @click="toggleProjectSettings" title="Project Settings">
         ⚙️
       </button>
@@ -2868,9 +2950,24 @@ window.addEventListener('resize', () => {
             <button class="close-settings-btn" @click="toggleProjectSettings">✕</button>
           </div>
           <div class="settings-content">
-            <p style="color: #9ca3af; font-style: italic; text-align: center; padding: 20px;">
-              Project settings configuration will go here.
-            </p>
+            
+            <div class="setting-item">
+                <label class="setting-label">Root Node (Start Point):</label>
+                <div class="setting-desc">Select which node the project starts from when clicking Play.</div>
+                <select v-model="rootNodeId" class="setting-select">
+                    <option :value="null" disabled>-- Select a Starting Node --</option>
+                    <option v-for="node in Canvas_Status" :key="node.index" :value="node.index">
+                        {{ node.Node_name || `Node ${node.index}` }} (ID: {{ node.index }})
+                    </option>
+                </select>
+            </div>
+
+            <div class="setting-item" style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
+                 <p style="color: #6b7280; font-size: 0.9rem; font-style: italic;">
+                    More global settings like project resolution, default transitions, or global variables can be added here.
+                 </p>
+            </div>
+
           </div>
         </div>
       </div>
@@ -2898,7 +2995,7 @@ window.addEventListener('resize', () => {
             </div>
 
             <button class="preview-btn" @click="startPreview">
-                ▶ Preview
+                ▶ Preview Scene
              </button>
           </div>
 
@@ -3502,6 +3599,7 @@ window.addEventListener('resize', () => {
 
   </div>
 </template>
+
 <style scoped>
   .wrapper { 
     width: 100vw; 
@@ -3546,10 +3644,10 @@ window.addEventListener('resize', () => {
     z-index: 11;
   }
 
-  /* NEW: Settings Button Styles */
+  /* Settings Button Styles */
   .settings-btn {
     position: absolute;
-    right: 60px; /* Positioned to the left of the fullscreen button */
+    right: 60px; /* Left of fullscreen (16px) + gap */
     font-size: 22px;
     background: none;
     border: none;
@@ -3560,6 +3658,24 @@ window.addEventListener('resize', () => {
 
   .settings-btn:hover {
     transform: rotate(30deg);
+  }
+
+  /* NEW: Play Project Button Styles */
+  .play-project-btn {
+    position: absolute;
+    right: 104px; /* Left of settings (60px) + gap */
+    font-size: 20px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    z-index: 11;
+    color: #00ff88;
+    transition: transform 0.2s;
+  }
+
+  .play-project-btn:hover {
+    transform: scale(1.2);
+    text-shadow: 0 0 8px rgba(0, 255, 136, 0.5);
   }
 
   .center { text-align: center }
@@ -4355,7 +4471,7 @@ window.addEventListener('resize', () => {
   .hover-red:hover { background-color: rgba(248, 113, 113, 0.2); } /* Red for options */
 
 
-  /* Scene Content Body Styles - UPDATED FOR SEPARATE IMAGE CONTAINERS */
+  /* Scene Content Body Styles */
   .scene-content-body {
     padding: 16px;
     display: flex;
@@ -4375,7 +4491,7 @@ window.addEventListener('resize', () => {
   }
 
   /* ==========================================================================
-     UPDATED IMAGE CONTAINER STYLES (Single Line Layout)
+     IMAGE CONTAINER STYLES (Single Line Layout)
      ========================================================================== */
    
   :deep(.image-container) {
@@ -4762,5 +4878,44 @@ window.addEventListener('resize', () => {
   .settings-content {
     padding: 20px;
     min-height: 200px;
+  }
+
+  /* Settings Input Styles */
+  .setting-item {
+      margin-bottom: 20px;
+  }
+
+  .setting-label {
+      display: block;
+      color: #e2e8f0;
+      font-weight: 600;
+      margin-bottom: 6px;
+  }
+
+  .setting-desc {
+      color: #9ca3af;
+      font-size: 0.85rem;
+      margin-bottom: 10px;
+  }
+
+  .setting-select {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      padding: 10px;
+      color: #fff;
+      font-size: 0.95rem;
+      outline: none;
+      cursor: pointer;
+  }
+
+  .setting-select:focus {
+      border-color: #00ff88;
+  }
+  
+  .setting-select option {
+      background-color: #1f2937;
+      color: #fff;
   }
 </style>
