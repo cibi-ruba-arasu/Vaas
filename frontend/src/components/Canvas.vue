@@ -11,6 +11,12 @@ const token = localStorage.getItem("token")
 const menuOpen = ref(false)
 const toggleMenu = () => (menuOpen.value = !menuOpen.value)
 
+// --- NEW: Project Settings State ---
+const showProjectSettings = ref(false)
+
+const toggleProjectSettings = () => {
+  showProjectSettings.value = !showProjectSettings.value
+}
 // Fullscreen Logic
 const isFullscreen = ref(false)
 
@@ -123,6 +129,7 @@ const sceneSettings = ref({
 /* ================= AUDIO MANAGEMENT ================= */
 const sequenceAudio = ref(null)
 const audioInputRef = ref(null)
+
 
 const triggerAudioUpload = () => {
   audioInputRef.value.click()
@@ -2832,6 +2839,11 @@ window.addEventListener('resize', () => {
       <div class="center">
         <div class="title">Weaver Project</div>
       </div>
+      
+      <button class="settings-btn" @click="toggleProjectSettings" title="Project Settings">
+        ⚙️
+      </button>
+
       <button class="fullscreen-btn" @click="toggleFullscreen" title="Toggle Fullscreen">
         <span v-if="!isFullscreen">⤢</span>
         <span v-else>⤡</span>
@@ -2847,6 +2859,22 @@ window.addEventListener('resize', () => {
         </div>
       </div>
     </aside>
+
+    <transition name="fade">
+      <div v-if="showProjectSettings" class="settings-overlay" @click.self="toggleProjectSettings">
+        <div class="settings-modal">
+          <div class="settings-header">
+            <h3>Project Settings</h3>
+            <button class="close-settings-btn" @click="toggleProjectSettings">✕</button>
+          </div>
+          <div class="settings-content">
+            <p style="color: #9ca3af; font-style: italic; text-align: center; padding: 20px;">
+              Project settings configuration will go here.
+            </p>
+          </div>
+        </div>
+      </div>
+    </transition>
 
     <transition name="popup">
       <div v-if="showPopup" class="popup-overlay">
@@ -3474,7 +3502,6 @@ window.addEventListener('resize', () => {
 
   </div>
 </template>
-
 <style scoped>
   .wrapper { 
     width: 100vw; 
@@ -3517,6 +3544,22 @@ window.addEventListener('resize', () => {
     color: #00ff88;
     cursor: pointer;
     z-index: 11;
+  }
+
+  /* NEW: Settings Button Styles */
+  .settings-btn {
+    position: absolute;
+    right: 60px; /* Positioned to the left of the fullscreen button */
+    font-size: 22px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    z-index: 11;
+    transition: transform 0.2s;
+  }
+
+  .settings-btn:hover {
+    transform: rotate(30deg);
   }
 
   .center { text-align: center }
@@ -4664,5 +4707,60 @@ window.addEventListener('resize', () => {
       border: 1px solid rgba(255,255,255,0.05);
       padding: 12px;
       border-radius: 6px;
+  }
+
+  /* NEW: Settings Overlay & Modal Styles */
+  .settings-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.8);
+    z-index: 200; /* Higher than header and other overlays */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .settings-modal {
+    background: #1f2937;
+    width: 500px;
+    max-width: 90%;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .settings-header {
+    background: #111827;
+    padding: 16px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+  }
+
+  .settings-header h3 {
+    margin: 0;
+    color: #e2e8f0;
+    font-size: 1.1rem;
+  }
+
+  .close-settings-btn {
+    background: transparent;
+    border: none;
+    color: #9ca3af;
+    cursor: pointer;
+    font-size: 1.2rem;
+    transition: color 0.2s;
+  }
+
+  .close-settings-btn:hover {
+    color: #fff;
+  }
+
+  .settings-content {
+    padding: 20px;
+    min-height: 200px;
   }
 </style>
