@@ -11,6 +11,43 @@ const token = localStorage.getItem("token")
 const menuOpen = ref(false)
 const toggleMenu = () => (menuOpen.value = !menuOpen.value)
 
+// --- NEW: Global Variables State ---
+const globalVariables = ref([])
+const isAddingVariable = ref(false)
+const newVarName = ref("")
+const newVarValue = ref("")
+
+const toggleAddVariable = () => {
+  isAddingVariable.value = !isAddingVariable.value
+  newVarName.value = ""
+  newVarValue.value = ""
+}
+
+const addGlobalVariable = () => {
+  if (!newVarName.value.trim()) {
+    alert("Variable name is required")
+    return
+  }
+  if (globalVariables.value.some(v => v.name === newVarName.value.trim())) {
+    alert("Variable name already exists")
+    return
+  }
+  globalVariables.value.push({
+    id: Date.now(),
+    name: newVarName.value.trim(),
+    value: newVarValue.value
+  })
+  isAddingVariable.value = false
+  newVarName.value = ""
+  newVarValue.value = ""
+}
+
+const deleteGlobalVariable = (id) => {
+  if (confirm("Delete this variable?")) {
+    globalVariables.value = globalVariables.value.filter(v => v.id !== id)
+  }
+}
+
 // --- NEW: Project Settings State ---
 const showProjectSettings = ref(false)
 const rootNodeId = ref(null) // Stores the ID of the starting node
@@ -2933,13 +2970,51 @@ const onPreviewWheel = (e) => {
     </header>
 
     <aside class="side-menu" :class="{ open: menuOpen }">
-      <div class="menu-node" @mousedown.prevent="menuDragging = true">
-        <div class="menu-node-header">
-          <span>▷</span>
-          <span class="menu-node-title">General Node</span>
-          <span>▷</span>
+      
+      <div class="menu-section">
+        <h3 class="menu-section-title">Nodes</h3>
+        <div class="menu-node" @mousedown.prevent="menuDragging = true">
+          <div class="menu-node-header">
+            <span>▷</span>
+            <span class="menu-node-title">General Node</span>
+            <span>▷</span>
+          </div>
         </div>
       </div>
+
+      <div class="menu-divider"></div>
+
+      <div class="menu-section">
+        <div class="menu-header-row">
+            <h3 class="menu-section-title">Global Variables</h3>
+            <button class="add-var-btn-small" @click="toggleAddVariable" title="Add Variable">+</button>
+        </div>
+        
+        <transition name="fade">
+            <div v-if="isAddingVariable" class="add-var-form">
+                <input v-model="newVarName" placeholder="Variable Name" class="var-input" />
+                <input v-model="newVarValue" placeholder="Initial Value" class="var-input" />
+                <div class="var-form-actions">
+                    <button class="save-var-btn" @click="addGlobalVariable">Save</button>
+                    <button class="cancel-var-btn" @click="toggleAddVariable">Cancel</button>
+                </div>
+            </div>
+        </transition>
+
+        <div class="variable-list">
+            <div v-for="v in globalVariables" :key="v.id" class="variable-item">
+                <div class="var-info">
+                    <span class="var-name">{{ v.name }}</span>
+                    <span class="var-value-display">{{ v.value }}</span>
+                </div>
+                <button class="delete-var-btn" @click="deleteGlobalVariable(v.id)">×</button>
+            </div>
+            <div v-if="globalVariables.length === 0 && !isAddingVariable" class="no-vars">
+                No variables added.
+            </div>
+        </div>
+      </div>
+
     </aside>
 
     <transition name="fade">
@@ -2964,7 +3039,7 @@ const onPreviewWheel = (e) => {
 
             <div class="setting-item" style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
                  <p style="color: #6b7280; font-size: 0.9rem; font-style: italic;">
-                    More global settings like project resolution, default transitions, or global variables can be added here.
+                    Global variables defined in the side menu will be initialized when the project starts.
                  </p>
             </div>
 
@@ -3630,6 +3705,7 @@ const onPreviewWheel = (e) => {
     background: none;
     border: none;
     color: #00ff88;
+    cursor: pointer;
   }
 
   /* Fullscreen button styles */
@@ -3684,17 +3760,44 @@ const onPreviewWheel = (e) => {
     position: absolute;
     top: 64px;
     left: 0;
-    width: 260px;
+    width: 280px; /* Slightly wider for variables */
     height: calc(100% - 64px);
     backdrop-filter: blur(12px);
-    background: rgba(0,0,0,.35);
+    background: rgba(0,0,0,.85); /* Darker background for better contrast */
     transform: translateX(-100%);
     transition: .35s;
     padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    border-right: 1px solid rgba(255,255,255,0.1);
   }
 
   .side-menu.open { transform: translateX(0) }
 
+  /* SIDE MENU SECTIONS */
+  .menu-section {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+  }
+
+  .menu-section-title {
+      color: #9ca3af;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 600;
+      margin: 0;
+  }
+
+  .menu-divider {
+      height: 1px;
+      background: rgba(255,255,255,0.1);
+      margin: 8px 0;
+  }
+
+  /* Nodes Styles */
   .menu-node {
     background: #5f6f82;
     border-radius: 12px;
@@ -3714,6 +3817,146 @@ const onPreviewWheel = (e) => {
   }
 
   .menu-node-title { font-weight: 600 }
+
+  /* VARIABLE SECTION STYLES */
+  .menu-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+  }
+
+  .add-var-btn-small {
+      background: rgba(0, 255, 136, 0.1);
+      color: #00ff88;
+      border: 1px solid rgba(0, 255, 136, 0.3);
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-weight: bold;
+      transition: all 0.2s;
+  }
+
+  .add-var-btn-small:hover {
+      background: #00ff88;
+      color: #000;
+  }
+
+  .add-var-form {
+      background: rgba(255,255,255,0.05);
+      padding: 10px;
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      border: 1px solid rgba(255,255,255,0.1);
+  }
+
+  .var-input {
+      background: rgba(0,0,0,0.3);
+      border: 1px solid rgba(255,255,255,0.1);
+      padding: 6px 8px;
+      border-radius: 4px;
+      color: #fff;
+      font-size: 0.85rem;
+      outline: none;
+  }
+
+  .var-input:focus {
+      border-color: #00ff88;
+  }
+
+  .var-form-actions {
+      display: flex;
+      gap: 8px;
+  }
+
+  .save-var-btn, .cancel-var-btn {
+      flex: 1;
+      padding: 4px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 600;
+  }
+
+  .save-var-btn {
+      background: #00ff88;
+      color: #000;
+  }
+
+  .cancel-var-btn {
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+  }
+
+  .variable-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 300px;
+      overflow-y: auto;
+  }
+
+  .variable-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(255,255,255,0.03);
+      padding: 8px;
+      border-radius: 4px;
+      border: 1px solid transparent;
+      transition: all 0.2s;
+  }
+
+  .variable-item:hover {
+      background: rgba(255,255,255,0.08);
+      border-color: rgba(255,255,255,0.1);
+  }
+
+  .var-info {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+  }
+
+  .var-name {
+      color: #e2e8f0;
+      font-size: 0.9rem;
+      font-weight: 500;
+  }
+
+  .var-value-display {
+      color: #9ca3af;
+      font-size: 0.8rem;
+      font-family: monospace;
+  }
+
+  .delete-var-btn {
+      background: transparent;
+      border: none;
+      color: #6b7280;
+      cursor: pointer;
+      font-size: 1.2rem;
+      padding: 0 4px;
+      line-height: 1;
+  }
+
+  .delete-var-btn:hover {
+      color: #f87171;
+  }
+
+  .no-vars {
+      color: #6b7280;
+      font-style: italic;
+      font-size: 0.85rem;
+      text-align: center;
+      padding: 10px;
+  }
 
   .title { font-size: 1.3rem; color: #00ff88 }
 
