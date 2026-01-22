@@ -154,6 +154,93 @@ const updateAudioProperties = () => {
     updateNodeAudioInStatus()
 }
 
+const calculateOptionsLayout = (comp, ctx) => {
+    // Default styles for measurement
+    const style = comp.styles?.normal || {};
+    const fontSize = style.fontSize || 16;
+    const fontFamily = style.fontFamily || 'sans-serif';
+    ctx.font = `${fontSize}px ${fontFamily}`;
+
+    const paddingX = 12; // Horizontal padding inside button
+    const paddingY = 8;  // Vertical padding inside button
+    const gap = 10;      // Gap between buttons
+    const boxPadding = 10; // Padding inside the main options box
+    
+    // Start drawing from top-left of the box (relative to center)
+    let currentX = -comp.width / 2 + boxPadding;
+    let currentY = -comp.height / 2 + boxPadding;
+    
+    const buttons = [];
+    let maxButtonWidth = 0;
+    let rowHeight = 0;
+
+    comp.optionsList.forEach(opt => {
+        const textMetrics = ctx.measureText(opt.text);
+        const btnW = textMetrics.width + (paddingX * 2);
+        const btnH = fontSize + (paddingY * 2);
+        
+        if (btnW > maxButtonWidth) maxButtonWidth = btnW;
+        if (btnH > rowHeight) rowHeight = btnH;
+
+        // Check if button fits in current row, else wrap
+        // We check if currentX + btnW exceeds the right edge (minus padding)
+        const rightEdge = comp.width / 2 - boxPadding;
+        
+        if (currentX + btnW > rightEdge && currentX !== (-comp.width / 2 + boxPadding)) {
+            // Move to next line
+            currentX = -comp.width / 2 + boxPadding;
+            currentY += rowHeight + gap;
+        }
+
+        buttons.push({
+            id: opt.id,
+            text: opt.text,
+            x: currentX, 
+            y: currentY,
+            w: btnW,
+            h: btnH
+        });
+
+        // Advance X
+        currentX += btnW + gap;
+    });
+
+    // Total content height is the bottom of the last button minus the top of the box
+    // Note: We add rowHeight to the last currentY to get the bottom edge
+    const totalContentHeight = (currentY + rowHeight + boxPadding) - (-comp.height / 2);
+
+    return { buttons, totalContentHeight, maxButtonWidth };
+}
+
+// 2. New Helper: Centralized Hit Testing for Options
+const getOptionAtPosition = (comp, localX, localY, ctx) => {
+    const layout = calculateOptionsLayout(comp, ctx);
+    const scrollY = comp.scrollY || 0;
+
+    // Adjust local mouse Y by the scroll amount (inverse logic)
+    // If we scrolled down 50px, the content moved up 50px.
+    // So a click at Y=10 maps to content at Y=10 + 50
+    const contentY = localY; 
+
+    // Find intersecting button
+    // Note: layout.buttons coordinates are relative to the box center (0,0 is center)
+    // localX/localY passed in are also relative to center
+    // However, we render with a scroll offset: drawY = btn.y - scrollY
+    // So we check: is mouse within (btn.y - scrollY) and (btn.y - scrollY + h)
+    
+    for (let i = 0; i < layout.buttons.length; i++) {
+        const btn = layout.buttons[i];
+        const drawY = btn.y - scrollY;
+        
+        // Check Bounds
+        if (localX >= btn.x && localX <= btn.x + btn.w &&
+            localY >= drawY && localY <= drawY + btn.h) {
+            return { index: i, id: btn.id };
+        }
+    }
+    return null;
+}
+
 const updateNodeAudioInStatus = () => {
     if (!popupNode.value) return
     const nodeStatusIndex = Canvas_Status.value.findIndex(s => s.index === popupNode.value.id)
@@ -312,6 +399,15 @@ const addOptionsComponent = () => {
         width: 300,
         height: 200,
         rotation: 0,
+        
+        // --- NEW CONTAINER PROPERTIES ---
+        boxColor: '#1f2937',      // Dark Gray
+        boxOpacity: 0.8,          // Transparency
+        borderColor: '#f87171',   // Redish default
+        borderWidth: 0,           // No border by default
+        borderRadius: 8,          // Rounded corners
+        // --------------------------------
+        
         optionsList: [
             { id: 1, text: 'Option 1' },
             { id: 2, text: 'Option 2' }
@@ -325,13 +421,11 @@ const addOptionsComponent = () => {
         _clickedOptionIndex: -1,
         renderWhileClicked: true,
         autoRender: false,
-        // Animation Props
+        scrollY: 0, 
         animationType: 'fade', 
         animationDuration: 1.0 
     }
     sceneComponents.value.push(newOption)
-    
-    // Watchers handle the update to Status
     updateSceneContentDisplay()
     drawComponents()
 }
@@ -813,32 +907,20 @@ const removeComponent = (index) => {
 /* ================= GRAPH INTERACTION ================= */
 const onGraphMouseDown = (event) => {
   if (!imagesCanvasRef.value) return
-  
   const rect = imagesCanvasRef.value.getBoundingClientRect()
-  const mouseX = event.clientX
-  const mouseY = event.clientY
+  const mouseX = event.clientX; const mouseY = event.clientY
   
-  if (mouseX >= rect.left && mouseX <= rect.right && 
-      mouseY >= rect.top && mouseY <= rect.bottom) {
-    
+  if (mouseX >= rect.left && mouseX <= rect.right && mouseY >= rect.top && mouseY <= rect.bottom) {
     const coords = screenToGraphCoords(mouseX, mouseY)
-    
     let clickedComp = null
+    // Reverse loop for Z-index
     for (let i = sceneComponents.value.length - 1; i >= 0; i--) {
       const comp = sceneComponents.value[i]
-      const halfW = comp.width / 2
-      const halfH = comp.height / 2
-      const left = comp.x - halfW
-      const right = comp.x + halfW
-      const top = comp.y + halfH 
-      const bottom = comp.y - halfH
-      
-      if (coords.x >= left && coords.x <= right &&
-          coords.y <= top && coords.y >= bottom) {
-        
+      if(coords.x >= comp.x - comp.width/2 && coords.x <= comp.x + comp.width/2 &&
+         coords.y <= comp.y + comp.height/2 && coords.y >= comp.y - comp.height/2) {
+          
         clickedComp = comp
         
-        // Options specific click logic
         if (comp.type === 'options' && comp.optionsList) {
              const dx = coords.x - comp.x;
              const dy = coords.y - comp.y;
@@ -846,51 +928,21 @@ const onGraphMouseDown = (event) => {
              const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
              const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
              
-             const btnHeight = 40;
-             const btnGap = 10;
-             const totalHeight = (comp.optionsList.length * btnHeight) + ((comp.optionsList.length - 1) * btnGap);
-             const startY = - (totalHeight / 2);
-             
-             for (let j = 0; j < comp.optionsList.length; j++) {
-                const btnY = startY + (j * (btnHeight + btnGap));
-                // FIX: Use -localY because Graph Y is inverted relative to Draw Y
-                if (localX >= -(comp.width/2 - 20) && localX <= (comp.width/2 - 20) &&
-                    -localY >= btnY && -localY <= btnY + btnHeight) {
-                    
-                    comp._clickedOptionIndex = j;
-                    drawComponents();
-                    setTimeout(() => { comp._clickedOptionIndex = -1; drawComponents(); }, 150);
-                }
+             const hit = getOptionAtPosition(comp, localX, -localY, imagesCtx);
+             if (hit) {
+                comp._clickedOptionIndex = hit.index;
+                drawComponents();
+                setTimeout(() => { comp._clickedOptionIndex = -1; drawComponents(); }, 150);
              }
         }
 
-        isDraggingComponent.value = true
-        draggingComponentIndex.value = i
-        dragComponentOffset.value = {
-          x: coords.x - comp.x,
-          y: coords.y - comp.y
-        }
-        
+        isDraggingComponent.value = true; draggingComponentIndex.value = i
+        dragComponentOffset.value = { x: coords.x - comp.x, y: coords.y - comp.y }
         if (viewMode.value === 'componentEditor') {
-            activeComponent.value = clickedComp
-            textSelection.value = { start: 0, end: 0, text: '' }
-            if (activeComponent.value.type === 'options') {
-                activeStyleState.value = 'normal';
-            }
+            activeComponent.value = clickedComp; textSelection.value = { start: 0, end: 0, text: '' }
+            if (activeComponent.value.type === 'options') activeStyleState.value = 'normal';
         }
-
         drawComponents()
-        
-        setTimeout(() => {
-          const containers = document.querySelectorAll('.image-container')
-          containers.forEach((container, idx) => {
-            container.classList.remove('selected')
-            if (idx === draggingComponentIndex.value) {
-              container.classList.add('selected')
-            }
-          })
-        }, 10)
-        
         return
       }
     }
@@ -899,14 +951,10 @@ const onGraphMouseDown = (event) => {
 
 const onGraphMouseMove = (event) => {
   if (!imagesCanvasRef.value) return
-  
   const rect = imagesCanvasRef.value.getBoundingClientRect()
-  const mouseX = event.clientX
-  const mouseY = event.clientY
+  const mouseX = event.clientX; const mouseY = event.clientY
   
-  if (mouseX >= rect.left && mouseX <= rect.right && 
-      mouseY >= rect.top && mouseY <= rect.bottom) {
-    
+  if (mouseX >= rect.left && mouseX <= rect.right && mouseY >= rect.top && mouseY <= rect.bottom) {
     const coords = screenToGraphCoords(mouseX, mouseY)
     let needsRedraw = false;
     
@@ -914,29 +962,20 @@ const onGraphMouseMove = (event) => {
         if (comp.type === 'options') {
              const dx = coords.x - comp.x;
              const dy = coords.y - comp.y;
+             // Inverse Rotate
              const rad = -(comp.rotation || 0) * Math.PI / 180;
              const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
              const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
+             // Editor has Y flipped relative to drawing
+             // Drawing: +Y is Down. Graph: +Y is Up. 
+             // calculateOptionsLayout returns drawing coords (+Y down).
+             // localY is graph coords (+Y up). So we pass -localY to get drawing coords.
              
-             if (Math.abs(localX) <= comp.width/2 && Math.abs(localY) <= comp.height/2) {
-                 const btnHeight = 40;
-                 const btnGap = 10;
-                 const totalHeight = (comp.optionsList.length * btnHeight) + ((comp.optionsList.length - 1) * btnGap);
-                 const startY = - (totalHeight / 2);
-                 let foundHover = -1;
-                 
-                 for (let j = 0; j < comp.optionsList.length; j++) {
-                    const btnY = startY + (j * (btnHeight + btnGap));
-                    // FIX: Use -localY because Graph Y is inverted relative to Draw Y
-                    if (localX >= -(comp.width/2 - 20) && localX <= (comp.width/2 - 20) &&
-                        -localY >= btnY && -localY <= btnY + btnHeight) {
-                        foundHover = j;
-                        break;
-                    }
-                 }
-                 
-                 if (comp._hoveredOptionIndex !== foundHover) {
-                     comp._hoveredOptionIndex = foundHover;
+             const hit = getOptionAtPosition(comp, localX, -localY, imagesCtx);
+             
+             if (hit) {
+                 if (comp._hoveredOptionIndex !== hit.index) {
+                     comp._hoveredOptionIndex = hit.index;
                      needsRedraw = true;
                  }
              } else {
@@ -947,15 +986,11 @@ const onGraphMouseMove = (event) => {
              }
         }
     });
-
     if (needsRedraw) drawComponents();
-
     if (isDraggingComponent.value && draggingComponentIndex.value !== null) {
       const comp = sceneComponents.value[draggingComponentIndex.value]
       comp.x = coords.x - dragComponentOffset.value.x
       comp.y = coords.y - dragComponentOffset.value.y
-      
-      // Watcher handles update to Status
       drawComponents()
     }
   }
@@ -1026,8 +1061,17 @@ const updateActiveComponentSize = () => {
              const ratio = activeComponent.value.aspectRatio || 1
              activeComponent.value.height = activeComponent.value.width / ratio
         }
+        
+        // NEW: Min width check for Options
+        if (activeComponent.value.type === 'options' && imagesCtx) {
+            const layout = calculateOptionsLayout(activeComponent.value, imagesCtx);
+            const minW = layout.maxButtonWidth + 20; // 20px padding
+            if (activeComponent.value.width < minW) {
+                activeComponent.value.width = minW;
+            }
+        }
+
         drawComponents()
-        // Watchers automatically trigger updateNodeScenesInStatus -> Canvas_Status
     }
 }
 
@@ -1418,142 +1462,131 @@ const drawComponents = () => {
 
 // Updated renderComponent to handle Animation Overrides (like Typewriter text truncation)
 const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
+    // ... (Keep existing Image/Video/Text logic unchanged) ...
     if (comp.type === 'image') {
         if (comp.imgObject) {
-            ctx.drawImage(
-                comp.imgObject,
-                screenPos.x - (comp.width / 2),
-                screenPos.y - (comp.height / 2),
-                comp.width,
-                comp.height
-            )
+            ctx.drawImage(comp.imgObject, screenPos.x - (comp.width / 2), screenPos.y - (comp.height / 2), comp.width, comp.height)
         } else {
-            const img = new Image()
-            img.src = comp.url
-            comp.imgObject = img
+            const img = new Image(); img.src = comp.url; comp.imgObject = img;
         }
     } else if (comp.type === 'video') {
          if (comp.videoElement) {
-             ctx.drawImage(
-                comp.videoElement,
-                screenPos.x - (comp.width / 2),
-                screenPos.y - (comp.height / 2),
-                comp.width,
-                comp.height
-             )
+             ctx.drawImage(comp.videoElement, screenPos.x - (comp.width / 2), screenPos.y - (comp.height / 2), comp.width, comp.height)
          }
     } else if (comp.type === 'text') {
         ctx.translate(screenPos.x, screenPos.y) 
-        
         if (comp.backgroundColor && comp.backgroundColor !== 'transparent') {
             ctx.fillStyle = comp.backgroundColor
-            if (comp.borderRadius > 0) {
-               drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius)
-               ctx.fill()
-            } else {
-               ctx.fillRect(-(comp.width/2), -(comp.height/2), comp.width, comp.height)
-            }
+            if (comp.borderRadius > 0) { drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius); ctx.fill() } 
+            else { ctx.fillRect(-(comp.width/2), -(comp.height/2), comp.width, comp.height) }
         }
-        
         if (comp.borderWidth > 0 && comp.borderColor !== 'transparent') {
-            ctx.strokeStyle = comp.borderColor
-            ctx.lineWidth = comp.borderWidth
-            if (comp.borderRadius > 0) {
-               drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius)
-               ctx.stroke()
-            } else {
-               ctx.strokeRect(-(comp.width/2), -(comp.height/2), comp.width, comp.height)
-            }
+            ctx.strokeStyle = comp.borderColor; ctx.lineWidth = comp.borderWidth
+            if (comp.borderRadius > 0) { drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius); ctx.stroke() } 
+            else { ctx.strokeRect(-(comp.width/2), -(comp.height/2), comp.width, comp.height) }
         }
-        
-        const fontWeight = comp.fontWeight || 'normal'
-        const fontStyle = comp.fontStyle || 'normal'
-        const fontFamily = comp.fontFamily || 'sans-serif'
-        ctx.font = `${fontStyle} ${fontWeight} ${comp.fontSize}px ${fontFamily}`
-        ctx.fillStyle = comp.color
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        
-        // --- ANIMATION TYPEWRITER LOGIC ---
+        const fontWeight = comp.fontWeight || 'normal'; const fontStyle = comp.fontStyle || 'normal'; const fontFamily = comp.fontFamily || 'sans-serif'
+        ctx.font = `${fontStyle} ${fontWeight} ${comp.fontSize}px ${fontFamily}`; ctx.fillStyle = comp.color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
         let contentToDraw = comp.content
         if (animationOverride && animationOverride.type === 'typewriter') {
-            const progress = animationOverride.progress // 0 to 1
-            const length = Math.floor(comp.content.length * progress)
-            contentToDraw = comp.content.substring(0, length)
+            const progress = animationOverride.progress; const length = Math.floor(comp.content.length * progress); contentToDraw = comp.content.substring(0, length)
         }
-        
         ctx.fillText(contentToDraw, 0, 0)
-        
-        // Decorations (Underline/Strikethrough)
-        // Note: Just drawing for full width to simplify, or could scale width by text measure
         if (comp.textDecoration === 'underline' || comp.textDecoration === 'line-through') {
-             const metrics = ctx.measureText(contentToDraw)
-             const width = metrics.width
-             ctx.beginPath()
-             ctx.strokeStyle = comp.textDecorationColor || comp.color
-             ctx.lineWidth = comp.fontSize / 15
-             
-             const yOffset = comp.textDecoration === 'underline' ? comp.fontSize/2 : 0
-             ctx.moveTo(-width/2, yOffset)
-             ctx.lineTo(width/2, yOffset)
-             ctx.stroke()
+             const metrics = ctx.measureText(contentToDraw); const width = metrics.width
+             ctx.beginPath(); ctx.strokeStyle = comp.textDecorationColor || comp.color; ctx.lineWidth = comp.fontSize / 15
+             const yOffset = comp.textDecoration === 'underline' ? comp.fontSize/2 : 0; ctx.moveTo(-width/2, yOffset); ctx.lineTo(width/2, yOffset); ctx.stroke()
         }
-        
         ctx.translate(-screenPos.x, -screenPos.y)
-    } else if (comp.type === 'options') {
+    } 
+    
+    // --- UPDATED OPTIONS LOGIC ---
+    else if (comp.type === 'options') {
         ctx.translate(screenPos.x, screenPos.y) 
         
-        // Only draw dashed box in editor, but background if set
-        if (!isPreviewMode.value) {
-            ctx.fillStyle = 'rgba(31, 41, 55, 0.3)'; 
-            ctx.setLineDash([5, 5]);
-            ctx.strokeStyle = '#f87171'; 
-            ctx.lineWidth = 1;
-            drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, 8);
+        // 1. Calculate Dynamic Layout
+        const layout = calculateOptionsLayout(comp, ctx);
+        
+        // 2. Draw Box Background & Border (Use new properties)
+        const radius = comp.borderRadius !== undefined ? comp.borderRadius : 8;
+        
+        // Background
+        if (comp.boxColor && comp.boxOpacity !== undefined && comp.boxOpacity > 0) {
+            ctx.fillStyle = hexToRgba(comp.boxColor, comp.boxOpacity);
+            drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, radius);
             ctx.fill();
-            ctx.stroke();
-            ctx.setLineDash([]); 
         }
         
-        if (comp.optionsList && comp.optionsList.length > 0) {
-            const btnHeight = 40;
-            const btnGap = 10;
-            const totalContentHeight = (comp.optionsList.length * btnHeight) + ((comp.optionsList.length - 1) * btnGap);
-            const startY = - (totalContentHeight / 2);
-            
-            const btnWidth = comp.width - 40;
-            
-            comp.optionsList.forEach((option, index) => {
-                const yPos = startY + (index * (btnHeight + btnGap));
+        // Border
+        if (comp.borderWidth > 0 && comp.borderColor) {
+            ctx.strokeStyle = comp.borderColor;
+            ctx.lineWidth = comp.borderWidth;
+            ctx.setLineDash([]); // Ensure solid line
+            drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, radius);
+            ctx.stroke();
+        } else if (!isPreviewMode.value) {
+            // Editor Helper: If invisible, draw faint dashed line
+            if (!comp.boxOpacity || comp.boxOpacity === 0) {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([5, 5]);
+                drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, radius);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+
+        // 3. Clip Content to Box
+        ctx.save();
+        drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, radius);
+        ctx.clip();
+
+        // 4. Draw Buttons
+        if (layout.buttons.length > 0) {
+            layout.buttons.forEach((btn, index) => {
+                const drawY = btn.y - (comp.scrollY || 0);
                 
+                // Determine Style
                 let style = comp.styles.normal;
-                if (comp._clickedOptionIndex === index) {
-                    style = comp.styles.clicked;
-                } else if (comp._hoveredOptionIndex === index) {
-                    style = comp.styles.hovered;
-                }
+                if (comp._clickedOptionIndex === index) style = comp.styles.clicked;
+                else if (comp._hoveredOptionIndex === index) style = comp.styles.hovered;
                 
+                // Draw Button Rect
                 if (style.backgroundColor && style.backgroundColor !== 'transparent') {
                     ctx.fillStyle = style.backgroundColor;
-                    drawRoundedRectPaths(ctx, -(btnWidth/2), yPos, btnWidth, btnHeight, style.borderRadius);
+                    drawRoundedRectPaths(ctx, btn.x, drawY, btn.w, btn.h, style.borderRadius);
                     ctx.fill();
                 }
                 
                 if (style.borderWidth > 0 && style.borderColor && style.borderColor !== 'transparent') {
                     ctx.strokeStyle = style.borderColor;
                     ctx.lineWidth = style.borderWidth;
-                    drawRoundedRectPaths(ctx, -(btnWidth/2), yPos, btnWidth, btnHeight, style.borderRadius);
+                    drawRoundedRectPaths(ctx, btn.x, drawY, btn.w, btn.h, style.borderRadius);
                     ctx.stroke();
                 }
                 
+                // Draw Text
                 ctx.fillStyle = style.color;
                 ctx.font = `${style.fontSize}px ${style.fontFamily || 'sans-serif'}`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(option.text, 0, yPos + (btnHeight/2));
+                // Center text in button: btn.x + w/2, drawY + h/2
+                ctx.fillText(btn.text, btn.x + (btn.w/2), drawY + (btn.h/2));
             });
         }
         
+        // 5. Draw Scrollbar if needed
+        if (layout.totalContentHeight > comp.height) {
+            const scrollBarW = 4;
+            const scrollRatio = comp.height / layout.totalContentHeight;
+            const thumbH = Math.max(20, comp.height * scrollRatio);
+            const thumbY = -comp.height/2 + ((comp.scrollY || 0) / layout.totalContentHeight) * comp.height;
+            
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.fillRect(comp.width/2 - 6, thumbY, scrollBarW, thumbH);
+        }
+
+        ctx.restore(); // Remove clip
         ctx.translate(-screenPos.x, -screenPos.y)
     }
 }
@@ -2614,12 +2647,8 @@ const getPreviewLogicalCoords = (e) => {
 
 const onPreviewMouseMove = (e) => {
     if (!isPreviewMode.value || !nodeScenes.value) return;
-    
     const scene = nodeScenes.value[currentPreviewSceneIndex.value];
     if (!scene || !scene.components) return;
-
-    // Check if options component is currently visible (rendered)
-    // Assuming options is always the last component if present
     if (currentPreviewComponentIndex.value < 0) return;
     const activeComp = scene.components[currentPreviewComponentIndex.value];
     
@@ -2627,55 +2656,39 @@ const onPreviewMouseMove = (e) => {
         const coords = getPreviewLogicalCoords(e);
         let needsRedraw = false;
         
-        const comp = activeComp;
+        const dx = coords.x - activeComp.x;
+        const dy = coords.y - activeComp.y;
+        // Preview coords are already "Y Down" (Top-Left 0,0), BUT graph logic was "Center 0,0, Y Up".
+        // Let's re-verify getPreviewLogicalCoords.
+        // Formula: graphY = (centerY - canvasY) / 2. This implies +Y is UP.
+        // So we pass -localY to getOptionAtPosition (which expects +Y Down).
         
-        // Check hit logic similar to editor but using graph coords directly
-        const dx = coords.x - comp.x;
-        const dy = coords.y - comp.y;
-        const rad = -(comp.rotation || 0) * Math.PI / 180;
+        const rad = -(activeComp.rotation || 0) * Math.PI / 180;
         const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
         const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
         
-        // Bounds check
-        if (Math.abs(localX) <= comp.width/2 && Math.abs(localY) <= comp.height/2) {
-             const btnHeight = 40;
-             const btnGap = 10;
-             const totalHeight = (comp.optionsList.length * btnHeight) + ((comp.optionsList.length - 1) * btnGap);
-             const startY = - (totalHeight / 2);
-             let foundHover = -1;
+        const hit = getOptionAtPosition(activeComp, localX, -localY, previewCtx);
              
-             for (let j = 0; j < comp.optionsList.length; j++) {
-                const btnY = startY + (j * (btnHeight + btnGap));
-                // FIX: Use -localY because Graph Y is inverted relative to Draw Y
-                if (localX >= -(comp.width/2 - 20) && localX <= (comp.width/2 - 20) &&
-                    -localY >= btnY && -localY <= btnY + btnHeight) {
-                    foundHover = j;
-                    break;
-                }
-             }
-             
-             if (comp._hoveredOptionIndex !== foundHover) {
-                 comp._hoveredOptionIndex = foundHover;
+         if (hit) {
+             if (activeComp._hoveredOptionIndex !== hit.index) {
+                 activeComp._hoveredOptionIndex = hit.index;
                  needsRedraw = true;
              }
-        } else {
-             if (comp._hoveredOptionIndex !== -1) {
-                 comp._hoveredOptionIndex = -1;
+         } else {
+             if (activeComp._hoveredOptionIndex !== -1) {
+                 activeComp._hoveredOptionIndex = -1;
                  needsRedraw = true;
              }
-        }
-        
+         }
         if (needsRedraw) drawPreview();
     }
 }
 
 const onPreviewMouseDown = (e) => {
     if (!isPreviewMode.value || !nodeScenes.value) return;
-    
     const scene = nodeScenes.value[currentPreviewSceneIndex.value];
     if (!scene || !scene.components) return;
     if (currentPreviewComponentIndex.value < 0) return;
-    
     const activeComp = scene.components[currentPreviewComponentIndex.value];
     
     if (activeComp && activeComp.type === 'options' && activeComp._hoveredOptionIndex !== -1) {
@@ -2786,6 +2799,19 @@ const loadNodeForPreview = (targetNodeId) => {
             setTimeout(() => advancePreview(), 50)
         }
     }
+}
+
+const hexToRgba = (hex, alpha) => {
+    let c;
+    if (/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)) {
+        c = hex.substring(1).split('');
+        if (c.length === 3) {
+            c = [c[0], c[0], c[1], c[1], c[2], c[2]];
+        }
+        c = '0x' + c.join('');
+        return 'rgba(' + [(c >> 16) & 255, (c >> 8) & 255, c & 255].join(',') + ',' + alpha + ')';
+    }
+    return hex;
 }
 
 window.addEventListener('resize', () => {
@@ -3155,6 +3181,39 @@ window.addEventListener('resize', () => {
                     <div class="separator"></div>
 
                     <div v-if="activeComponent.type === 'options'" class="options-editor-panel">
+                        
+                        <div class="detail-section" style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; margin-bottom: 16px;">
+                            <label class="detail-label" style="color:#00ff88; margin-bottom: 12px;">Container Styles</label>
+                            
+                            <div class="detail-section">
+                                <label class="detail-label">Box Color & Opacity:</label>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                    <input type="color" v-model="activeComponent.boxColor" class="color-input" @input="drawComponents" />
+                                    <div class="input-row" style="flex: 1;">
+                                        <input type="range" v-model.number="activeComponent.boxOpacity" min="0" max="1" step="0.05" class="range-input" @input="drawComponents" />
+                                        <span class="audio-val-text">{{ Math.round((activeComponent.boxOpacity || 0) * 100) }}%</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="detail-section">
+                                <label class="detail-label">Border Color:</label>
+                                 <div class="color-picker-container">
+                                    <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="drawComponents" />
+                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
+                                 </div>
+                            </div>
+
+                            <div class="detail-section">
+                                <label class="detail-label">Border Width:</label>
+                                <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="drawComponents" />
+                            </div>
+
+                            <div class="detail-section">
+                                <label class="detail-label">Border Radius:</label>
+                                <input type="number" v-model.number="activeComponent.borderRadius" class="detail-input" @input="drawComponents" />
+                            </div>
+                        </div>
                         <div class="detail-section">
                             <div class="scene-panel-header" style="margin-bottom: 12px; border-bottom: 0; padding: 0;">
                                 <span class="detail-label" style="font-size: 1rem;">Options List</span>
@@ -3405,7 +3464,8 @@ window.addEventListener('resize', () => {
              class="preview-overlay"
              @mousemove="onPreviewMouseMove"
              @mousedown="onPreviewMouseDown"
-             @mouseup="onPreviewMouseUp">
+             @mouseup="onPreviewMouseUp"
+             @wheel="onPreviewWheel">
              <canvas ref="previewCanvasRef" class="preview-canvas"></canvas>
              <button class="preview-close-btn" @click.stop="exitPreview">Stop Preview ✕</button>
              <div class="preview-hint">Click to advance sequence</div>
