@@ -80,6 +80,9 @@ const currentPreviewComponentIndex = ref(-1)
 const previewAudioElement = ref(null)
 const previewScale = ref(1) 
 
+// ANIMATION STATE
+const componentStartTime = ref(0) // Timestamp when the current component started rendering
+
 /* ================= GRAPH SETTINGS ================= */
 const graphCanvasRef = ref(null)
 let graphCtx
@@ -177,11 +180,6 @@ const updateNodeOptionsInStatus = () => {
     const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
     if (!status) return
 
-    // Logic: Options must be in the LAST scene
-    // We check nodeScenes (and if we are currently editing the last scene, we check sceneComponents)
-    
-    // 1. Get List of scenes
-    // We use the local 'nodeScenes' ref because it tracks the state in popup
     const scenes = nodeScenes.value || []
     if (scenes.length === 0) {
         status.options = []
@@ -189,29 +187,21 @@ const updateNodeOptionsInStatus = () => {
     }
 
     const lastScene = scenes[scenes.length - 1]
-    
-    // 2. Get components for the last scene
     let comps = lastScene.components || []
     
-    // If we are currently editing the last scene, use the live 'sceneComponents'
     if (selectedScene.value && selectedScene.value.id === lastScene.id) {
         comps = sceneComponents.value
     }
 
-    // 3. Find Options Component
     const optionsComp = comps.find(c => c.type === 'options')
 
     if (optionsComp && optionsComp.optionsList) {
-        // 4. Map to Status
-        // Preserve 'next' connection if the ID matches an existing option
         const oldOptions = status.options || []
-        
         status.options = optionsComp.optionsList.map(opt => {
             const existing = oldOptions.find(o => o.id === opt.id)
             return {
                 id: opt.id,
                 text: opt.text,
-                // Preserve the next connection if it exists, otherwise null
                 next: existing ? existing.next : null 
             }
         })
@@ -219,10 +209,8 @@ const updateNodeOptionsInStatus = () => {
         status.options = []
     }
     
-    // Trigger main canvas redraw to show new arrowheads
     draw() 
 }
-
 
 /* ================= SCENES MANAGEMENT ================= */
 const nodeScenes = ref([]) 
@@ -304,13 +292,16 @@ const addOptionsComponent = () => {
             clicked: { ...defaultBtnStyle, backgroundColor: '#1f2937', borderColor: '#00ff88', borderWidth: 2 }
         },
         _hoveredOptionIndex: -1,
-        _clickedOptionIndex: -1
+        _clickedOptionIndex: -1,
+        renderWhileClicked: true,
+        autoRender: false,
+        // Animation Props
+        animationType: 'fade', 
+        animationDuration: 1.0 
     }
     sceneComponents.value.push(newOption)
     
-    // Sync to Node Status immediately
     updateNodeOptionsInStatus()
-    
     updateSceneContentDisplay()
     drawComponents()
 }
@@ -321,28 +312,38 @@ const addOptionToComponent = () => {
         ? Math.max(...activeComponent.value.optionsList.map(o => o.id)) + 1 
         : 1;
     activeComponent.value.optionsList.push({ id: newId, text: `Option ${newId}` });
-    
-    // Sync
     updateNodeOptionsInStatus()
-    
     drawComponents();
 }
 
 const removeOptionFromComponent = (index) => {
     if(!activeComponent.value || activeComponent.value.type !== 'options') return;
+    if (activeComponent.value.optionsList.length <= 2) {
+        alert("An Options component must have at least two options.");
+        return;
+    }
     activeComponent.value.optionsList.splice(index, 1);
-    
-    // Sync
     updateNodeOptionsInStatus()
-    
     drawComponents();
 }
 
-// Watch active component to sync text changes in options
+const getConnectedNodeName = (optionId) => {
+    if (!popupNode.value) return "Not connected yet";
+    const status = Canvas_Status.value.find(s => s.index === popupNode.value.id);
+    if (!status || !status.options) return "Not connected yet";
+    
+    const optStatus = status.options.find(o => o.id === optionId);
+    if (optStatus && optStatus.next) {
+        const target = Canvas_Status.value.find(s => s.index === optStatus.next);
+        return target ? (target.Node_name || `Node ${target.index}`) : "Unknown Node";
+    }
+    return "Not connected yet";
+}
+
 watch(() => activeComponent.value?.optionsList, (newVal) => {
     if (activeComponent.value && activeComponent.value.type === 'options') {
         updateNodeOptionsInStatus()
-        drawComponents() // Redraw to update text
+        drawComponents() 
     }
 }, { deep: true })
 
@@ -371,7 +372,12 @@ const addTextComponent = () => {
     borderWidth: 0,
     borderRadius: 0,
     rotation: 0,
-    url: '', 
+    url: '',
+    renderWhileClicked: true,
+    autoRender: false,
+    // Animation Props
+    animationType: 'fade', 
+    animationDuration: 1.0 
   }
    
   const optionsIndex = sceneComponents.value.findIndex(c => c.type === 'options');
@@ -478,7 +484,12 @@ const handleVideoUpload = (event) => {
         videoElement: vid, 
         isLoop: true,
         isMuted: false,
-        bgMusicVolume: 0.2 
+        bgMusicVolume: 0.2,
+        renderWhileClicked: true,
+        autoRender: false,
+        // Animation Props
+        animationType: 'fade', 
+        animationDuration: 1.0 
       }
 
       vid.play() 
@@ -500,7 +511,6 @@ const handleVideoUpload = (event) => {
 
 const updateVideoProperties = () => {
     if (!activeComponent.value || activeComponent.value.type !== 'video') return
-    
     const vid = activeComponent.value.videoElement
     if (vid) {
         vid.loop = activeComponent.value.isLoop
@@ -536,7 +546,12 @@ const handleImageUpload = (event) => {
       rotation: 0,
       originalFile: file, 
       aspectRatio: 1,
-      imgObject: img 
+      imgObject: img,
+      renderWhileClicked: true,
+      autoRender: false,
+      // Animation Props
+      animationType: 'fade', 
+      animationDuration: 1.0 
     }
     
     img.onload = () => {
@@ -751,9 +766,7 @@ const removeComponent = (index) => {
     closeComponentEditor()
   }
   
-  // Update Status if we removed the options component
   const wasOptions = sceneComponents.value[index].type === 'options'
-  
   sceneComponents.value.splice(index, 1)
   
   if (wasOptions) {
@@ -764,6 +777,7 @@ const removeComponent = (index) => {
   drawComponents()
 }
 
+/* ================= GRAPH INTERACTION ================= */
 const onGraphMouseDown = (event) => {
   if (!imagesCanvasRef.value) return
   
@@ -939,6 +953,29 @@ const closeComponentEditor = () => {
     })
 }
 
+// TOGGLE RENDER MODE
+const updateRenderMode = (mode) => {
+    if (!activeComponent.value) return;
+    
+    if (mode === 'auto') {
+        if (activeComponent.value.autoRender) {
+             activeComponent.value.autoRender = false;
+             activeComponent.value.renderWhileClicked = true;
+        } else {
+             activeComponent.value.autoRender = true;
+             activeComponent.value.renderWhileClicked = false;
+        }
+    } else {
+        if (activeComponent.value.renderWhileClicked) {
+            activeComponent.value.renderWhileClicked = false;
+            activeComponent.value.autoRender = true;
+        } else {
+            activeComponent.value.renderWhileClicked = true;
+            activeComponent.value.autoRender = false;
+        }
+    }
+}
+
 const updateActiveComponentPosition = () => {
     if (activeComponent.value) {
         drawComponents()
@@ -1059,7 +1096,7 @@ const openPopup = node => {
   })
 }
 
-// Animation Loop for Video Rendering
+// Animation Loop
 const startRenderLoop = () => {
   const loop = () => {
     if (showPopup.value) {
@@ -1080,8 +1117,6 @@ const closePopup = () => {
   }
   
   stopEditorVideos()
-
-  // FINAL SYNC of Options before closing to ensure main graph is updated
   updateNodeOptionsInStatus()
 
   popupAnimation.value = false
@@ -1332,7 +1367,8 @@ const drawComponents = () => {
   })
 }
 
-const renderComponent = (ctx, comp, screenPos) => {
+// Updated renderComponent to handle Animation Overrides (like Typewriter text truncation)
+const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
     if (comp.type === 'image') {
         if (comp.imgObject) {
             ctx.drawImage(
@@ -1389,25 +1425,28 @@ const renderComponent = (ctx, comp, screenPos) => {
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         
-        ctx.fillText(comp.content, 0, 0)
+        // --- ANIMATION TYPEWRITER LOGIC ---
+        let contentToDraw = comp.content
+        if (animationOverride && animationOverride.type === 'typewriter') {
+            const progress = animationOverride.progress // 0 to 1
+            const length = Math.floor(comp.content.length * progress)
+            contentToDraw = comp.content.substring(0, length)
+        }
         
-        if (comp.textDecoration === 'underline') {
-             const metrics = ctx.measureText(comp.content)
+        ctx.fillText(contentToDraw, 0, 0)
+        
+        // Decorations (Underline/Strikethrough)
+        // Note: Just drawing for full width to simplify, or could scale width by text measure
+        if (comp.textDecoration === 'underline' || comp.textDecoration === 'line-through') {
+             const metrics = ctx.measureText(contentToDraw)
              const width = metrics.width
              ctx.beginPath()
              ctx.strokeStyle = comp.textDecorationColor || comp.color
              ctx.lineWidth = comp.fontSize / 15
-             ctx.moveTo(-width/2, comp.fontSize/2)
-             ctx.lineTo(width/2, comp.fontSize/2)
-             ctx.stroke()
-        } else if (comp.textDecoration === 'line-through') {
-             const metrics = ctx.measureText(comp.content)
-             const width = metrics.width
-             ctx.beginPath()
-             ctx.strokeStyle = comp.textDecorationColor || comp.color
-             ctx.lineWidth = comp.fontSize / 15
-             ctx.moveTo(-width/2, 0)
-             ctx.lineTo(width/2, 0)
+             
+             const yOffset = comp.textDecoration === 'underline' ? comp.fontSize/2 : 0
+             ctx.moveTo(-width/2, yOffset)
+             ctx.lineTo(width/2, yOffset)
              ctx.stroke()
         }
         
@@ -1571,19 +1610,13 @@ const selectScene = (scene) => {
 
 const saveSceneAndGoBack = () => {
   if (!selectedScene.value) return
-  
   stopEditorVideos();
-
-  // Sync options before saving
   updateNodeOptionsInStatus()
-
   updateSceneDetails()
-  
   const sceneIndex = nodeScenes.value.findIndex(scene => scene.id === selectedScene.value.id)
   if (sceneIndex !== -1) {
     nodeScenes.value[sceneIndex].components = [...sceneComponents.value]
   }
-  
   viewMode.value = 'scenes'
   selectedScene.value = null
   sceneComponents.value = []
@@ -1596,18 +1629,13 @@ const saveSceneAndGoBack = () => {
 const goBackToScenes = () => {
   if (selectedScene.value) {
     stopEditorVideos();
-
-    // Sync options before going back
     updateNodeOptionsInStatus()
-
     updateSceneDetails()
-    
     const sceneIndex = nodeScenes.value.findIndex(scene => scene.id === selectedScene.value.id)
     if (sceneIndex !== -1) {
       nodeScenes.value[sceneIndex].components = [...sceneComponents.value]
     }
   }
-  
   viewMode.value = 'scenes'
   selectedScene.value = null
   sceneComponents.value = []
@@ -1618,7 +1646,6 @@ const goBackToScenes = () => {
 
 const updateSceneDetails = () => {
   if (!selectedScene.value) return
-  
   const index = nodeScenes.value.findIndex(scene => scene.id === selectedScene.value.id)
   if (index !== -1) {
     nodeScenes.value[index] = { 
@@ -1631,9 +1658,7 @@ const updateSceneDetails = () => {
 
 const updateNodeScenesInStatus = () => {
   if (!popupNode.value) return
-  
   const nodeStatusIndex = Canvas_Status.value.findIndex(s => s.index === popupNode.value.id)
-  
   if (nodeStatusIndex !== -1) {
     Canvas_Status.value[nodeStatusIndex].scenes = nodeScenes.value.map(scene => ({
       id: scene.id,
@@ -1686,20 +1711,17 @@ const drawRoundedRect = (x, y, w, h, r) => {
 }
 
 const arrowHit = (n, wx, wy) => {
-  // Check if node has multiple options in status
   const status = Canvas_Status.value.find(s => s.index === n.id);
   const hasOptions = status && status.options && status.options.length > 0;
 
   if (hasOptions) {
-      // Logic for multiple outputs
       const options = status.options;
       const totalH = Math.max(NODE_H, HEADER_H + (options.length * OPTION_ROW_H) + 10);
-      const startY = n.y - totalH / 2 + HEADER_H + 20; // 20px padding below header
+      const startY = n.y - totalH / 2 + HEADER_H + 20;
 
-      // Check each option arrow
       for (let i = 0; i < options.length; i++) {
           const optY = startY + (i * OPTION_ROW_H);
-          const optX = n.x + NODE_W / 2 - ARROW_OFFSET; // Right side
+          const optX = n.x + NODE_W / 2 - ARROW_OFFSET; 
           
           if (Math.hypot(wx - optX, wy - optY) < ARROW_HIT_R) {
               return { 
@@ -1713,22 +1735,15 @@ const arrowHit = (n, wx, wy) => {
           }
       }
       
-      // Left Side (Input) remains standard
       const leftAy = n.y - totalH / 2 + HEADER_H / 2
       const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
       if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) 
           return { node: n, side: "left", x: leftAx, y: leftAy }
 
   } else {
-      // STANDARD Single Output Logic
       const leftAy = n.y - NODE_H / 2 + HEADER_H / 2
       const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
-
-      const rightAy = n.y + HEADER_H / 2
-      const rightAx = n.x + NODE_W / 2 - ARROW_OFFSET
-
       if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) return { node: n, side: "left", x: leftAx, y: leftAy }
-      if (Math.hypot(wx - rightAx, wy - rightAy) < ARROW_HIT_R) return { node: n, side: "right", x: rightAx, y: rightAy }
   }
   
   return null
@@ -1827,14 +1842,12 @@ const drawAxes = (w, h) => {
   ctx.stroke()
 }
 
-/* ================= DRAW NODES (UPDATED) ================= */
 const drawNodes = () => {
   for (const n of nodes.value) {
     const x = n.x
     const y = n.y
     const status = Canvas_Status.value.find(s => s.index === n.id)
     
-    // Check for Options to determine height
     const hasOptions = status && status.options && status.options.length > 0;
     const currentH = hasOptions 
         ? Math.max(NODE_H, HEADER_H + (status.options.length * OPTION_ROW_H) + 10) 
@@ -1880,7 +1893,6 @@ const drawNodes = () => {
     
     ctx.fillText(label, x, y - currentH / 2 + HEADER_H / 2)
 
-    // Left Input Arrow (Always present)
     const leftAy = y - currentH / 2 + HEADER_H / 2
     const leftAx = x - NODE_W / 2 + ARROW_OFFSET
     
@@ -1888,16 +1900,13 @@ const drawNodes = () => {
     ctx.font = "16px sans-serif"
     ctx.fillText("▷", leftAx, leftAy)
 
-    // Right Output Arrows (Conditional)
     if (hasOptions) {
-        // Draw Multiple Option Arrows
         const startY = y - currentH / 2 + HEADER_H + 20;
         
         status.options.forEach((opt, idx) => {
              const optY = startY + (idx * OPTION_ROW_H);
              const optX = x + NODE_W / 2 - ARROW_OFFSET;
 
-             // Draw Hover Circle
              if (hoveredArrow?.node === n && hoveredArrow.optionIndex === idx) {
                  ctx.beginPath()
                  ctx.arc(optX, optY, 9, 0, Math.PI * 2)
@@ -1906,56 +1915,33 @@ const drawNodes = () => {
                  ctx.stroke()
              }
              
-             // Draw Arrow
+             ctx.font = "16px sans-serif" 
              ctx.fillStyle = "#fff"
              ctx.textAlign = "center"
              ctx.fillText("▷", optX, optY)
              
-             // Draw Option Label
              ctx.textAlign = "right"
              ctx.font = "11px sans-serif"
              ctx.fillStyle = "#e2e8f0"
              
              let optLabel = opt.text || `Option ${idx+1}`
-             // Truncate
              if (ctx.measureText(optLabel).width > NODE_W - 50) {
                   optLabel = optLabel.substring(0, 15) + "..."
              }
              ctx.fillText(optLabel, optX - 15, optY)
         });
-
-    } else {
-        // Standard Single Output
-        const rightAy = y + HEADER_H / 2
-        const rightAx = x + NODE_W / 2 - ARROW_OFFSET
-
-        if (hoveredArrow?.node === n && hoveredArrow.side === "right") {
-            ctx.beginPath()
-            ctx.arc(hoveredArrow.x, hoveredArrow.y, 9, 0, Math.PI * 2)
-            ctx.strokeStyle = "#fff"
-            ctx.lineWidth = 2 / scale
-            ctx.stroke()
-        }
-        
-        ctx.fillStyle = "#fff"
-        ctx.font = "16px sans-serif"
-        ctx.textAlign = "center"
-        ctx.fillText("▷", rightAx, rightAy)
-    }
+    } 
   }
 }
 
-/* ================= DRAW CONNECTIONS (UPDATED) ================= */
 const drawConnections = () => {
   ctx.strokeStyle = "#fff"
   ctx.lineWidth = 4 / scale
   for (const n of Canvas_Status.value) {
       
-    // 1. Draw Option Connections
     if (n.options && n.options.length > 0) {
         const fromNode = nodes.value.find(nd => nd.id === n.index)
         if (fromNode) {
-            // Recalc height to find start position
             const h = Math.max(NODE_H, HEADER_H + (n.options.length * OPTION_ROW_H) + 10);
             const startY = fromNode.y - h / 2 + HEADER_H + 20;
 
@@ -1966,7 +1952,6 @@ const drawConnections = () => {
                         const fromX = fromNode.x + NODE_W / 2 - ARROW_OFFSET
                         const fromY = startY + (idx * OPTION_ROW_H)
                         
-                        // Check target node height for input position
                         const targetStatus = Canvas_Status.value.find(s => s.index === toNode.id)
                         const targetH = (targetStatus && targetStatus.options && targetStatus.options.length > 0) 
                              ? Math.max(NODE_H, HEADER_H + (targetStatus.options.length * OPTION_ROW_H) + 10) 
@@ -1984,16 +1969,13 @@ const drawConnections = () => {
             })
         }
     } 
-    // 2. Draw Standard 'Next' Connection (Only if no options, or as fallback)
     else if (n.Next != null) {
       const fromNode = nodes.value.find(nd => nd.id === n.index)
       const toNode = nodes.value.find(nd => nd.id === n.Next)
       if (fromNode && toNode) {
-          
         const fromX = fromNode.x + NODE_W / 2 - ARROW_OFFSET
         const fromY = fromNode.y + HEADER_H / 2
         
-        // Check target node height
         const targetStatus = Canvas_Status.value.find(s => s.index === toNode.id)
         const targetH = (targetStatus && targetStatus.options && targetStatus.options.length > 0) 
                 ? Math.max(NODE_H, HEADER_H + (targetStatus.options.length * OPTION_ROW_H) + 10) 
@@ -2011,7 +1993,6 @@ const drawConnections = () => {
   }
 }
 
-/* ================= DRAW TEMP LINE ================= */
 const drawConnectingLine = () => {
   if (!connectingLine) return
   ctx.strokeStyle = "#fff"
@@ -2037,7 +2018,7 @@ const onMouseDown = e => {
           node: n, 
           fromX: hit.x, 
           fromY: hit.y,
-          optionIndex: hit.optionIndex, // Capture specific option
+          optionIndex: hit.optionIndex, 
           optionId: hit.optionId 
       }
       connectingLine = { fromNode: n, fromX: hit.x, fromY: hit.y, toX: hit.x, toY: hit.y }
@@ -2118,14 +2099,11 @@ const onMouseUp = e => {
     if (targetNode) {
       const cs = Canvas_Status.value.find(s => s.index === outputDragging.node.id)
       if (cs) {
-          // Check if dragging from an option
           if (outputDragging.optionIndex !== undefined && cs.options) {
-               // Update specific option target
                if (cs.options[outputDragging.optionIndex]) {
                    cs.options[outputDragging.optionIndex].next = targetNode.id
                }
           } else {
-               // Standard update
                cs.Next = targetNode.id
           }
       }
@@ -2177,6 +2155,8 @@ const resize = () => {
   draw()
 }
 
+let statusLogInterval = null;
+
 onMounted(() => {
   ctx = canvasRef.value.getContext("2d")
   resize()
@@ -2184,6 +2164,30 @@ onMounted(() => {
   window.addEventListener("mousemove", onMouseMove)
   window.addEventListener("mouseup", onMouseUp)
   document.addEventListener('fullscreenchange', handleFullscreenChange)
+
+  statusLogInterval = setInterval(() => {
+      Canvas_Status.value.forEach(nodeStatus => {
+          let log = `Node ${nodeStatus.Node_name || nodeStatus.index} has got ${nodeStatus.scenes ? nodeStatus.scenes.length : 0} no of scenes...`;
+
+          if (nodeStatus.scenes) {
+             const sceneWithOpt = nodeStatus.scenes.find(s => s.components && s.components.some(c => c.type === 'options'));
+             if (sceneWithOpt) {
+                 if (nodeStatus.options && nodeStatus.options.length > 0) {
+                     log += ` in scene ${sceneWithOpt.name} there is a option component...with ${nodeStatus.options.length} options...`;
+                     nodeStatus.options.forEach(opt => {
+                         let connectedNodeName = "Not connected yet";
+                         if (opt.next) {
+                             const target = Canvas_Status.value.find(s => s.index === opt.next);
+                             if (target) connectedNodeName = target.Node_name || `Node ${target.index}`;
+                         }
+                         log += ` option '${opt.text}' is connected to ${connectedNodeName},`;
+                     });
+                 }
+             }
+          }
+          console.log(log);
+      });
+  }, 20000);
 })
 
 onBeforeUnmount(() => {
@@ -2191,6 +2195,8 @@ onBeforeUnmount(() => {
   window.removeEventListener("mousemove", onMouseMove)
   window.removeEventListener("mouseup", onMouseUp)
   document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  
+  if (statusLogInterval) clearInterval(statusLogInterval);
 })
 
 watch(showPopup, (newVal) => {
@@ -2213,6 +2219,9 @@ const startPreview = () => {
     isPreviewMode.value = true
     currentPreviewSceneIndex.value = 0
     currentPreviewComponentIndex.value = -1 
+    
+    // Reset timer logic for first component interaction if needed
+    componentStartTime.value = 0; 
     
     if (sequenceAudio.value && sequenceAudio.value.url) {
         previewAudioElement.value = new Audio(sequenceAudio.value.url)
@@ -2241,7 +2250,6 @@ const initializePreviewCanvas = () => {
 const resizePreviewCanvas = () => {
     if (previewCanvasRef.value) {
         let refW = 0, refH = 0;
-        
         if (popupNode.value) {
              const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
              if (status && status.referenceWidth && status.referenceHeight) {
@@ -2249,7 +2257,6 @@ const resizePreviewCanvas = () => {
                  refH = status.referenceHeight;
              }
         }
-        
         if (!refW || !refH) {
              refW = window.innerWidth * 0.75;
              refH = window.innerHeight - 48;
@@ -2281,6 +2288,7 @@ const stopVideosInScene = (scene) => {
         if (comp.type === 'video' && comp.videoElement) {
             comp.videoElement.pause();
             comp.videoElement.currentTime = 0; 
+            comp.videoElement.onended = null;
         }
     })
 }
@@ -2293,19 +2301,61 @@ const advancePreview = () => {
     const currentScene = nodeScenes.value[currentPreviewSceneIndex.value]
     const components = currentScene.components || []
 
+    // --- CLICK TO SKIP ANIMATION CHECK ---
+    // If there is an active component (index >= 0) and it is animating
+    if (currentPreviewComponentIndex.value >= 0 && currentPreviewComponentIndex.value < components.length) {
+        const currentComp = components[currentPreviewComponentIndex.value]
+        
+        // Calculate current progress
+        const now = Date.now()
+        const duration = (currentComp.animationDuration || 1) * 1000
+        const elapsed = now - componentStartTime.value
+        
+        // If animation is still running (and duration > 0)
+        if (elapsed < duration && currentComp.animationType !== 'none') {
+            // Force animation end: set start time to the past
+            componentStartTime.value = now - duration - 100 
+            // Do NOT advance index
+            return
+        }
+    }
+
     if (currentPreviewComponentIndex.value < components.length - 1) {
+        
         currentPreviewComponentIndex.value++
         
+        // Set Start Time for Animation
+        componentStartTime.value = Date.now()
+        
         const comp = components[currentPreviewComponentIndex.value]
+        
         if (comp.type === 'video' && comp.videoElement) {
              comp.videoElement.currentTime = 0;
              comp.videoElement.play().catch(e => console.error("Auto-play prevented", e));
+             
+             const subsequentComp = components[currentPreviewComponentIndex.value + 1];
+             if (subsequentComp && subsequentComp.autoRender) {
+                 comp.videoElement.onended = () => {
+                     advancePreview(); 
+                 };
+             } else {
+                 comp.videoElement.onended = null;
+             }
+        } 
+        else {
+             const subsequentComp = components[currentPreviewComponentIndex.value + 1];
+             if (subsequentComp && subsequentComp.autoRender) {
+                 // For static items, wait for animation to finish then advance
+                 const animDuration = (comp.animationDuration || 1) * 1000
+                 setTimeout(() => {
+                     advancePreview();
+                 }, animDuration + 50); 
+             }
         }
 
     } else {
         if (currentPreviewSceneIndex.value < nodeScenes.value.length - 1) {
             stopVideosInScene(currentScene);
-
             currentPreviewSceneIndex.value++
             currentPreviewComponentIndex.value = -1 
         } else {
@@ -2330,10 +2380,8 @@ const checkAudioDucking = () => {
 
     if (comp && comp.type === 'video') {
         const vidEl = comp.videoElement;
-        
         const isLooping = comp.isLoop; 
         const hasEnded = vidEl ? vidEl.ended : false;
-
         const duckVolume = comp.bgMusicVolume !== undefined ? comp.bgMusicVolume : 0.2;
 
         if (isLooping) {
@@ -2380,10 +2428,11 @@ const drawPreview = () => {
         ctx.fillRect(0, 0, logicalWidth, logicalHeight)
         
         const components = scene.components || []
-        
         const centerX = logicalWidth / 2
         const centerY = logicalHeight / 2
         
+        const now = Date.now()
+
         for (let i = 0; i <= currentPreviewComponentIndex.value; i++) {
             const comp = components[i]
             if (!comp) continue;
@@ -2391,15 +2440,52 @@ const drawPreview = () => {
             const pixelsPerUnit = 2
             const screenX = centerX + (comp.x * pixelsPerUnit)
             const screenY = centerY - (comp.y * pixelsPerUnit)
-            
             const screenPos = { x: screenX, y: screenY }
+
+            // --- ANIMATION CALCULATION ---
+            let progress = 1
+            
+            // Only the *current* component animates. Previous ones are fully shown (progress = 1)
+            if (i === currentPreviewComponentIndex.value) {
+                const duration = (comp.animationDuration || 1) * 1000
+                if (duration > 0) {
+                    progress = (now - componentStartTime.value) / duration
+                    if (progress > 1) progress = 1
+                    if (progress < 0) progress = 0
+                }
+            }
+
+            const animType = comp.animationType || 'none'
             
             ctx.save()
+
+            // Apply Animations via Context Transformations
+            if (animType === 'fade') {
+                ctx.globalAlpha = progress
+            } else if (animType === 'scale') {
+                // Zoom In
+                ctx.translate(screenPos.x, screenPos.y)
+                ctx.scale(progress, progress)
+                ctx.translate(-screenPos.x, -screenPos.y)
+            } else if (animType === 'slide') {
+                // Slide from Left
+                const offset = 200 * (1 - progress)
+                ctx.translate(-offset, 0)
+                // Fade in slightly during slide
+                ctx.globalAlpha = Math.max(0, progress) 
+            }
+            
             ctx.translate(screenPos.x, screenPos.y)
             ctx.rotate((comp.rotation || 0) * Math.PI / 180)
             ctx.translate(-screenPos.x, -screenPos.y)
             
-            renderComponent(ctx, comp, screenPos)
+            // Pass progress specifically for Typewriter effect inside renderComponent
+            const animationOverride = {
+                type: animType,
+                progress: progress
+            }
+            
+            renderComponent(ctx, comp, screenPos, animationOverride)
             
             ctx.restore()
         }
@@ -2416,9 +2502,7 @@ const exitPreview = () => {
         previewAudioElement.value.pause()
         previewAudioElement.value = null
     }
-    
     stopAllVideos();
-
     isPreviewMode.value = false
 }
 
@@ -2727,6 +2811,53 @@ window.addEventListener('resize', () => {
                             @change="updateSceneContentDisplay"
                         />
                     </div>
+                    
+                    <div class="detail-section">
+                        <label class="detail-label">Entrance Animation:</label>
+                        <select v-model="activeComponent.animationType" class="detail-input">
+                            <option value="none">None</option>
+                            <option value="fade">Fade In</option>
+                            <option value="scale">Zoom In</option>
+                            <option value="slide">Slide In (Left)</option>
+                            <option v-if="activeComponent.type === 'text'" value="typewriter">Typewriter</option>
+                        </select>
+                    </div>
+
+                    <div class="detail-section" v-if="activeComponent.animationType && activeComponent.animationType !== 'none'">
+                        <label class="detail-label">Animation Duration (sec):</label>
+                        <div class="input-row">
+                            <input 
+                                type="range" 
+                                v-model.number="activeComponent.animationDuration" 
+                                min="0.1" max="10" step="0.1"
+                                class="range-input" 
+                            />
+                            <input 
+                                type="number" 
+                                v-model.number="activeComponent.animationDuration" 
+                                class="number-input" 
+                                min="0.1" max="10" step="0.1"
+                            />
+                        </div>
+                    </div>
+                    <div class="separator"></div>
+                    <div class="detail-section">
+                         <div class="checkbox-row" style="margin-bottom: 8px;">
+                            <label class="detail-label" style="margin-bottom:0; flex: 1;">Render on click:</label>
+                            <input type="checkbox" :checked="activeComponent.renderWhileClicked" @change="updateRenderMode('click')" />
+                         </div>
+                         <div style="font-size: 0.75rem; color: #9ca3af; margin-bottom: 8px; margin-left: 20px;">
+                            User must click to show this component.
+                         </div>
+
+                         <div class="checkbox-row">
+                            <label class="detail-label" style="margin-bottom:0; flex: 1;">Automatic rendering:</label>
+                            <input type="checkbox" :checked="activeComponent.autoRender" @change="updateRenderMode('auto')" />
+                         </div>
+                         <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; margin-left: 20px;">
+                            Renders immediately after the previous component finishes.
+                         </div>
+                    </div>
 
                     <div class="detail-section">
                         <label class="detail-label">Layering:</label>
@@ -2748,9 +2879,14 @@ window.addEventListener('resize', () => {
                             </div>
                             
                             <div class="options-list-container">
-                                <div v-for="(opt, index) in activeComponent.optionsList" :key="opt.id" class="option-list-item">
-                                    <input v-model="opt.text" class="detail-input" @input="drawComponents" />
-                                    <button class="remove-image-btn" @click="removeOptionFromComponent(index)">🗑️</button>
+                                <div v-for="(opt, index) in activeComponent.optionsList" :key="opt.id" class="option-list-item-wrapper">
+                                    <div class="option-list-item">
+                                        <input v-model="opt.text" class="detail-input" @input="drawComponents" />
+                                        <button class="remove-image-btn" @click="removeOptionFromComponent(index)">🗑️</button>
+                                    </div>
+                                    <div style="font-size: 0.75rem; color: #00ff88; margin-top: 4px; padding-left: 4px; font-style: italic;">
+                                        Connected to: {{ getConnectedNodeName(opt.id) }}
+                                    </div>
                                 </div>
                                 <div v-if="activeComponent.optionsList.length === 0" style="text-align:center; color: #6b7280; font-style:italic; padding: 10px;">
                                     No options.
@@ -2991,6 +3127,7 @@ window.addEventListener('resize', () => {
 
   </div>
 </template>
+
 <style scoped>
   .wrapper { 
     width: 100vw; 
@@ -4138,6 +4275,12 @@ window.addEventListener('resize', () => {
       margin-bottom: 16px;
   }
   
+  .option-list-item-wrapper {
+      padding: 4px;
+      background: rgba(255,255,255,0.02);
+      border-radius: 4px;
+  }
+
   .option-list-item {
       display: flex;
       gap: 8px;
