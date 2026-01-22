@@ -47,7 +47,7 @@ let mouseWorld = { x: 0, y: 0 }
 /* ================= NODES ================= */
 const nodes = ref([])
 const selectedNodeId = ref(null)
-const Canvas_Status = ref([])
+const Canvas_Status = ref([]) // THE MASTER ARRAY
 const editingNodeName = ref("") 
 
 let draggingNode = null
@@ -139,6 +139,7 @@ const handleAudioUpload = (event) => {
     loop: true   
   }
 
+  // Triggered by watcher, but call explicit to be safe
   updateNodeAudioInStatus()
   event.target.value = ''
 }
@@ -160,6 +161,7 @@ const updateNodeAudioInStatus = () => {
     if (nodeStatusIndex !== -1) {
         Canvas_Status.value[nodeStatusIndex].audio = sequenceAudio.value
     } else {
+        // Create if missing (edge case)
         Canvas_Status.value.push({ 
             index: popupNode.value.id, 
             x: popupNode.value.x, 
@@ -189,6 +191,7 @@ const updateNodeOptionsInStatus = () => {
     const lastScene = scenes[scenes.length - 1]
     let comps = lastScene.components || []
     
+    // If we are currently editing the last scene, use the live sceneComponents
     if (selectedScene.value && selectedScene.value.id === lastScene.id) {
         comps = sceneComponents.value
     }
@@ -209,7 +212,7 @@ const updateNodeOptionsInStatus = () => {
         status.options = []
     }
     
-    draw() 
+    draw() // Redraw graph to show/hide arrow connection points
 }
 
 /* ================= SCENES MANAGEMENT ================= */
@@ -217,6 +220,32 @@ const nodeScenes = ref([])
 const hoveredSceneId = ref(null) 
 const selectedScene = ref(null) 
 const viewMode = ref('scenes') 
+
+/* ================= CONSTANT UPDATE WATCHERS ================= */
+// 1. Watch Sequence Audio
+watch(sequenceAudio, () => {
+    updateNodeAudioInStatus()
+}, { deep: true })
+
+// 2. Watch Scene Components (The active editor)
+watch(sceneComponents, (newVal) => {
+    if (selectedScene.value) {
+        // Find the scene in nodeScenes and update its components array
+        const idx = nodeScenes.value.findIndex(s => s.id === selectedScene.value.id)
+        if (idx !== -1) {
+            // Update the local manifest of scenes
+            nodeScenes.value[idx].components = [...newVal]
+            // This will trigger the 'nodeScenes' watcher below
+        }
+    }
+}, { deep: true })
+
+// 3. Watch Node Scenes (The list of scenes for the current node)
+watch(nodeScenes, () => {
+    updateNodeScenesInStatus()
+    // Also check options because options depend on the components of the last scene
+    updateNodeOptionsInStatus() 
+}, { deep: true })
 
 /* ================= ADD DROPDOWN ================= */
 const showAddDropdown = ref(false)
@@ -232,6 +261,7 @@ const toggleAddDropdown = () => {
 }
 
 const selectAddOption = (option) => {
+  // Logic to prevent adding options if not the last scene or if options exist
   const isLastScene = selectedScene.value && nodeScenes.value.length > 0 && selectedScene.value.id === nodeScenes.value[nodeScenes.value.length - 1].id;
 
   if (option.id === 'options') {
@@ -301,7 +331,7 @@ const addOptionsComponent = () => {
     }
     sceneComponents.value.push(newOption)
     
-    updateNodeOptionsInStatus()
+    // Watchers handle the update to Status
     updateSceneContentDisplay()
     drawComponents()
 }
@@ -312,7 +342,7 @@ const addOptionToComponent = () => {
         ? Math.max(...activeComponent.value.optionsList.map(o => o.id)) + 1 
         : 1;
     activeComponent.value.optionsList.push({ id: newId, text: `Option ${newId}` });
-    updateNodeOptionsInStatus()
+    // Watchers handle the update
     drawComponents();
 }
 
@@ -323,7 +353,7 @@ const removeOptionFromComponent = (index) => {
         return;
     }
     activeComponent.value.optionsList.splice(index, 1);
-    updateNodeOptionsInStatus()
+    // Watchers handle the update
     drawComponents();
 }
 
@@ -342,7 +372,7 @@ const getConnectedNodeName = (optionId) => {
 
 watch(() => activeComponent.value?.optionsList, (newVal) => {
     if (activeComponent.value && activeComponent.value.type === 'options') {
-        updateNodeOptionsInStatus()
+        // Direct watchers on sceneComponents catch this, but explicit redraw helps
         drawComponents() 
     }
 }, { deep: true })
@@ -481,7 +511,7 @@ const handleVideoUpload = (event) => {
         height: height,
         rotation: 0,
         aspectRatio: ratio,
-        videoElement: vid, 
+        videoElement: vid, // Store DOM element for Editor preview
         isLoop: true,
         isMuted: false,
         bgMusicVolume: 0.2,
@@ -546,7 +576,7 @@ const handleImageUpload = (event) => {
       rotation: 0,
       originalFile: file, 
       aspectRatio: 1,
-      imgObject: img,
+      imgObject: img, // Store DOM element for Editor preview
       renderWhileClicked: true,
       autoRender: false,
       // Animation Props
@@ -721,9 +751,11 @@ const updateSceneContentDisplay = () => {
                     e.preventDefault()
                     
                     if (dragSourceIndex !== null && dragSourceIndex !== index) {
+                        // Reorder Components
                         const item = sceneComponents.value.splice(dragSourceIndex, 1)[0]
                         sceneComponents.value.splice(index, 0, item)
                         
+                        // Enforce Options at end logic
                         const optIdx = sceneComponents.value.findIndex(c => c.type === 'options');
                         if (optIdx !== -1 && optIdx !== sceneComponents.value.length - 1) {
                              const opt = sceneComponents.value.splice(optIdx, 1)[0];
@@ -732,6 +764,7 @@ const updateSceneContentDisplay = () => {
                         
                         updateSceneContentDisplay()
                         drawComponents()
+                        // Watcher on sceneComponents handles the state update
                     }
                     return false
                 })
@@ -805,6 +838,7 @@ const onGraphMouseDown = (event) => {
         
         clickedComp = comp
         
+        // Options specific click logic
         if (comp.type === 'options' && comp.optionsList) {
              const dx = coords.x - comp.x;
              const dy = coords.y - comp.y;
@@ -819,8 +853,9 @@ const onGraphMouseDown = (event) => {
              
              for (let j = 0; j < comp.optionsList.length; j++) {
                 const btnY = startY + (j * (btnHeight + btnGap));
+                // FIX: Use -localY because Graph Y is inverted relative to Draw Y
                 if (localX >= -(comp.width/2 - 20) && localX <= (comp.width/2 - 20) &&
-                    localY >= btnY && localY <= btnY + btnHeight) {
+                    -localY >= btnY && -localY <= btnY + btnHeight) {
                     
                     comp._clickedOptionIndex = j;
                     drawComponents();
@@ -892,8 +927,9 @@ const onGraphMouseMove = (event) => {
                  
                  for (let j = 0; j < comp.optionsList.length; j++) {
                     const btnY = startY + (j * (btnHeight + btnGap));
+                    // FIX: Use -localY because Graph Y is inverted relative to Draw Y
                     if (localX >= -(comp.width/2 - 20) && localX <= (comp.width/2 - 20) &&
-                        localY >= btnY && localY <= btnY + btnHeight) {
+                        -localY >= btnY && -localY <= btnY + btnHeight) {
                         foundHover = j;
                         break;
                     }
@@ -919,6 +955,7 @@ const onGraphMouseMove = (event) => {
       comp.x = coords.x - dragComponentOffset.value.x
       comp.y = coords.y - dragComponentOffset.value.y
       
+      // Watcher handles update to Status
       drawComponents()
     }
   }
@@ -979,6 +1016,7 @@ const updateRenderMode = (mode) => {
 const updateActiveComponentPosition = () => {
     if (activeComponent.value) {
         drawComponents()
+        // Watchers automatically trigger updateNodeScenesInStatus -> Canvas_Status
     }
 }
 
@@ -989,6 +1027,7 @@ const updateActiveComponentSize = () => {
              activeComponent.value.height = activeComponent.value.width / ratio
         }
         drawComponents()
+        // Watchers automatically trigger updateNodeScenesInStatus -> Canvas_Status
     }
 }
 
@@ -1036,6 +1075,7 @@ const changeLayer = (action) => {
     
     drawComponents()
     updateSceneContentDisplay() 
+    // Array mutation triggers watcher
 }
 
 /* ================= NODE & POPUP RENAME LOGIC ================= */
@@ -1065,9 +1105,17 @@ const openPopup = node => {
     }
     editingNodeName.value = nodeStatus.Node_name
 
-    // Load Scenes
+    // Load Scenes (Deep Copy to isolate, though watchers will re-sync)
+    // We parse/stringify to break references for clean editing, 
+    // but we have to handle the fact that components in Status might have DOM elements or File objects if not persistent yet.
+    // For this prototype, we will copy the array structure.
     if (nodeStatus.scenes) {
-      nodeScenes.value = [...nodeStatus.scenes]
+      // NOTE: Simple spread [...] is shallow. We need deeper copy for scenes, but preserve components
+      nodeScenes.value = nodeStatus.scenes.map(s => ({
+          ...s,
+          components: s.components ? [...s.components] : [] 
+      }))
+      
       nodeScenes.value.forEach((scene, index) => {
         if (!scene.name) scene.name = `Scene ${scene.id}`
         if (!scene.backgroundColor) scene.backgroundColor = '#000000'
@@ -1078,7 +1126,8 @@ const openPopup = node => {
 
     // Load Audio
     if (nodeStatus.audio) {
-        sequenceAudio.value = nodeStatus.audio
+        // Clone audio object
+        sequenceAudio.value = { ...nodeStatus.audio }
     } else {
         sequenceAudio.value = null
     }
@@ -1454,14 +1503,17 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
     } else if (comp.type === 'options') {
         ctx.translate(screenPos.x, screenPos.y) 
         
-        ctx.fillStyle = 'rgba(31, 41, 55, 0.3)'; 
-        ctx.setLineDash([5, 5]);
-        ctx.strokeStyle = '#f87171'; 
-        ctx.lineWidth = 1;
-        drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, 8);
-        ctx.fill();
-        ctx.stroke();
-        ctx.setLineDash([]); 
+        // Only draw dashed box in editor, but background if set
+        if (!isPreviewMode.value) {
+            ctx.fillStyle = 'rgba(31, 41, 55, 0.3)'; 
+            ctx.setLineDash([5, 5]);
+            ctx.strokeStyle = '#f87171'; 
+            ctx.lineWidth = 1;
+            drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, 8);
+            ctx.fill();
+            ctx.stroke();
+            ctx.setLineDash([]); 
+        }
         
         if (comp.optionsList && comp.optionsList.length > 0) {
             const btnHeight = 40;
@@ -1524,7 +1576,7 @@ const drawFocusRing = (ctx, comp, index, screenPos) => {
       const isActive = (activeComponent.value && activeComponent.value.id === comp.id)
       const isDragging = (isDraggingComponent.value && draggingComponentIndex.value === index)
 
-      if (isActive || isDragging) {
+      if ((isActive || isDragging) && !isPreviewMode.value) {
         ctx.save()
         ctx.translate(screenPos.x, screenPos.y)
         ctx.rotate( (comp.rotation || 0) * Math.PI / 180)
@@ -1562,7 +1614,7 @@ const addScene = () => {
   }
   
   nodeScenes.value.push(newScene)
-  updateNodeScenesInStatus()
+  // Watcher updates Status
   selectScene(newScene)
 }
 
@@ -1574,6 +1626,7 @@ const deleteScene = (sceneId) => {
   
   nodeScenes.value = nodeScenes.value.filter(scene => scene.id !== sceneId)
   
+  // Re-index scenes for clean display
   nodeScenes.value.forEach((scene, index) => {
     scene.id = index + 1
     if (!scene.name || scene.name.startsWith('Scene ')) {
@@ -1581,7 +1634,7 @@ const deleteScene = (sceneId) => {
     }
   })
   
-  updateNodeScenesInStatus()
+  // Watcher updates Status
 }
 
 const stopEditorVideos = () => {
@@ -1595,7 +1648,12 @@ const stopEditorVideos = () => {
 const selectScene = (scene) => {
   selectedScene.value = { ...scene }
   viewMode.value = 'sceneDetails'
-  sceneComponents.value = [] 
+  
+  // Load components for this scene into editing ref
+  // Important: We need deep copy here to allow editing without affecting source until updated
+  // But wait! We added a watcher on sceneComponents. 
+  // If we just copy here, the watcher will trigger and save back to nodeScenes immediately.
+  sceneComponents.value = scene.components ? [...scene.components] : [] 
   
   sceneSettings.value.backgroundColor = selectedScene.value.backgroundColor || '#000000'
   
@@ -1613,10 +1671,7 @@ const saveSceneAndGoBack = () => {
   stopEditorVideos();
   updateNodeOptionsInStatus()
   updateSceneDetails()
-  const sceneIndex = nodeScenes.value.findIndex(scene => scene.id === selectedScene.value.id)
-  if (sceneIndex !== -1) {
-    nodeScenes.value[sceneIndex].components = [...sceneComponents.value]
-  }
+  // Data is already synced via watchers, just change view
   viewMode.value = 'scenes'
   selectedScene.value = null
   sceneComponents.value = []
@@ -1631,10 +1686,7 @@ const goBackToScenes = () => {
     stopEditorVideos();
     updateNodeOptionsInStatus()
     updateSceneDetails()
-    const sceneIndex = nodeScenes.value.findIndex(scene => scene.id === selectedScene.value.id)
-    if (sceneIndex !== -1) {
-      nodeScenes.value[sceneIndex].components = [...sceneComponents.value]
-    }
+    // Data is synced via watchers
   }
   viewMode.value = 'scenes'
   selectedScene.value = null
@@ -1648,11 +1700,13 @@ const updateSceneDetails = () => {
   if (!selectedScene.value) return
   const index = nodeScenes.value.findIndex(scene => scene.id === selectedScene.value.id)
   if (index !== -1) {
+    // Update local scene metadata
     nodeScenes.value[index] = { 
-      ...selectedScene.value,
+      ...nodeScenes.value[index], // preserve components
+      name: selectedScene.value.name,
       backgroundColor: sceneSettings.value.backgroundColor
     }
-    updateNodeScenesInStatus()
+    // Watcher triggers updateNodeScenesInStatus
   }
 }
 
@@ -1660,6 +1714,7 @@ const updateNodeScenesInStatus = () => {
   if (!popupNode.value) return
   const nodeStatusIndex = Canvas_Status.value.findIndex(s => s.index === popupNode.value.id)
   if (nodeStatusIndex !== -1) {
+    // Store deep copy of scenes into master status
     Canvas_Status.value[nodeStatusIndex].scenes = nodeScenes.value.map(scene => ({
       id: scene.id,
       name: scene.name,
@@ -1668,6 +1723,7 @@ const updateNodeScenesInStatus = () => {
     }))
     Canvas_Status.value[nodeStatusIndex].audio = sequenceAudio.value
   } else {
+    // Create new if doesn't exist (though it should by now)
     Canvas_Status.value.push({ 
       index: popupNode.value.id, 
       x: popupNode.value.x, 
@@ -2220,9 +2276,21 @@ const startPreview = () => {
     currentPreviewSceneIndex.value = 0
     currentPreviewComponentIndex.value = -1 
     
-    // Reset timer logic for first component interaction if needed
+    // Reset timer logic
     componentStartTime.value = 0; 
     
+    // Clear leftover interaction state
+    nodeScenes.value.forEach(scene => {
+         if(scene.components) {
+             scene.components.forEach(comp => {
+                 if(comp.type === 'options') {
+                     comp._hoveredOptionIndex = -1;
+                     comp._clickedOptionIndex = -1;
+                 }
+             })
+         }
+    });
+
     if (sequenceAudio.value && sequenceAudio.value.url) {
         previewAudioElement.value = new Audio(sequenceAudio.value.url)
         previewAudioElement.value.volume = sequenceAudio.value.volume || 1.0 
@@ -2237,6 +2305,14 @@ const startPreview = () => {
     
     nextTick(() => {
         initializePreviewCanvas()
+        
+        // --- FIX: Check for Auto-Start on First Component ---
+        const firstScene = nodeScenes.value[0]
+        if (firstScene && firstScene.components && firstScene.components.length > 0) {
+            if (firstScene.components[0].autoRender) {
+                advancePreview()
+            }
+        }
     })
 }
 
@@ -2301,66 +2377,73 @@ const advancePreview = () => {
     const currentScene = nodeScenes.value[currentPreviewSceneIndex.value]
     const components = currentScene.components || []
 
-    // --- CLICK TO SKIP ANIMATION CHECK ---
-    // If there is an active component (index >= 0) and it is animating
+    // Block advance if Options component is visible (must click option)
+    if (currentPreviewComponentIndex.value >= 0 && currentPreviewComponentIndex.value < components.length) {
+         const currentComp = components[currentPreviewComponentIndex.value];
+         if (currentComp.type === 'options') return; 
+    }
+
+    // Animation Skip Check
     if (currentPreviewComponentIndex.value >= 0 && currentPreviewComponentIndex.value < components.length) {
         const currentComp = components[currentPreviewComponentIndex.value]
-        
-        // Calculate current progress
         const now = Date.now()
         const duration = (currentComp.animationDuration || 1) * 1000
         const elapsed = now - componentStartTime.value
         
-        // If animation is still running (and duration > 0)
         if (elapsed < duration && currentComp.animationType !== 'none') {
-            // Force animation end: set start time to the past
             componentStartTime.value = now - duration - 100 
-            // Do NOT advance index
             return
         }
     }
 
     if (currentPreviewComponentIndex.value < components.length - 1) {
-        
         currentPreviewComponentIndex.value++
-        
-        // Set Start Time for Animation
         componentStartTime.value = Date.now()
         
         const comp = components[currentPreviewComponentIndex.value]
         
+        // Video Auto-Play Logic
         if (comp.type === 'video' && comp.videoElement) {
              comp.videoElement.currentTime = 0;
              comp.videoElement.play().catch(e => console.error("Auto-play prevented", e));
-             
              const subsequentComp = components[currentPreviewComponentIndex.value + 1];
              if (subsequentComp && subsequentComp.autoRender) {
-                 comp.videoElement.onended = () => {
-                     advancePreview(); 
-                 };
+                 comp.videoElement.onended = () => { advancePreview(); };
              } else {
                  comp.videoElement.onended = null;
              }
         } 
+        // Standard Auto-Render Lookahead
         else {
              const subsequentComp = components[currentPreviewComponentIndex.value + 1];
              if (subsequentComp && subsequentComp.autoRender) {
-                 // For static items, wait for animation to finish then advance
                  const animDuration = (comp.animationDuration || 1) * 1000
-                 setTimeout(() => {
-                     advancePreview();
-                 }, animDuration + 50); 
+                 setTimeout(() => { advancePreview(); }, animDuration + 50); 
              }
         }
 
     } else {
+        // --- SCENE CHANGE LOGIC ---
         if (currentPreviewSceneIndex.value < nodeScenes.value.length - 1) {
             stopVideosInScene(currentScene);
             currentPreviewSceneIndex.value++
             currentPreviewComponentIndex.value = -1 
+            
+            // --- FIX: Check Auto-Start for New Scene ---
+            const nextScene = nodeScenes.value[currentPreviewSceneIndex.value]
+            if (nextScene.components && nextScene.components.length > 0) {
+                 if (nextScene.components[0].autoRender) {
+                     setTimeout(() => advancePreview(), 50)
+                 }
+            }
+
         } else {
-            exitPreview()
-            return
+            // End of sequence
+            if (components.length > 0 && components[components.length-1].type === 'options') {
+                 // Do nothing, wait for option click
+            } else {
+                 exitPreview()
+            }
         }
     }
     drawPreview()
@@ -2506,6 +2589,205 @@ const exitPreview = () => {
     isPreviewMode.value = false
 }
 
+// --- PREVIEW MOUSE EVENT HANDLERS FOR CLICKABLE OPTIONS ---
+
+const getPreviewLogicalCoords = (e) => {
+    if (!previewCanvasRef.value) return { x: 0, y: 0 };
+    const rect = previewCanvasRef.value.getBoundingClientRect();
+    const scale = previewScale.value;
+    const canvasX = (e.clientX - rect.left) / scale;
+    const canvasY = (e.clientY - rect.top) / scale;
+    
+    // Convert to Graph Units (Assuming Center is 0,0 and pixel factor is 2)
+    const logicalW = previewCanvasRef.value.width / scale;
+    const logicalH = previewCanvasRef.value.height / scale;
+    const centerX = logicalW / 2;
+    const centerY = logicalH / 2;
+    
+    // Formula: screen = center + (graph * 2) => graph = (screen - center) / 2
+    const graphX = (canvasX - centerX) / 2;
+    // Formula: screen = center - (graph * 2) => graph = (center - screen) / 2 (Y is flipped)
+    const graphY = (centerY - canvasY) / 2;
+
+    return { x: graphX, y: graphY };
+}
+
+const onPreviewMouseMove = (e) => {
+    if (!isPreviewMode.value || !nodeScenes.value) return;
+    
+    const scene = nodeScenes.value[currentPreviewSceneIndex.value];
+    if (!scene || !scene.components) return;
+
+    // Check if options component is currently visible (rendered)
+    // Assuming options is always the last component if present
+    if (currentPreviewComponentIndex.value < 0) return;
+    const activeComp = scene.components[currentPreviewComponentIndex.value];
+    
+    if (activeComp && activeComp.type === 'options') {
+        const coords = getPreviewLogicalCoords(e);
+        let needsRedraw = false;
+        
+        const comp = activeComp;
+        
+        // Check hit logic similar to editor but using graph coords directly
+        const dx = coords.x - comp.x;
+        const dy = coords.y - comp.y;
+        const rad = -(comp.rotation || 0) * Math.PI / 180;
+        const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
+        const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
+        
+        // Bounds check
+        if (Math.abs(localX) <= comp.width/2 && Math.abs(localY) <= comp.height/2) {
+             const btnHeight = 40;
+             const btnGap = 10;
+             const totalHeight = (comp.optionsList.length * btnHeight) + ((comp.optionsList.length - 1) * btnGap);
+             const startY = - (totalHeight / 2);
+             let foundHover = -1;
+             
+             for (let j = 0; j < comp.optionsList.length; j++) {
+                const btnY = startY + (j * (btnHeight + btnGap));
+                // FIX: Use -localY because Graph Y is inverted relative to Draw Y
+                if (localX >= -(comp.width/2 - 20) && localX <= (comp.width/2 - 20) &&
+                    -localY >= btnY && -localY <= btnY + btnHeight) {
+                    foundHover = j;
+                    break;
+                }
+             }
+             
+             if (comp._hoveredOptionIndex !== foundHover) {
+                 comp._hoveredOptionIndex = foundHover;
+                 needsRedraw = true;
+             }
+        } else {
+             if (comp._hoveredOptionIndex !== -1) {
+                 comp._hoveredOptionIndex = -1;
+                 needsRedraw = true;
+             }
+        }
+        
+        if (needsRedraw) drawPreview();
+    }
+}
+
+const onPreviewMouseDown = (e) => {
+    if (!isPreviewMode.value || !nodeScenes.value) return;
+    
+    const scene = nodeScenes.value[currentPreviewSceneIndex.value];
+    if (!scene || !scene.components) return;
+    if (currentPreviewComponentIndex.value < 0) return;
+    
+    const activeComp = scene.components[currentPreviewComponentIndex.value];
+    
+    if (activeComp && activeComp.type === 'options' && activeComp._hoveredOptionIndex !== -1) {
+        activeComp._clickedOptionIndex = activeComp._hoveredOptionIndex;
+        drawPreview();
+    }
+}
+
+const onPreviewMouseUp = (e) => {
+    if (!isPreviewMode.value || !nodeScenes.value) return;
+
+    const scene = nodeScenes.value[currentPreviewSceneIndex.value];
+    if (!scene || !scene.components) return;
+    
+    // --- FIX: Removed the "if index < 0 return" check to allow clicking the background to start ---
+    
+    // Only check options logic if a component is actually active
+    if (currentPreviewComponentIndex.value >= 0) {
+        const activeComp = scene.components[currentPreviewComponentIndex.value];
+
+        if (activeComp && activeComp.type === 'options') {
+            const clickedIdx = activeComp._clickedOptionIndex;
+            activeComp._clickedOptionIndex = -1;
+            drawPreview();
+            
+            // If release happens on the same button
+            if (clickedIdx !== -1 && clickedIdx === activeComp._hoveredOptionIndex) {
+                // OPTION CLICKED!
+                const option = activeComp.optionsList[clickedIdx];
+                handleOptionNavigation(activeComp.id, option.id);
+                return;
+            }
+        }
+    }
+    
+    // If we didn't click an option (or we are at index -1), advance
+    advancePreview();
+}
+
+const handleOptionNavigation = (compId, optionId) => {
+    // 1. Identify current node ID (stored in popupNode or Canvas_Status)
+    if (!popupNode.value) {
+        exitPreview();
+        return;
+    }
+
+    const currentStatus = Canvas_Status.value.find(s => s.index === popupNode.value.id);
+    if (!currentStatus || !currentStatus.options) {
+        exitPreview();
+        return;
+    }
+
+    // 2. Find connection
+    const optStatus = currentStatus.options.find(o => o.id === optionId);
+    if (!optStatus || !optStatus.next) {
+        // Not connected -> Exit
+        exitPreview();
+    } else {
+        // 3. Switch Node
+        loadNodeForPreview(optStatus.next);
+    }
+}
+
+const loadNodeForPreview = (targetNodeId) => {
+    const targetStatus = Canvas_Status.value.find(s => s.index === targetNodeId);
+    if (!targetStatus) {
+        exitPreview();
+        return;
+    }
+
+    stopAllVideos();
+    if (previewAudioElement.value) {
+        previewAudioElement.value.pause();
+        previewAudioElement.value = null;
+    }
+
+    const realNode = nodes.value.find(n => n.id === targetNodeId);
+    popupNode.value = realNode || { id: targetNodeId, x: 0, y: 0 }; 
+
+    if (targetStatus.scenes) {
+      nodeScenes.value = targetStatus.scenes.map(s => ({
+          ...s,
+          components: s.components ? [...s.components] : [] 
+      }))
+    } else {
+      nodeScenes.value = [];
+    }
+
+    sequenceAudio.value = targetStatus.audio || null;
+    if (sequenceAudio.value && sequenceAudio.value.url) {
+        previewAudioElement.value = new Audio(sequenceAudio.value.url);
+        previewAudioElement.value.volume = sequenceAudio.value.volume || 1.0;
+        previewAudioElement.value.loop = (sequenceAudio.value.loop !== false);
+        previewAudioElement.value.play().catch(e => console.log("Autoplay prevented:", e));
+    }
+
+    currentPreviewSceneIndex.value = 0;
+    currentPreviewComponentIndex.value = -1;
+    componentStartTime.value = 0;
+    
+    resizePreviewCanvas();
+    drawPreview();
+
+    // --- FIX: Check Auto-Start for First Scene of New Node ---
+    const firstScene = nodeScenes.value[0]
+    if (firstScene && firstScene.components && firstScene.components.length > 0) {
+        if (firstScene.components[0].autoRender) {
+            setTimeout(() => advancePreview(), 50)
+        }
+    }
+}
+
 window.addEventListener('resize', () => {
     if (isPreviewMode.value) {
         resizePreviewCanvas()
@@ -2514,6 +2796,7 @@ window.addEventListener('resize', () => {
 })
 
 </script>
+
 <template>
   <div class="wrapper">
     <canvas ref="canvasRef" class="canvas" @mousedown="onMouseDown" @wheel="onWheel" />
@@ -3118,7 +3401,11 @@ window.addEventListener('resize', () => {
     </transition>
 
     <transition name="fade">
-        <div v-if="isPreviewMode" class="preview-overlay" @click="advancePreview">
+        <div v-if="isPreviewMode" 
+             class="preview-overlay"
+             @mousemove="onPreviewMouseMove"
+             @mousedown="onPreviewMouseDown"
+             @mouseup="onPreviewMouseUp">
              <canvas ref="previewCanvasRef" class="preview-canvas"></canvas>
              <button class="preview-close-btn" @click.stop="exitPreview">Stop Preview ✕</button>
              <div class="preview-hint">Click to advance sequence</div>
