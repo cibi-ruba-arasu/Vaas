@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, nextTick, watch } from "vue"
+import { ref, onMounted, onBeforeUnmount, nextTick, watch, computed } from "vue"
 import { useRoute } from "vue-router"
 
 /* ================= ROUTE ================= */
@@ -55,6 +55,11 @@ const rootNodeId = ref(null) // Stores the ID of the starting node
 const toggleProjectSettings = () => {
   showProjectSettings.value = !showProjectSettings.value
 }
+
+// --- UPDATED: Computed property to filter Root Nodes ---
+const availableRootNodes = computed(() => {
+  return Canvas_Status.value.filter(n => n.node_type === 'General')
+})
 
 // --- NEW: Play Project Logic ---
 const playProjectFromRoot = () => {
@@ -117,10 +122,14 @@ const nodes = ref([])
 const selectedNodeId = ref(null)
 const Canvas_Status = ref([]) // THE MASTER ARRAY
 const editingNodeName = ref("") 
+const showContextMenu = ref(false)
+const contextMenuPos = ref({ x: 0, y: 0 })
+const contextMenuTargetNode = ref(null)
 
 let draggingNode = null
 let dragOffset = { x: 0, y: 0 }
 let menuDragging = false
+let draggedType = "General" // NEW: Tracks which type of node is being dragged from menu
 
 const NODE_W = 180
 const NODE_H = 110 // Base Height
@@ -217,6 +226,85 @@ const removeAudio = (e) => {
   if (e) e.stopPropagation() 
   sequenceAudio.value = null
   updateNodeAudioInStatus()
+}
+
+const onContextMenu = (e) => {
+  // Calculate World Coords to find if a node was clicked
+  const w = screenToWorld(e.clientX, e.clientY)
+  const hitNode = getNodeAt(w.x, w.y)
+
+  if (hitNode) {
+    // Save target and show menu at mouse position
+    contextMenuTargetNode.value = hitNode
+    contextMenuPos.value = { x: e.clientX, y: e.clientY }
+    showContextMenu.value = true
+  } else {
+    // If clicked on empty space, hide menu
+    showContextMenu.value = false
+  }
+}
+
+const deleteTargetNode = () => {
+    if (!contextMenuTargetNode.value) return;
+    const id = contextMenuTargetNode.value.id;
+
+    if (!confirm("Are you sure you want to delete this node?")) {
+        showContextMenu.value = false;
+        return;
+    }
+
+    // 1. Remove references TO this node (Incoming links from other nodes)
+    Canvas_Status.value.forEach(node => {
+        if (node.Next === id) node.Next = null;
+        if (node.NextTrue === id) node.NextTrue = null;
+        if (node.NextFalse === id) node.NextFalse = null;
+        if (node.options) {
+            node.options.forEach(opt => {
+                if (opt.next === id) opt.next = null;
+            });
+        }
+    });
+
+    // 2. Remove the node itself
+    nodes.value = nodes.value.filter(n => n.id !== id);
+    Canvas_Status.value = Canvas_Status.value.filter(n => n.index !== id);
+
+    // 3. Reset UI & Redraw
+    showContextMenu.value = false;
+    contextMenuTargetNode.value = null;
+    selectedNodeId.value = null; // Deselect if it was selected
+    draw();
+}
+
+const removeTargetLinks = () => {
+    if (!contextMenuTargetNode.value) return;
+    const id = contextMenuTargetNode.value.id;
+
+    // 1. Clear Outgoing Links (From this node)
+    const status = Canvas_Status.value.find(n => n.index === id);
+    if (status) {
+        status.Next = null;
+        status.NextTrue = null;
+        status.NextFalse = null;
+        if (status.options) {
+            status.options.forEach(opt => opt.next = null);
+        }
+    }
+
+    // 2. Clear Incoming Links (To this node from others) - Optional, but recommended for "Remove ALL links"
+    Canvas_Status.value.forEach(node => {
+        if (node.Next === id) node.Next = null;
+        if (node.NextTrue === id) node.NextTrue = null;
+        if (node.NextFalse === id) node.NextFalse = null;
+        if (node.options) {
+            node.options.forEach(opt => {
+                if (opt.next === id) opt.next = null;
+            });
+        }
+    });
+    
+    showContextMenu.value = false;
+    draw();
 }
 
 const updateAudioProperties = () => {
@@ -324,6 +412,8 @@ const updateNodeAudioInStatus = () => {
             y: popupNode.value.y, 
             node_type: "General", 
             Next: null, 
+            NextTrue: null,
+            NextFalse: null,
             scenes: [],
             audio: sequenceAudio.value,
             options: [],
@@ -375,7 +465,13 @@ const updateNodeOptionsInStatus = () => {
 const nodeScenes = ref([]) 
 const hoveredSceneId = ref(null) 
 const selectedScene = ref(null) 
-const viewMode = ref('scenes') 
+const viewMode = ref('scenes') // 'scenes', 'sceneDetails', 'componentEditor', 'setVariables', 'ifElse'
+
+/* ================= NEW: SET VARIABLE EDITOR STATE ================= */
+const setVarId = ref("")
+const setVarOperator = ref("=")
+const setVarValueType = ref("constant") // 'constant' or 'variable'
+const setVarValue = ref("")
 
 /* ================= CONSTANT UPDATE WATCHERS ================= */
 // 1. Watch Sequence Audio
@@ -1205,7 +1301,13 @@ const updateNodeName = () => {
 
 const openPopup = node => {
   popupNode.value = node
-  viewMode.value = 'scenes'
+  
+  // -- UPDATE: Reset specific editor states --
+  setVarId.value = ""
+  setVarOperator.value = "="
+  setVarValueType.value = "constant"
+  setVarValue.value = ""
+  
   selectedScene.value = null
   sceneComponents.value = [] 
   sceneSettings.value.backgroundColor = '#000000' 
@@ -1218,23 +1320,33 @@ const openPopup = node => {
     }
     editingNodeName.value = nodeStatus.Node_name
 
-    // Load Scenes (Deep Copy to isolate, though watchers will re-sync)
-    // We parse/stringify to break references for clean editing, 
-    // but we have to handle the fact that components in Status might have DOM elements or File objects if not persistent yet.
-    // For this prototype, we will copy the array structure.
-    if (nodeStatus.scenes) {
-      // NOTE: Simple spread [...] is shallow. We need deeper copy for scenes, but preserve components
-      nodeScenes.value = nodeStatus.scenes.map(s => ({
-          ...s,
-          components: s.components ? [...s.components] : [] 
-      }))
-      
-      nodeScenes.value.forEach((scene, index) => {
-        if (!scene.name) scene.name = `Scene ${scene.id}`
-        if (!scene.backgroundColor) scene.backgroundColor = '#000000'
-      })
+    // --- NEW: HANDLE NODE TYPES FOR POPUP CONTENT ---
+    if (nodeStatus.node_type === 'Set Variables') {
+         viewMode.value = 'setVariables'
+         // Load data
+         setVarId.value = nodeStatus.varId || ""
+         setVarOperator.value = nodeStatus.varOperator || "="
+         setVarValueType.value = nodeStatus.varValueType || "constant"
+         setVarValue.value = nodeStatus.varValue || ""
+    } else if (nodeStatus.node_type === 'If-Else') {
+         viewMode.value = 'ifElse' // Shows placeholder or simple view
     } else {
-      nodeScenes.value = []
+         viewMode.value = 'scenes'
+         // Load Scenes (Deep Copy to isolate, though watchers will re-sync)
+         if (nodeStatus.scenes) {
+            // NOTE: Simple spread [...] is shallow. We need deeper copy for scenes, but preserve components
+            nodeScenes.value = nodeStatus.scenes.map(s => ({
+                ...s,
+                components: s.components ? [...s.components] : [] 
+            }))
+            
+            nodeScenes.value.forEach((scene, index) => {
+                if (!scene.name) scene.name = `Scene ${scene.id}`
+                if (!scene.backgroundColor) scene.backgroundColor = '#000000'
+            })
+         } else {
+            nodeScenes.value = []
+         }
     }
 
     // Load Audio
@@ -1246,22 +1358,26 @@ const openPopup = node => {
     }
 
   } else {
+    // FALLBACK IF STATUS NOT FOUND (Should rarely happen)
     editingNodeName.value = `Node ${node.id}`
     nodeScenes.value = []
     sequenceAudio.value = null
+    viewMode.value = 'scenes'
   }
   
   showPopup.value = true
   nextTick(() => {
     popupAnimation.value = true
-    setTimeout(initializeGraphCanvas, 50)
+    if (viewMode.value === 'scenes' || viewMode.value === 'sceneDetails') {
+        setTimeout(initializeGraphCanvas, 50)
+    }
   })
 }
 
 // Animation Loop
 const startRenderLoop = () => {
   const loop = () => {
-    if (showPopup.value) {
+    if (showPopup.value && (viewMode.value === 'scenes' || viewMode.value === 'sceneDetails' || viewMode.value === 'componentEditor')) {
         drawComponents()
     }
     if (isPreviewMode.value) {
@@ -1278,6 +1394,17 @@ const closePopup = () => {
     updateSceneDetails()
   }
   
+  // --- NEW: Save Set Variable Data ---
+  if (popupNode.value) {
+      const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
+      if (status && status.node_type === 'Set Variables') {
+          status.varId = setVarId.value
+          status.varOperator = setVarOperator.value
+          status.varValueType = setVarValueType.value
+          status.varValue = setVarValue.value
+      }
+  }
+
   stopEditorVideos()
   updateNodeOptionsInStatus()
 
@@ -1870,6 +1997,30 @@ const drawRoundedRect = (x, y, w, h, r) => {
 
 const arrowHit = (n, wx, wy) => {
   const status = Canvas_Status.value.find(s => s.index === n.id);
+  
+  // --- UPDATED: IF-ELSE ARROW HIT LOGIC ---
+  if (status && status.node_type === 'If-Else') {
+      const trueX = n.x + NODE_W / 2 - ARROW_OFFSET
+      const trueY = n.y - 10
+      const falseX = n.x + NODE_W / 2 - ARROW_OFFSET
+      const falseY = n.y + 20
+      
+      if (Math.hypot(wx - trueX, wy - trueY) < ARROW_HIT_R) {
+          return { node: n, side: "right-true", x: trueX, y: trueY }
+      }
+      if (Math.hypot(wx - falseX, wy - falseY) < ARROW_HIT_R) {
+          return { node: n, side: "right-false", x: falseX, y: falseY }
+      }
+      
+      // Still need left input
+      const leftAy = n.y - NODE_H / 2 + HEADER_H / 2
+      const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
+      if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) return { node: n, side: "left", x: leftAx, y: leftAy }
+      
+      return null
+  }
+
+  // --- GENERAL NODE LOGIC ---
   const hasOptions = status && status.options && status.options.length > 0;
 
   if (hasOptions) {
@@ -1898,10 +2049,25 @@ const arrowHit = (n, wx, wy) => {
       if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) 
           return { node: n, side: "left", x: leftAx, y: leftAy }
 
-  } else {
+  } else if (status && status.node_type === 'Set Variables') {
+      // --- NEW: HIT LOGIC FOR SET VARIABLES NODE ---
+      // Right Arrow (Output)
+      const rightAy = n.y - NODE_H / 2 + HEADER_H / 2
+      const rightAx = n.x + NODE_W / 2 - ARROW_OFFSET
+      if (Math.hypot(wx - rightAx, wy - rightAy) < ARROW_HIT_R) 
+          return { node: n, side: "right", x: rightAx, y: rightAy }
+          
+      // Left Arrow (Input)
       const leftAy = n.y - NODE_H / 2 + HEADER_H / 2
       const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
-      if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) return { node: n, side: "left", x: leftAx, y: leftAy }
+      if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) 
+          return { node: n, side: "left", x: leftAx, y: leftAy }
+  } else {
+      // General Node without options -> ONLY Left Input
+      const leftAy = n.y - NODE_H / 2 + HEADER_H / 2
+      const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
+      if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) 
+          return { node: n, side: "left", x: leftAx, y: leftAy }
   }
   
   return null
@@ -2023,8 +2189,20 @@ const drawNodes = () => {
     ctx.fill()
 
     const grad = ctx.createLinearGradient(x - NODE_W / 2, y - currentH / 2, x + NODE_W / 2, y - currentH / 2)
-    grad.addColorStop(0, "#ff2a2a")
-    grad.addColorStop(1, "#000")
+    
+    // --- UPDATED: COLOR LOGIC ---
+    const nodeType = status ? status.node_type : "General"
+    if (nodeType === 'If-Else') {
+         grad.addColorStop(0, "#eab308") 
+         grad.addColorStop(1, "#000")
+    } else if (nodeType === 'Set Variables') {
+         grad.addColorStop(0, "#8b5cf6") // Purple for Set Variables
+         grad.addColorStop(1, "#000")
+    } else {
+         grad.addColorStop(0, "#ff2a2a") // Default Red for General
+         grad.addColorStop(1, "#000")
+    }
+    
     ctx.fillStyle = grad
     drawRoundedRect(x - NODE_W / 2, y - currentH / 2, NODE_W, HEADER_H, NODE_RADIUS)
     ctx.fill()
@@ -2056,9 +2234,35 @@ const drawNodes = () => {
     
     ctx.fillStyle = "#fff"
     ctx.font = "16px sans-serif"
-    ctx.fillText("▷", leftAx, leftAy)
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+    ctx.fillText("▷", leftAx, leftAy) // Always draw left input arrow
+    
+    // --- UPDATED: DRAW OUTPUTS ---
+    if (nodeType === 'If-Else') {
+         // True Output (Greenish)
+         ctx.fillStyle = "#00ff88"
+         ctx.font = "14px sans-serif"
+         ctx.textAlign = "right"
+         ctx.fillText("T", x + NODE_W / 2 - 25, y - 10)
+         ctx.fillText("▷", x + NODE_W / 2 - ARROW_OFFSET, y - 10)
 
-    if (hasOptions) {
+         // False Output (Redish)
+         ctx.fillStyle = "#ff2a2a"
+         ctx.textAlign = "right"
+         ctx.fillText("F", x + NODE_W / 2 - 25, y + 20)
+         ctx.fillText("▷", x + NODE_W / 2 - ARROW_OFFSET, y + 20)
+         
+    } else if (nodeType === 'Set Variables') {
+         // --- NEW: Draw standard single output for Set Variables ---
+         const rightAy = y - currentH / 2 + HEADER_H / 2
+         const rightAx = x + NODE_W / 2 - ARROW_OFFSET
+         ctx.fillStyle = "#fff"
+         ctx.font = "16px sans-serif"
+         ctx.textAlign = "center"
+         ctx.fillText("▷", rightAx, rightAy)
+         
+    } else if (hasOptions) {
         const startY = y - currentH / 2 + HEADER_H + 20;
         
         status.options.forEach((opt, idx) => {
@@ -2088,7 +2292,8 @@ const drawNodes = () => {
              }
              ctx.fillText(optLabel, optX - 15, optY)
         });
-    } 
+    }
+    // Removed else block for General Node default arrow
   }
 }
 
@@ -2096,6 +2301,57 @@ const drawConnections = () => {
   ctx.strokeStyle = "#fff"
   ctx.lineWidth = 4 / scale
   for (const n of Canvas_Status.value) {
+    
+    // IF-ELSE CONNECTIONS
+    if (n.node_type === 'If-Else') {
+        const fromNode = nodes.value.find(nd => nd.id === n.index)
+        if (!fromNode) continue
+
+        // Draw True Line - CHANGED CHECK
+        if (n.NextTrue != null) { 
+            const toNode = nodes.value.find(nd => nd.id === n.NextTrue)
+            if (toNode) {
+                 const fromX = fromNode.x + NODE_W / 2 - ARROW_OFFSET
+                 const fromY = fromNode.y - 10 
+                 
+                 const targetStatus = Canvas_Status.value.find(s => s.index === toNode.id)
+                 const targetH = (targetStatus && targetStatus.options && targetStatus.options.length > 0) 
+                         ? Math.max(NODE_H, HEADER_H + (targetStatus.options.length * OPTION_ROW_H) + 10) 
+                         : NODE_H;
+
+                 const toX = toNode.x - NODE_W / 2 + ARROW_OFFSET
+                 const toY = toNode.y - targetH / 2 + HEADER_H / 2
+                 
+                 ctx.beginPath()
+                 ctx.moveTo(fromX, fromY)
+                 ctx.lineTo(toX, toY)
+                 ctx.stroke()
+            }
+        }
+
+        // Draw False Line - CHANGED CHECK
+        if (n.NextFalse != null) { 
+            const toNode = nodes.value.find(nd => nd.id === n.NextFalse)
+            if (toNode) {
+                 const fromX = fromNode.x + NODE_W / 2 - ARROW_OFFSET
+                 const fromY = fromNode.y + 20 
+                 
+                 const targetStatus = Canvas_Status.value.find(s => s.index === toNode.id)
+                 const targetH = (targetStatus && targetStatus.options && targetStatus.options.length > 0) 
+                         ? Math.max(NODE_H, HEADER_H + (targetStatus.options.length * OPTION_ROW_H) + 10) 
+                         : NODE_H;
+
+                 const toX = toNode.x - NODE_W / 2 + ARROW_OFFSET
+                 const toY = toNode.y - targetH / 2 + HEADER_H / 2
+                 
+                 ctx.beginPath()
+                 ctx.moveTo(fromX, fromY)
+                 ctx.lineTo(toX, toY)
+                 ctx.stroke()
+            }
+        }
+        continue; 
+    }
       
     if (n.options && n.options.length > 0) {
         const fromNode = nodes.value.find(nd => nd.id === n.index)
@@ -2104,7 +2360,8 @@ const drawConnections = () => {
             const startY = fromNode.y - h / 2 + HEADER_H + 20;
 
             n.options.forEach((opt, idx) => {
-                if (opt.next) {
+                // CHANGED CHECK: use != null instead of just if(opt.next)
+                if (opt.next != null) { 
                     const toNode = nodes.value.find(nd => nd.id === opt.next)
                     if (toNode) {
                         const fromX = fromNode.x + NODE_W / 2 - ARROW_OFFSET
@@ -2127,12 +2384,13 @@ const drawConnections = () => {
             })
         }
     } 
-    else if (n.Next != null) {
+    // CHANGED CHECK
+    else if (n.Next != null) { 
       const fromNode = nodes.value.find(nd => nd.id === n.index)
       const toNode = nodes.value.find(nd => nd.id === n.Next)
       if (fromNode && toNode) {
         const fromX = fromNode.x + NODE_W / 2 - ARROW_OFFSET
-        const fromY = fromNode.y + HEADER_H / 2
+        const fromY = fromNode.y - NODE_H / 2 + HEADER_H / 2 
         
         const targetStatus = Canvas_Status.value.find(s => s.index === toNode.id)
         const targetH = (targetStatus && targetStatus.options && targetStatus.options.length > 0) 
@@ -2166,18 +2424,26 @@ let outputDragging = null
 let lastClickTime = 0
 
 const onMouseDown = e => {
+  if (showContextMenu.value) {
+      showContextMenu.value = false
+      return // Optional: return immediately if you don't want to select what's under the menu
+  }
+  // ----------------------------------------
+
   const w = screenToWorld(e.clientX, e.clientY)
   hoveredArrow = null
 
   for (const n of nodes.value) {
     const hit = arrowHit(n, w.x, w.y)
-    if (hit?.side === "right") {
+    // Updated Logic to support right-true and right-false
+    if (hit && (hit.side === "right" || hit.side === "right-true" || hit.side === "right-false")) {
       outputDragging = { 
           node: n, 
           fromX: hit.x, 
           fromY: hit.y,
           optionIndex: hit.optionIndex, 
-          optionId: hit.optionId 
+          optionId: hit.optionId,
+          type: hit.side // Pass along the specific type (right, right-true, right-false)
       }
       connectingLine = { fromNode: n, fromX: hit.x, fromY: hit.y, toX: hit.x, toY: hit.y }
       return
@@ -2257,10 +2523,24 @@ const onMouseUp = e => {
     if (targetNode) {
       const cs = Canvas_Status.value.find(s => s.index === outputDragging.node.id)
       if (cs) {
-          if (outputDragging.optionIndex !== undefined && cs.options) {
-               if (cs.options[outputDragging.optionIndex]) {
-                   cs.options[outputDragging.optionIndex].next = targetNode.id
+          if (outputDragging.type === 'right-true') {
+              cs.NextTrue = targetNode.id
+          } else if (outputDragging.type === 'right-false') {
+              cs.NextFalse = targetNode.id
+          } else if (outputDragging.optionIndex !== undefined && cs.options) {
+               // --- NEW LOGIC: Prevent duplicate connections ---
+               const isDuplicate = cs.options.some((opt, idx) => 
+                   idx !== outputDragging.optionIndex && opt.next === targetNode.id
+               )
+
+               if (isDuplicate) {
+                   alert("Another option from this node is already connected to that target node.")
+               } else {
+                   if (cs.options[outputDragging.optionIndex]) {
+                       cs.options[outputDragging.optionIndex].next = targetNode.id
+                   }
                }
+               // ------------------------------------------------
           } else {
                cs.Next = targetNode.id
           }
@@ -2279,15 +2559,18 @@ const onMouseUp = e => {
       index: id, 
       x, 
       y, 
-      node_type: "General", 
-      Next: null, 
+      node_type: draggedType, 
+      Next: null,
+      NextTrue: null, 
+      NextFalse: null, 
       scenes: [],
       audio: null,
       options: [],
-      Node_name: `Node ${id}` 
+      Node_name: `${draggedType} Node ${id}` 
     })
     selectedNodeId.value = id
     menuDragging = false
+    draggedType = "General" 
   }
 
   draw()
@@ -2947,8 +3230,25 @@ const onPreviewWheel = (e) => {
 
 <template>
   <div class="wrapper">
-    <canvas ref="canvasRef" class="canvas" @mousedown="onMouseDown" @wheel="onWheel" />
-
+    <canvas 
+      ref="canvasRef" 
+      class="canvas" 
+      @mousedown="onMouseDown" 
+      @wheel="onWheel"
+      @contextmenu.prevent="onContextMenu" 
+    />
+    <div 
+      v-if="showContextMenu" 
+      class="context-menu" 
+      :style="{ top: contextMenuPos.y + 'px', left: contextMenuPos.x + 'px' }"
+    >
+      <div class="context-menu-item" @click="deleteTargetNode">
+        🗑️ Delete Node
+      </div>
+      <div class="context-menu-item" @click="removeTargetLinks">
+        🔗 Remove all links
+      </div>
+    </div>
     <header class="header">
       <button class="hamburger" @click="toggleMenu">☰</button>
       <div class="center">
@@ -2973,13 +3273,31 @@ const onPreviewWheel = (e) => {
       
       <div class="menu-section">
         <h3 class="menu-section-title">Nodes</h3>
-        <div class="menu-node" @mousedown.prevent="menuDragging = true">
+        
+        <div class="menu-node" @mousedown.prevent="menuDragging = true; draggedType = 'General'">
           <div class="menu-node-header">
             <span>▷</span>
             <span class="menu-node-title">General Node</span>
             <span>▷</span>
           </div>
         </div>
+
+        <div class="menu-node" @mousedown.prevent="menuDragging = true; draggedType = 'If-Else'">
+          <div class="menu-node-header" style="background: linear-gradient(to right, #eab308, #000);">
+            <span>?</span>
+            <span class="menu-node-title">If-Else Node</span>
+            <span>?</span>
+          </div>
+        </div>
+
+        <div class="menu-node" @mousedown.prevent="menuDragging = true; draggedType = 'Set Variables'">
+          <div class="menu-node-header" style="background: linear-gradient(to right, #8b5cf6, #000);">
+            <span>▷</span>
+            <span class="menu-node-title">Set Variables</span>
+            <span>▷</span>
+          </div>
+        </div>
+
       </div>
 
       <div class="menu-divider"></div>
@@ -2992,8 +3310,8 @@ const onPreviewWheel = (e) => {
         
         <transition name="fade">
             <div v-if="isAddingVariable" class="add-var-form">
-                <input v-model="newVarName" placeholder="Variable Name" class="var-input" />
-                <input v-model="newVarValue" placeholder="Initial Value" class="var-input" />
+                <input v-model="newVarName" placeholder="Variable Name" class="var-input" required="true"/>
+                <input v-model="newVarValue" placeholder="Initial Value" class="var-input" required="true"/>
                 <div class="var-form-actions">
                     <button class="save-var-btn" @click="addGlobalVariable">Save</button>
                     <button class="cancel-var-btn" @click="toggleAddVariable">Cancel</button>
@@ -3028,10 +3346,10 @@ const onPreviewWheel = (e) => {
             
             <div class="setting-item">
                 <label class="setting-label">Root Node (Start Point):</label>
-                <div class="setting-desc">Select which node the project starts from when clicking Play.</div>
+                <div class="setting-desc">Select which node the project starts from when clicking Play. (Only General Nodes allowed)</div>
                 <select v-model="rootNodeId" class="setting-select">
                     <option :value="null" disabled>-- Select a Starting Node --</option>
-                    <option v-for="node in Canvas_Status" :key="node.index" :value="node.index">
+                    <option v-for="node in availableRootNodes" :key="node.index" :value="node.index">
                         {{ node.Node_name || `Node ${node.index}` }} (ID: {{ node.index }})
                     </option>
                 </select>
@@ -3064,593 +3382,694 @@ const onPreviewWheel = (e) => {
               />
             </div>
             
-            <div class="audio-status-display">
+            <div v-if="viewMode !== 'setVariables' && viewMode !== 'ifElse'" class="audio-status-display">
                 <span class="audio-label">Sequence Audio:</span>
                 <span class="audio-value">{{ sequenceAudio?.name || 'Not selected yet' }}</span>
             </div>
 
-            <button class="preview-btn" @click="startPreview">
+            <button v-if="viewMode !== 'setVariables' && viewMode !== 'ifElse'" class="preview-btn" @click="startPreview">
                 ▶ Preview Scene
              </button>
           </div>
 
           <div class="popup-body">
-            <div 
-              class="popup-content" 
-              @mousemove="onGraphMouseMove"
-              @mousedown="onGraphMouseDown"
-              @mouseup="onGraphMouseUp"
-            >
-              <canvas 
-                ref="graphCanvasRef" 
-                class="graph-canvas"
-                :style="{ display: selectedScene ? 'block' : 'none' }"
-              ></canvas>
-              
-              <div 
-                class="background-color-overlay"
-                :style="{ 
-                  backgroundColor: sceneSettings.backgroundColor,
-                  display: selectedScene ? 'block' : 'none'
-                }"
-              ></div>
-              
-              <canvas 
-                ref="imagesCanvasRef" 
-                class="images-canvas"
-                :style="{ display: selectedScene ? 'block' : 'none' }"
-              ></canvas>
-              
-              <div v-if="!selectedScene" class="welcome-message">
-                <div class="welcome-icon">🎬</div>
-                <h2 class="welcome-title">Welcome to Scene Editor</h2>
-                <p class="welcome-text">
-                  To start editing, either:<br>
-                  1. Click on an existing scene from the list<br>
-                  2. Or click "Add Scene" to create a new one
-                </p>
-                <div class="welcome-hint">
-                  Double-click on a scene in the list to open it
-                </div>
-              </div>
-              
-              <input
-                type="file"
-                ref="imageInputRef"
-                accept="image/*"
-                style="display: none"
-                @change="handleImageUpload"
-              />
-              
-              <input 
-                type="file"
-                ref="videoInputRef"
-                accept="video/*"
-                style="display: none"
-                @change="handleVideoUpload"
-              />
-              
-               <input
-                type="file"
-                ref="audioInputRef"
-                accept="audio/*"
-                style="display: none"
-                @change="handleAudioUpload"
-               />
-            </div>
             
-            <div class="scene-panel">
-              <div v-if="viewMode === 'scenes'" class="scene-list-view">
-                
-                <div class="scenes-box">
-                    <div class="scene-panel-header">
-                        <span class="scene-panel-title">Scenes</span>
-                        <button class="add-scene-btn" @click="addScene">
-                            Add Scene
-                        </button>
+            <template v-if="viewMode === 'scenes' || viewMode === 'sceneDetails' || viewMode === 'componentEditor'">
+                <div 
+                  class="popup-content" 
+                  @mousemove="onGraphMouseMove"
+                  @mousedown="onGraphMouseDown"
+                  @mouseup="onGraphMouseUp"
+                >
+                  <canvas 
+                    ref="graphCanvasRef" 
+                    class="graph-canvas"
+                    :style="{ display: selectedScene ? 'block' : 'none' }"
+                  ></canvas>
+                  
+                  <div 
+                    class="background-color-overlay"
+                    :style="{ 
+                      backgroundColor: sceneSettings.backgroundColor,
+                      display: selectedScene ? 'block' : 'none'
+                    }"
+                  ></div>
+                  
+                  <canvas 
+                    ref="imagesCanvasRef" 
+                    class="images-canvas"
+                    :style="{ display: selectedScene ? 'block' : 'none' }"
+                  ></canvas>
+                  
+                  <div v-if="!selectedScene" class="welcome-message">
+                    <div class="welcome-icon">🎬</div>
+                    <h2 class="welcome-title">Welcome to Scene Editor</h2>
+                    <p class="welcome-text">
+                      To start editing, either:<br>
+                      1. Click on an existing scene from the list<br>
+                      2. Or click "Add Scene" to create a new one
+                    </p>
+                    <div class="welcome-hint">
+                      Double-click on a scene in the list to open it
                     </div>
-                    <div class="scene-list">
-                        <div 
-                            v-for="scene in nodeScenes" 
-                            :key="scene.id"
-                            class="scene-item"
-                            @mouseenter="hoveredSceneId = scene.id"
-                            @mouseleave="hoveredSceneId = null"
-                            @dblclick="selectScene(scene)"
-                        >
-                            <span class="scene-name">{{ scene.name }}</span>
-                            <button 
-                            v-show="hoveredSceneId === scene.id"
-                            class="scene-delete-btn"
-                            @click="deleteScene(scene.id)"
-                            title="Delete scene"
-                            >
-                            🗑️
+                  </div>
+                  
+                  <input
+                    type="file"
+                    ref="imageInputRef"
+                    accept="image/*"
+                    style="display: none"
+                    @change="handleImageUpload"
+                  />
+                  
+                  <input 
+                    type="file"
+                    ref="videoInputRef"
+                    accept="video/*"
+                    style="display: none"
+                    @change="handleVideoUpload"
+                  />
+                  
+                   <input
+                    type="file"
+                    ref="audioInputRef"
+                    accept="audio/*"
+                    style="display: none"
+                    @change="handleAudioUpload"
+                   />
+                </div>
+                
+                <div class="scene-panel">
+                  <div v-if="viewMode === 'scenes'" class="scene-list-view">
+                    
+                    <div class="scenes-box">
+                        <div class="scene-panel-header">
+                            <span class="scene-panel-title">Scenes</span>
+                            <button class="add-scene-btn" @click="addScene">
+                                Add Scene
                             </button>
                         </div>
-                        <div v-if="nodeScenes.length === 0" class="no-scenes">
-                            No scenes added yet
+                        <div class="scene-list">
+                            <div 
+                                v-for="scene in nodeScenes" 
+                                :key="scene.id"
+                                class="scene-item"
+                                @mouseenter="hoveredSceneId = scene.id"
+                                @mouseleave="hoveredSceneId = null"
+                                @dblclick="selectScene(scene)"
+                            >
+                                <span class="scene-name">{{ scene.name }}</span>
+                                <button 
+                                v-show="hoveredSceneId === scene.id"
+                                class="scene-delete-btn"
+                                @click="deleteScene(scene.id)"
+                                title="Delete scene"
+                                >
+                                🗑️
+                                </button>
+                            </div>
+                            <div v-if="nodeScenes.length === 0" class="no-scenes">
+                                No scenes added yet
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <div class="audio-box">
-                    <div class="scene-panel-header">
-                        <span class="scene-panel-title">Sequence Background Audio</span>
-                    </div>
-                    <div class="audio-content">
-                        <div v-if="!sequenceAudio" class="audio-upload-placeholder" @click="triggerAudioUpload">
-                             <span>🎵 Click to add audio</span>
+                    <div class="audio-box">
+                        <div class="scene-panel-header">
+                            <span class="scene-panel-title">Sequence Background Audio</span>
                         </div>
-                        <div v-else>
-                             <div class="audio-file-display">
-                                 <div class="audio-icon">🔊</div>
-                                 <div class="audio-info">
-                                     <div class="audio-filename">{{ sequenceAudio.name }}</div>
+                        <div class="audio-content">
+                            <div v-if="!sequenceAudio" class="audio-upload-placeholder" @click="triggerAudioUpload">
+                                 <span>🎵 Click to add audio</span>
+                            </div>
+                            <div v-else>
+                                 <div class="audio-file-display">
+                                     <div class="audio-icon">🔊</div>
+                                     <div class="audio-info">
+                                         <div class="audio-filename">{{ sequenceAudio.name }}</div>
+                                     </div>
+                                     <button class="remove-audio-btn" @click="removeAudio">✕</button>
                                  </div>
-                                 <button class="remove-audio-btn" @click="removeAudio">✕</button>
-                             </div>
 
-                             <div class="audio-controls">
-                                <div class="audio-control-row">
-                                    <span class="audio-control-label">Volume:</span>
-                                    <input 
-                                        type="range" 
-                                        v-model.number="sequenceAudio.volume" 
-                                        min="0" max="1" step="0.05" 
-                                        class="range-input audio-range"
-                                        @change="updateAudioProperties"
-                                    />
-                                    <span class="audio-val-text">{{ Math.round((sequenceAudio.volume || 1) * 100) }}%</span>
-                                </div>
-                                <div class="audio-control-row">
-                                    <label class="audio-checkbox-label">
+                                 <div class="audio-controls">
+                                    <div class="audio-control-row">
+                                        <span class="audio-control-label">Volume:</span>
                                         <input 
-                                            type="checkbox" 
-                                            v-model="sequenceAudio.loop"
+                                            type="range" 
+                                            v-model.number="sequenceAudio.volume" 
+                                            min="0" max="1" step="0.05" 
+                                            class="range-input audio-range"
                                             @change="updateAudioProperties"
                                         />
-                                        Loop Audio
-                                    </label>
-                                </div>
-                             </div>
-                        </div>
-                    </div>
-                </div>
-
-              </div>
-              
-              <div v-else-if="viewMode === 'sceneDetails' && selectedScene" class="scene-details-view">
-                <div class="scene-panel-header">
-                  <button class="back-btn" @click="goBackToScenes" title="Back to scenes">
-                    ←
-                  </button>
-                  <span class="scene-panel-title">Scene Details: {{ selectedScene.name }}</span>
-                </div>
-                
-                <div class="scene-details-content">
-                  <div class="detail-section">
-                    <label class="detail-label">Scene Name:</label>
-                    <input 
-                      v-model="selectedScene.name" 
-                      class="detail-input"
-                      @change="updateSceneDetails"
-                      placeholder="Enter scene name"
-                    />
-                  </div>
-                  
-                  <div class="detail-section">
-                    <label class="detail-label">Background Set:</label>
-                    <div class="color-picker-container">
-                      <input 
-                        type="color" 
-                        v-model="sceneSettings.backgroundColor"
-                        @change="updateBackgroundColor"
-                        class="color-input"
-                      />
-                      <div class="color-preview" :style="{ backgroundColor: sceneSettings.backgroundColor }"></div>
-                      <span class="color-value">{{ sceneSettings.backgroundColor }}</span>
-                    </div>
-                  </div>
-                  
-                  <div class="scene-content-box">
-                    <div class="scene-content-header">
-                      <span class="scene-content-title">Scene Content</span>
-                      <button class="add-content-btn" @click="toggleAddDropdown">
-                        + Add
-                      </button>
-                      
-                      <div v-if="showAddDropdown" class="add-dropdown">
-                        <div 
-                          v-for="option in addDropdownOptions" 
-                          :key="option.id"
-                          class="dropdown-item"
-                          :class="option.colorClass"
-                          @click="selectAddOption(option)"
-                        >
-                          {{ option.label }}
-                        </div>
-                      </div>
-                    </div>
-                    <div class="scene-content-body">
-                      <div v-if="sceneComponents.length === 0" class="empty-content">
-                        No content added yet. Click "+ Add" to add content.
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div class="save-button-container">
-                    <button class="save-scene-btn" @click="saveSceneAndGoBack">
-                      Save & Back to Scenes
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div v-else-if="viewMode === 'componentEditor' && activeComponent" class="component-editor-view">
-                <div class="scene-panel-header">
-                  <button class="back-btn" @click="closeComponentEditor" title="Back to Scene Details">
-                    ←
-                  </button>
-                  <span class="scene-panel-title">Component Editor</span>
-                </div>
-
-                <div class="scene-details-content">
-                    <div class="component-preview">
-                        <img v-if="activeComponent.type === 'image'" :src="activeComponent.url" alt="Preview" />
-                        <div v-else-if="activeComponent.type === 'text'" style="color:white; font-size: 24px; text-align: center;">T</div>
-                         <video 
-                            v-else-if="activeComponent.type === 'video'" 
-                            :src="activeComponent.url" 
-                            style="max-width: 100%; max-height: 100%;"
-                            controls
-                          ></video>
-                        <div v-else-if="activeComponent.type === 'options'" 
-                             :style="{ width: '100px', height: '50px', border: '2px dashed #f87171', backgroundColor: 'rgba(31,41,55,0.5)', display: 'flex', alignItems:'center', justifyContent: 'center', color: '#f87171' }">
-                             Opt
-                        </div>
-                        <div v-else style="color:white">?</div>
-                    </div>
-
-                    <div class="detail-section">
-                        <label class="detail-label">Name:</label>
-                        <input 
-                            v-model="activeComponent.name" 
-                            class="detail-input"
-                            @change="updateSceneContentDisplay"
-                        />
-                    </div>
-                    
-                    <div class="detail-section">
-                        <label class="detail-label">Entrance Animation:</label>
-                        <select v-model="activeComponent.animationType" class="detail-input">
-                            <option value="none">None</option>
-                            <option value="fade">Fade In</option>
-                            <option value="scale">Zoom In</option>
-                            <option value="slide">Slide In (Left)</option>
-                            <option v-if="activeComponent.type === 'text'" value="typewriter">Typewriter</option>
-                        </select>
-                    </div>
-
-                    <div class="detail-section" v-if="activeComponent.animationType && activeComponent.animationType !== 'none'">
-                        <label class="detail-label">Animation Duration (sec):</label>
-                        <div class="input-row">
-                            <input 
-                                type="range" 
-                                v-model.number="activeComponent.animationDuration" 
-                                min="0.1" max="10" step="0.1"
-                                class="range-input" 
-                            />
-                            <input 
-                                type="number" 
-                                v-model.number="activeComponent.animationDuration" 
-                                class="number-input" 
-                                min="0.1" max="10" step="0.1"
-                            />
-                        </div>
-                    </div>
-                    <div class="separator"></div>
-                    <div class="detail-section">
-                         <div class="checkbox-row" style="margin-bottom: 8px;">
-                            <label class="detail-label" style="margin-bottom:0; flex: 1;">Render on click:</label>
-                            <input type="checkbox" :checked="activeComponent.renderWhileClicked" @change="updateRenderMode('click')" />
-                         </div>
-                         <div style="font-size: 0.75rem; color: #9ca3af; margin-bottom: 8px; margin-left: 20px;">
-                            User must click to show this component.
-                         </div>
-
-                         <div class="checkbox-row">
-                            <label class="detail-label" style="margin-bottom:0; flex: 1;">Automatic rendering:</label>
-                            <input type="checkbox" :checked="activeComponent.autoRender" @change="updateRenderMode('auto')" />
-                         </div>
-                         <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; margin-left: 20px;">
-                            Renders immediately after the previous component finishes.
-                         </div>
-                    </div>
-
-                    <div class="detail-section">
-                        <label class="detail-label">Layering:</label>
-                        <div class="layering-controls">
-                            <button class="layer-btn" @click="changeLayer('top')" title="Bring to Front">⇈</button>
-                            <button class="layer-btn" @click="changeLayer('up')" title="Bring Forward">↑</button>
-                            <button class="layer-btn" @click="changeLayer('down')" title="Send Backward">↓</button>
-                            <button class="layer-btn" @click="changeLayer('bottom')" title="Send to Back">⇊</button>
-                        </div>
-                    </div>
-                    
-                    <div class="separator"></div>
-
-                    <div v-if="activeComponent.type === 'options'" class="options-editor-panel">
-                        
-                        <div class="detail-section" style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; margin-bottom: 16px;">
-                            <label class="detail-label" style="color:#00ff88; margin-bottom: 12px;">Container Styles</label>
-                            
-                            <div class="detail-section">
-                                <label class="detail-label">Box Color & Opacity:</label>
-                                <div style="display: flex; gap: 8px; align-items: center;">
-                                    <input type="color" v-model="activeComponent.boxColor" class="color-input" @input="drawComponents" />
-                                    <div class="input-row" style="flex: 1;">
-                                        <input type="range" v-model.number="activeComponent.boxOpacity" min="0" max="1" step="0.05" class="range-input" @input="drawComponents" />
-                                        <span class="audio-val-text">{{ Math.round((activeComponent.boxOpacity || 0) * 100) }}%</span>
+                                        <span class="audio-val-text">{{ Math.round((sequenceAudio.volume || 1) * 100) }}%</span>
                                     </div>
-                                </div>
-                            </div>
-                            
-                            <div class="detail-section">
-                                <label class="detail-label">Border Color:</label>
-                                 <div class="color-picker-container">
-                                    <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="drawComponents" />
-                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
+                                    <div class="audio-control-row">
+                                        <label class="audio-checkbox-label">
+                                            <input 
+                                                type="checkbox" 
+                                                v-model="sequenceAudio.loop"
+                                                @change="updateAudioProperties"
+                                            />
+                                            Loop Audio
+                                        </label>
+                                    </div>
                                  </div>
                             </div>
-
-                            <div class="detail-section">
-                                <label class="detail-label">Border Width:</label>
-                                <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="drawComponents" />
-                            </div>
-
-                            <div class="detail-section">
-                                <label class="detail-label">Border Radius:</label>
-                                <input type="number" v-model.number="activeComponent.borderRadius" class="detail-input" @input="drawComponents" />
-                            </div>
-                        </div>
-                        <div class="detail-section">
-                            <div class="scene-panel-header" style="margin-bottom: 12px; border-bottom: 0; padding: 0;">
-                                <span class="detail-label" style="font-size: 1rem;">Options List</span>
-                                <button class="add-content-btn" @click="addOptionToComponent" style="padding: 4px 8px;">+ Add Option</button>
-                            </div>
-                            
-                            <div class="options-list-container">
-                                <div v-for="(opt, index) in activeComponent.optionsList" :key="opt.id" class="option-list-item-wrapper">
-                                    <div class="option-list-item">
-                                        <input v-model="opt.text" class="detail-input" @input="drawComponents" />
-                                        <button class="remove-image-btn" @click="removeOptionFromComponent(index)">🗑️</button>
-                                    </div>
-                                    <div style="font-size: 0.75rem; color: #00ff88; margin-top: 4px; padding-left: 4px; font-style: italic;">
-                                        Connected to: {{ getConnectedNodeName(opt.id) }}
-                                    </div>
-                                </div>
-                                <div v-if="activeComponent.optionsList.length === 0" style="text-align:center; color: #6b7280; font-style:italic; padding: 10px;">
-                                    No options.
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="detail-section">
-                            <label class="detail-label">Button Styles:</label>
-                            
-                            <div class="style-tabs">
-                                <button 
-                                    class="style-tab-btn" 
-                                    :class="{ active: activeStyleState === 'normal' }" 
-                                    @click="activeStyleState = 'normal'"
-                                >
-                                    Normal
-                                </button>
-                                <button 
-                                    class="style-tab-btn" 
-                                    :class="{ active: activeStyleState === 'hovered' }" 
-                                    @click="activeStyleState = 'hovered'"
-                                >
-                                    Hovered
-                                </button>
-                                <button 
-                                    class="style-tab-btn" 
-                                    :class="{ active: activeStyleState === 'clicked' }" 
-                                    @click="activeStyleState = 'clicked'"
-                                >
-                                    Clicked
-                                </button>
-                            </div>
-
-                            <div class="style-editor-box">
-                                <div class="detail-section">
-                                    <label class="detail-label">Background Color:</label>
-                                     <div class="color-picker-container">
-                                        <input type="color" v-model="activeComponent.styles[activeStyleState].backgroundColor" class="color-input" @input="drawComponents" />
-                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].backgroundColor }"></div>
-                                     </div>
-                                </div>
-                                
-                                <div class="detail-section">
-                                    <label class="detail-label">Text Color:</label>
-                                     <div class="color-picker-container">
-                                        <input type="color" v-model="activeComponent.styles[activeStyleState].color" class="color-input" @input="drawComponents" />
-                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].color }"></div>
-                                     </div>
-                                </div>
-                                
-                                <div class="detail-section">
-                                    <label class="detail-label">Border Color:</label>
-                                     <div class="color-picker-container">
-                                        <input type="color" v-model="activeComponent.styles[activeStyleState].borderColor" class="color-input" @input="drawComponents" />
-                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].borderColor }"></div>
-                                     </div>
-                                </div>
-
-                                <div class="detail-section">
-                                    <label class="detail-label">Border Width:</label>
-                                    <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderWidth" class="detail-input" @input="drawComponents" />
-                                </div>
-
-                                <div class="detail-section">
-                                    <label class="detail-label">Border Radius:</label>
-                                    <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderRadius" class="detail-input" @input="drawComponents" />
-                                </div>
-                                
-                                <div class="detail-section">
-                                    <label class="detail-label">Font Size:</label>
-                                    <input type="number" v-model.number="activeComponent.styles[activeStyleState].fontSize" class="detail-input" @input="drawComponents" />
-                                </div>
-                            </div>
                         </div>
                     </div>
 
-
-                    <div class="separator"></div>
-
-                    <div class="detail-section">
-                        <label class="detail-label">Position X:</label>
-                        <div class="input-row">
-                            <input type="range" v-model.number="activeComponent.x" :min="GRAPH_MIN_X" :max="GRAPH_MAX_X" class="range-input" @input="updateActiveComponentPosition" />
-                            <input type="number" v-model.number="activeComponent.x" class="number-input" @input="updateActiveComponentPosition" />
-                        </div>
-                    </div>
-                    <div class="detail-section">
-                        <label class="detail-label">Position Y:</label>
-                        <div class="input-row">
-                            <input type="range" v-model.number="activeComponent.y" :min="GRAPH_MIN_Y" :max="GRAPH_MAX_Y" class="range-input" @input="updateActiveComponentPosition" />
-                            <input type="number" v-model.number="activeComponent.y" class="number-input" @input="updateActiveComponentPosition" />
-                        </div>
+                  </div>
+                  
+                  <div v-else-if="viewMode === 'sceneDetails' && selectedScene" class="scene-details-view">
+                    <div class="scene-panel-header">
+                      <button class="back-btn" @click="goBackToScenes" title="Back to scenes">
+                        ←
+                      </button>
+                      <span class="scene-panel-title">Scene Details: {{ selectedScene.name }}</span>
                     </div>
                     
-                    <div class="detail-section">
-                        <label class="detail-label">Width (px):</label>
-                        <div class="input-row">
-                            <input type="range" v-model.number="activeComponent.width" min="10" max="800" class="range-input" @input="updateActiveComponentSize" />
-                            <input type="number" v-model.number="activeComponent.width" class="number-input" @input="updateActiveComponentSize" />
+                    <div class="scene-details-content">
+                      <div class="detail-section">
+                        <label class="detail-label">Scene Name:</label>
+                        <input 
+                          v-model="selectedScene.name" 
+                          class="detail-input"
+                          @change="updateSceneDetails"
+                          placeholder="Enter scene name"
+                        />
+                      </div>
+                      
+                      <div class="detail-section">
+                        <label class="detail-label">Background Set:</label>
+                        <div class="color-picker-container">
+                          <input 
+                            type="color" 
+                            v-model="sceneSettings.backgroundColor"
+                            @change="updateBackgroundColor"
+                            class="color-input"
+                          />
+                          <div class="color-preview" :style="{ backgroundColor: sceneSettings.backgroundColor }"></div>
+                          <span class="color-value">{{ sceneSettings.backgroundColor }}</span>
                         </div>
-                    </div>
-                    
-                    <div class="detail-section">
-                        <label class="detail-label">Height (px):</label>
-                        <div class="input-row">
-                            <input type="range" v-model.number="activeComponent.height" min="10" max="600" class="range-input" @input="updateActiveComponentSize" />
-                            <input type="number" v-model.number="activeComponent.height" class="number-input" @input="updateActiveComponentSize" />
-                        </div>
-                    </div>
-
-                    <div v-if="activeComponent.type !== 'options'">
-                        <div class="detail-section">
-                            <label class="detail-label">Rotation (deg):</label>
-                            <div class="input-row">
-                                <input type="range" v-model.number="activeComponent.rotation" min="0" max="360" class="range-input" @input="updateActiveComponentPosition" />
-                                <input type="number" v-model.number="activeComponent.rotation" class="number-input" @input="updateActiveComponentPosition" />
+                      </div>
+                      
+                      <div class="scene-content-box">
+                        <div class="scene-content-header">
+                          <span class="scene-content-title">Scene Content</span>
+                          <button class="add-content-btn" @click="toggleAddDropdown">
+                            + Add
+                          </button>
+                          
+                          <div v-if="showAddDropdown" class="add-dropdown">
+                            <div 
+                              v-for="option in addDropdownOptions" 
+                              :key="option.id"
+                              class="dropdown-item"
+                              :class="option.colorClass"
+                              @click="selectAddOption(option)"
+                            >
+                              {{ option.label }}
                             </div>
+                          </div>
                         </div>
+                        <div class="scene-content-body">
+                          <div v-if="sceneComponents.length === 0" class="empty-content">
+                            No content added yet. Click "+ Add" to add content.
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div class="save-button-container">
+                        <button class="save-scene-btn" @click="saveSceneAndGoBack">
+                          Save & Back to Scenes
+                        </button>
+                      </div>
                     </div>
+                  </div>
 
-                    <div v-if="activeComponent.type === 'video'">
-                        <div class="detail-section">
-                             <div class="checkbox-row">
-                                <label class="detail-label" style="margin-bottom:0;">Loop:</label>
-                                <input type="checkbox" v-model="activeComponent.isLoop" @change="updateVideoProperties" />
-                             </div>
-                        </div>
-                         <div class="detail-section">
-                             <div class="checkbox-row">
-                                <label class="detail-label" style="margin-bottom:0;">Mute:</label>
-                                <input type="checkbox" v-model="activeComponent.isMuted" @change="updateVideoProperties" />
-                             </div>
-                        </div>
-                        
-                        <div class="detail-section">
-                            <label class="detail-label">Background Music Volume:</label>
-                            <div class="input-row">
-                                <input 
-                                    type="range" 
-                                    v-model.number="activeComponent.bgMusicVolume" 
-                                    min="0" max="1" step="0.05"
-                                    class="range-input"
-                                />
-                                <span style="color: #00ff88; font-family: monospace; width: 40px; text-align:right;">
-                                    {{ Math.round((activeComponent.bgMusicVolume || 0.2) * 100) }}%
-                                </span>
-                            </div>
-                            <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; font-style: italic;">
-                                Music volume when this video plays.
-                            </div>
-                        </div>
-                    </div>
+                  <div v-else-if="viewMode === 'componentEditor' && activeComponent" class="component-editor-view">
+  <div class="scene-panel-header">
+    <button class="back-btn" @click="closeComponentEditor" title="Back to Scene Details">
+      ←
+    </button>
+    <span class="scene-panel-title">Component Editor</span>
+  </div>
 
-                    <div v-if="activeComponent.type === 'text'">
-                        <div class="detail-section">
-                            <label class="detail-label">Content:</label>
-                            <input 
-                                v-model="activeComponent.content" 
-                                class="detail-input" 
-                                @input="updateActiveComponentPosition" 
-                                @select="handleTextSelect"
-                            />
-                            
-                            <div v-if="textSelection.text.length > 0" class="formatting-controls">
-                                <button class="format-btn" @click="applyTextStyle('bold', activeComponent.fontWeight === 'bold' ? 'normal' : 'bold')" :class="{ active: activeComponent.fontWeight === 'bold' }" title="Bold">B</button>
-                                <button class="format-btn" @click="applyTextStyle('italic')" :class="{ active: activeComponent.fontStyle === 'italic' }" title="Italic">I</button>
-                                <button class="format-btn" @click="applyTextStyle('underline')" :class="{ active: activeComponent.textDecoration === 'underline' }" title="Underline">U</button>
-                                <button class="format-btn" @click="applyTextStyle('strikethrough')" :class="{ active: activeComponent.textDecoration === 'line-through' }" title="Strikethrough">S</button>
-                                <input type="color" v-model="activeComponent.textDecorationColor" class="mini-color-input" title="Line Color" />
-                            </div>
-                        </div>
+  <div class="scene-details-content">
+    <div class="component-preview">
+      <img v-if="activeComponent.type === 'image'" :src="activeComponent.url" alt="Preview" />
+      <div v-else-if="activeComponent.type === 'text'" style="color:white; font-size: 24px; text-align: center;">T</div>
+      <video 
+        v-else-if="activeComponent.type === 'video'" 
+        :src="activeComponent.url" 
+        style="max-width: 100%; max-height: 100%;"
+        controls
+      ></video>
+      <div v-else-if="activeComponent.type === 'options'" 
+           :style="{ width: '100px', height: '50px', border: '2px dashed #f87171', backgroundColor: 'rgba(31,41,55,0.5)', display: 'flex', alignItems:'center', justifyContent: 'center', color: '#f87171' }">
+           Opt
+      </div>
+      <div v-else style="color:white">?</div>
+    </div>
 
-                        <div class="detail-section">
-                            <label class="detail-label">Font Family:</label>
-                            <select v-model="activeComponent.fontFamily" class="detail-input" @change="updateActiveComponentPosition">
-                                <option value="sans-serif">Sans Serif</option>
-                                <option value="serif">Serif</option>
-                                <option value="monospace">Monospace</option>
-                                <option value="cursive">Cursive</option>
-                                <option value="fantasy">Fantasy</option>
-                            </select>
-                        </div>
-                        <div class="detail-section">
-                            <label class="detail-label">Font Size:</label>
-                            <input type="number" v-model.number="activeComponent.fontSize" class="detail-input" @input="updateActiveComponentPosition" />
-                        </div>
-                        <div class="detail-section">
-                            <label class="detail-label">Text Color:</label>
-                             <div class="color-picker-container">
-                                <input type="color" v-model="activeComponent.color" class="color-input" @input="updateActiveComponentPosition" />
-                                <div class="color-preview" :style="{ backgroundColor: activeComponent.color }"></div>
-                             </div>
-                        </div>
-                        <div class="detail-section">
-                            <label class="detail-label">Background Color:</label>
-                             <div class="color-picker-container">
-                                <input type="color" v-model="activeComponent.backgroundColor" class="color-input" @input="updateActiveComponentPosition" />
-                                <div class="color-preview" :style="{ backgroundColor: activeComponent.backgroundColor }"></div>
-                             </div>
-                        </div>
-                        <div class="detail-section">
-                            <label class="detail-label">Border Color:</label>
-                             <div class="color-picker-container">
-                                <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="updateActiveComponentPosition" />
-                                <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
-                             </div>
-                        </div>
-                         <div class="detail-section">
-                            <label class="detail-label">Border Width:</label>
-                            <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="updateActiveComponentPosition" />
-                        </div>
-                         <div class="detail-section">
-                            <label class="detail-label">Round Corners:</label>
-                            <input type="range" v-model.number="activeComponent.borderRadius" min="0" max="50" class="range-input" @input="updateActiveComponentPosition" />
-                        </div>
-                    </div>
+    <div class="detail-section">
+      <label class="detail-label">Name:</label>
+      <input 
+        v-model="activeComponent.name" 
+        class="detail-input"
+        @change="updateSceneContentDisplay"
+      />
+    </div>
+    
+    <div class="detail-section">
+      <label class="detail-label">Entrance Animation:</label>
+      <select v-model="activeComponent.animationType" class="detail-input">
+        <option value="none">None</option>
+        <option value="fade">Fade In</option>
+        <option value="scale">Zoom In</option>
+        <option value="slide">Slide In (Left)</option>
+        <option v-if="activeComponent.type === 'text'" value="typewriter">Typewriter</option>
+      </select>
+    </div>
+
+    <div class="detail-section" v-if="activeComponent.animationType && activeComponent.animationType !== 'none'">
+      <label class="detail-label">Animation Duration (sec):</label>
+      <div class="input-row">
+        <input 
+          type="range" 
+          v-model.number="activeComponent.animationDuration" 
+          min="0.1" max="10" step="0.1"
+          class="range-input" 
+        />
+        <input 
+          type="number" 
+          v-model.number="activeComponent.animationDuration" 
+          class="number-input" 
+          min="0.1" max="10" step="0.1"
+        />
+      </div>
+    </div>
+
+    <div class="separator"></div>
+
+    <div class="detail-section">
+      <div class="checkbox-row" style="margin-bottom: 8px;">
+        <label class="detail-label" style="margin-bottom:0; flex: 1;">Render on click:</label>
+        <input type="checkbox" :checked="activeComponent.renderWhileClicked" @change="updateRenderMode('click')" />
+      </div>
+      <div style="font-size: 0.75rem; color: #9ca3af; margin-bottom: 8px; margin-left: 20px;">
+        User must click to show this component.
+      </div>
+
+      <div class="checkbox-row">
+        <label class="detail-label" style="margin-bottom:0; flex: 1;">Automatic rendering:</label>
+        <input type="checkbox" :checked="activeComponent.autoRender" @change="updateRenderMode('auto')" />
+      </div>
+      <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; margin-left: 20px;">
+        Renders immediately after the previous component finishes.
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <label class="detail-label">Layering:</label>
+      <div class="layering-controls">
+        <button class="layer-btn" @click="changeLayer('top')" title="Bring to Front">⇈</button>
+        <button class="layer-btn" @click="changeLayer('up')" title="Bring Forward">↑</button>
+        <button class="layer-btn" @click="changeLayer('down')" title="Send Backward">↓</button>
+        <button class="layer-btn" @click="changeLayer('bottom')" title="Send to Back">⇊</button>
+      </div>
+    </div>
+    
+    <div class="separator"></div>
+
+    <div v-if="activeComponent.type === 'options'" class="options-editor-panel">
+      
+      <div class="detail-section" style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; margin-bottom: 16px;">
+        <label class="detail-label" style="color:#00ff88; margin-bottom: 12px;">Container Styles</label>
+        
+        <div class="detail-section">
+          <label class="detail-label">Box Color & Opacity:</label>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="color" v-model="activeComponent.boxColor" class="color-input" @input="drawComponents" />
+            <div class="input-row" style="flex: 1;">
+              <input type="range" v-model.number="activeComponent.boxOpacity" min="0" max="1" step="0.05" class="range-input" @input="drawComponents" />
+              <span class="audio-val-text">{{ Math.round((activeComponent.boxOpacity || 0) * 100) }}%</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="detail-section">
+          <label class="detail-label">Border Color:</label>
+           <div class="color-picker-container">
+             <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="drawComponents" />
+             <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
+           </div>
+        </div>
+
+        <div class="detail-section">
+          <label class="detail-label">Border Width:</label>
+          <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="drawComponents" />
+        </div>
+
+        <div class="detail-section">
+          <label class="detail-label">Border Radius:</label>
+          <input type="number" v-model.number="activeComponent.borderRadius" class="detail-input" @input="drawComponents" />
+        </div>
+      </div>
+
+      <div class="detail-section">
+        <div class="scene-panel-header" style="margin-bottom: 12px; border-bottom: 0; padding: 0;">
+          <span class="detail-label" style="font-size: 1rem;">Options List</span>
+          <button class="add-content-btn" @click="addOptionToComponent" style="padding: 4px 8px;">+ Add Option</button>
+        </div>
+        
+        <div class="options-list-container">
+          <div v-for="(opt, index) in activeComponent.optionsList" :key="opt.id" class="option-list-item-wrapper">
+            <div class="option-list-item">
+              <input v-model="opt.text" class="detail-input" @input="drawComponents" />
+              <button class="remove-image-btn" @click="removeOptionFromComponent(index)">🗑️</button>
+            </div>
+            <div style="font-size: 0.75rem; color: #00ff88; margin-top: 4px; padding-left: 4px; font-style: italic;">
+              Connected to: {{ getConnectedNodeName(opt.id) }}
+            </div>
+          </div>
+          <div v-if="activeComponent.optionsList.length === 0" style="text-align:center; color: #6b7280; font-style:italic; padding: 10px;">
+            No options.
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-section">
+        <label class="detail-label">Button Styles:</label>
+        
+        <div class="style-tabs">
+          <button 
+            class="style-tab-btn" 
+            :class="{ active: activeStyleState === 'normal' }" 
+            @click="activeStyleState = 'normal'"
+          >
+            Normal
+          </button>
+          <button 
+            class="style-tab-btn" 
+            :class="{ active: activeStyleState === 'hovered' }" 
+            @click="activeStyleState = 'hovered'"
+          >
+            Hovered
+          </button>
+          <button 
+            class="style-tab-btn" 
+            :class="{ active: activeStyleState === 'clicked' }" 
+            @click="activeStyleState = 'clicked'"
+          >
+            Clicked
+          </button>
+        </div>
+
+        <div class="style-editor-box">
+          <div class="detail-section">
+            <label class="detail-label">Background Color:</label>
+             <div class="color-picker-container">
+               <input type="color" v-model="activeComponent.styles[activeStyleState].backgroundColor" class="color-input" @input="drawComponents" />
+               <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].backgroundColor }"></div>
+             </div>
+          </div>
+          
+          <div class="detail-section">
+            <label class="detail-label">Text Color:</label>
+             <div class="color-picker-container">
+               <input type="color" v-model="activeComponent.styles[activeStyleState].color" class="color-input" @input="drawComponents" />
+               <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].color }"></div>
+             </div>
+          </div>
+          
+          <div class="detail-section">
+            <label class="detail-label">Border Color:</label>
+             <div class="color-picker-container">
+               <input type="color" v-model="activeComponent.styles[activeStyleState].borderColor" class="color-input" @input="drawComponents" />
+               <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].borderColor }"></div>
+             </div>
+          </div>
+
+          <div class="detail-section">
+            <label class="detail-label">Border Width:</label>
+            <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderWidth" class="detail-input" @input="drawComponents" />
+          </div>
+
+          <div class="detail-section">
+            <label class="detail-label">Border Radius:</label>
+            <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderRadius" class="detail-input" @input="drawComponents" />
+          </div>
+          
+          <div class="detail-section">
+            <label class="detail-label">Font Size:</label>
+            <input type="number" v-model.number="activeComponent.styles[activeStyleState].fontSize" class="detail-input" @input="drawComponents" />
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="separator"></div>
+
+    <div class="detail-section">
+      <label class="detail-label">Position X:</label>
+      <div class="input-row">
+        <input type="range" v-model.number="activeComponent.x" :min="GRAPH_MIN_X" :max="GRAPH_MAX_X" class="range-input" @input="updateActiveComponentPosition" />
+        <input type="number" v-model.number="activeComponent.x" class="number-input" @input="updateActiveComponentPosition" />
+      </div>
+    </div>
+    <div class="detail-section">
+      <label class="detail-label">Position Y:</label>
+      <div class="input-row">
+        <input type="range" v-model.number="activeComponent.y" :min="GRAPH_MIN_Y" :max="GRAPH_MAX_Y" class="range-input" @input="updateActiveComponentPosition" />
+        <input type="number" v-model.number="activeComponent.y" class="number-input" @input="updateActiveComponentPosition" />
+      </div>
+    </div>
+    
+    <div class="detail-section">
+      <label class="detail-label">Width (px):</label>
+      <div class="input-row">
+        <input type="range" v-model.number="activeComponent.width" min="10" max="800" class="range-input" @input="updateActiveComponentSize" />
+        <input type="number" v-model.number="activeComponent.width" class="number-input" @input="updateActiveComponentSize" />
+      </div>
+    </div>
+    
+    <div class="detail-section">
+      <label class="detail-label">Height (px):</label>
+      <div class="input-row">
+        <input type="range" v-model.number="activeComponent.height" min="10" max="600" class="range-input" @input="updateActiveComponentSize" />
+        <input type="number" v-model.number="activeComponent.height" class="number-input" @input="updateActiveComponentSize" />
+      </div>
+    </div>
+
+    <div v-if="activeComponent.type !== 'options'">
+      <div class="detail-section">
+        <label class="detail-label">Rotation (deg):</label>
+        <div class="input-row">
+          <input type="range" v-model.number="activeComponent.rotation" min="0" max="360" class="range-input" @input="updateActiveComponentPosition" />
+          <input type="number" v-model.number="activeComponent.rotation" class="number-input" @input="updateActiveComponentPosition" />
+        </div>
+      </div>
+    </div>
+
+    <div v-if="activeComponent.type === 'video'">
+      <div class="detail-section">
+           <div class="checkbox-row">
+              <label class="detail-label" style="margin-bottom:0;">Loop:</label>
+              <input type="checkbox" v-model="activeComponent.isLoop" @change="updateVideoProperties" />
+           </div>
+      </div>
+       <div class="detail-section">
+           <div class="checkbox-row">
+              <label class="detail-label" style="margin-bottom:0;">Mute:</label>
+              <input type="checkbox" v-model="activeComponent.isMuted" @change="updateVideoProperties" />
+           </div>
+      </div>
+      
+      <div class="detail-section">
+          <label class="detail-label">Background Music Volume:</label>
+          <div class="input-row">
+              <input 
+                  type="range" 
+                  v-model.number="activeComponent.bgMusicVolume" 
+                  min="0" max="1" step="0.05"
+                  class="range-input"
+              />
+              <span style="color: #00ff88; font-family: monospace; width: 40px; text-align:right;">
+                  {{ Math.round((activeComponent.bgMusicVolume || 0.2) * 100) }}%
+              </span>
+          </div>
+          <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; font-style: italic;">
+              Music volume when this video plays.
+          </div>
+      </div>
+    </div>
+
+    <div v-if="activeComponent.type === 'text'">
+      <div class="detail-section">
+        <label class="detail-label">Content:</label>
+        <input 
+          v-model="activeComponent.content" 
+          class="detail-input" 
+          @input="updateActiveComponentPosition" 
+          @select="handleTextSelect"
+        />
+        
+        <div v-if="textSelection.text.length > 0" class="formatting-controls">
+          <button class="format-btn" @click="applyTextStyle('bold', activeComponent.fontWeight === 'bold' ? 'normal' : 'bold')" :class="{ active: activeComponent.fontWeight === 'bold' }" title="Bold">B</button>
+          <button class="format-btn" @click="applyTextStyle('italic')" :class="{ active: activeComponent.fontStyle === 'italic' }" title="Italic">I</button>
+          <button class="format-btn" @click="applyTextStyle('underline')" :class="{ active: activeComponent.textDecoration === 'underline' }" title="Underline">U</button>
+          <button class="format-btn" @click="applyTextStyle('strikethrough')" :class="{ active: activeComponent.textDecoration === 'line-through' }" title="Strikethrough">S</button>
+          <input type="color" v-model="activeComponent.textDecorationColor" class="mini-color-input" title="Line Color" />
+        </div>
+      </div>
+
+      <div class="detail-section">
+        <label class="detail-label">Font Family:</label>
+        <select v-model="activeComponent.fontFamily" class="detail-input" @change="updateActiveComponentPosition">
+          <option value="sans-serif">Sans Serif</option>
+          <option value="serif">Serif</option>
+          <option value="monospace">Monospace</option>
+          <option value="cursive">Cursive</option>
+          <option value="fantasy">Fantasy</option>
+        </select>
+      </div>
+      <div class="detail-section">
+        <label class="detail-label">Font Size:</label>
+        <input type="number" v-model.number="activeComponent.fontSize" class="detail-input" @input="updateActiveComponentPosition" />
+      </div>
+      <div class="detail-section">
+        <label class="detail-label">Text Color:</label>
+         <div class="color-picker-container">
+           <input type="color" v-model="activeComponent.color" class="color-input" @input="updateActiveComponentPosition" />
+           <div class="color-preview" :style="{ backgroundColor: activeComponent.color }"></div>
+         </div>
+      </div>
+      <div class="detail-section">
+        <label class="detail-label">Background Color:</label>
+         <div class="color-picker-container">
+           <input type="color" v-model="activeComponent.backgroundColor" class="color-input" @input="updateActiveComponentPosition" />
+           <div class="color-preview" :style="{ backgroundColor: activeComponent.backgroundColor }"></div>
+         </div>
+      </div>
+      <div class="detail-section">
+        <label class="detail-label">Border Color:</label>
+         <div class="color-picker-container">
+           <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="updateActiveComponentPosition" />
+           <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
+         </div>
+      </div>
+       <div class="detail-section">
+        <label class="detail-label">Border Width:</label>
+        <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="updateActiveComponentPosition" />
+      </div>
+       <div class="detail-section">
+        <label class="detail-label">Round Corners:</label>
+        <input type="range" v-model.number="activeComponent.borderRadius" min="0" max="50" class="range-input" @input="updateActiveComponentPosition" />
+      </div>
+    </div>
+
+  </div>
+</div>
 
                 </div>
-              </div>
+            </template>
 
-            </div>
+            <template v-else-if="viewMode === 'setVariables'">
+                <div class="set-variable-view">
+                    <div class="logic-editor-container">
+                        <div class="logic-header">
+                            <h3>Set Variable Logic</h3>
+                            <p>Configure how this node modifies global variables.</p>
+                        </div>
+
+                        <div class="variable-logic-row">
+                            
+                            <div class="logic-group">
+                                <label>Target Variable</label>
+                                <select v-model="setVarId" class="logic-select">
+                                    <option value="" disabled>Select Variable</option>
+                                    <option v-for="v in globalVariables" :key="v.id" :value="v.id">
+                                        {{ v.name }}
+                                    </option>
+                                </select>
+                            </div>
+
+                            <div class="logic-group small">
+                                <label>Operator</label>
+                                <select v-model="setVarOperator" class="logic-select operator">
+                                    <option value="=">=</option>
+                                    <option value="+">+</option>
+                                    <option value="-">-</option>
+                                    <option value="*">x</option>
+                                    <option value="/">/</option>
+                                </select>
+                            </div>
+
+                            <div class="logic-group large">
+                                <div class="value-type-toggle">
+                                    <label>Value Source:</label>
+                                    <div class="toggle-buttons">
+                                        <button 
+                                            :class="{ active: setVarValueType === 'constant' }" 
+                                            @click="setVarValueType = 'constant'"
+                                        >Number</button>
+                                        <button 
+                                            :class="{ active: setVarValueType === 'variable' }" 
+                                            @click="setVarValueType = 'variable'"
+                                        >Variable</button>
+                                    </div>
+                                </div>
+                                
+                                <div v-if="setVarValueType === 'constant'">
+                                    <input 
+                                        type="number" 
+                                        v-model="setVarValue" 
+                                        class="logic-input" 
+                                        placeholder="Enter number..."
+                                    />
+                                </div>
+                                <div v-else>
+                                    <select v-model="setVarValue" class="logic-select">
+                                        <option value="" disabled>Select Source Variable</option>
+                                        <option v-for="v in globalVariables" :key="v.id" :value="v.id">
+                                            {{ v.name }}
+                                        </option>
+                                    </select>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        <div class="preview-equation">
+                            <span class="eq-part target">{{ globalVariables.find(v => v.id === setVarId)?.name || '?' }}</span>
+                            <span class="eq-part op">{{ setVarOperator }}</span>
+                            <span class="eq-part value">
+                                <template v-if="setVarValueType === 'constant'">{{ setVarValue || '0' }}</template>
+                                <template v-else>{{ globalVariables.find(v => v.id === setVarValue)?.name || '?' }}</template>
+                            </span>
+                            <span class="eq-part op">  
+                              =
+                            </span>
+                            <span class="eq-part value">
+                              {{globalVariables.find(v => v.id === setVarId)?.name || '?'}}
+                            </span>
+                        </div>
+
+                    </div>
+                </div>
+            </template>
+
+            <template v-else-if="viewMode === 'ifElse'">
+                <div class="set-variable-view">
+                     <div class="logic-editor-container">
+                        <div class="logic-header">
+                            <h3>If-Else Logic</h3>
+                            <p style="color:#eab308">Condition configuration coming soon...</p>
+                        </div>
+                     </div>
+                </div>
+            </template>
+
           </div>
           <button class="popup-return-btn" @click="closePopup">Return to Canvas</button>
           
@@ -5161,4 +5580,199 @@ const onPreviewWheel = (e) => {
       background-color: #1f2937;
       color: #fff;
   }
+
+  /* ==========================================================================
+     NEW: SET VARIABLES EDITOR STYLES
+     ========================================================================== */
+  .set-variable-view {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.3);
+  }
+
+  .logic-editor-container {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 30px;
+      width: 600px;
+      max-width: 90%;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  }
+
+  .logic-header {
+      text-align: center;
+      margin-bottom: 10px;
+  }
+
+  .logic-header h3 {
+      color: #8b5cf6; /* Matching purple node color */
+      font-size: 1.5rem;
+      margin: 0 0 8px 0;
+  }
+
+  .logic-header p {
+      color: #9ca3af;
+      margin: 0;
+      font-size: 0.9rem;
+  }
+
+  .variable-logic-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 16px;
+      justify-content: center;
+      background: rgba(0,0,0,0.2);
+      padding: 20px;
+      border-radius: 8px;
+  }
+
+  .logic-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex: 1;
+  }
+
+  .logic-group.small {
+      flex: 0 0 60px; /* Fixed width for operator */
+  }
+
+  .logic-group.large {
+      flex: 1.2;
+  }
+
+  .logic-group label {
+      color: #e2e8f0;
+      font-size: 0.85rem;
+      font-weight: 500;
+  }
+
+  .logic-select, .logic-input {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 6px;
+      padding: 10px;
+      color: #fff;
+      font-size: 1rem;
+      outline: none;
+      width: 100%;
+      box-sizing: border-box;
+      transition: border-color 0.2s;
+  }
+  
+  .logic-select option {
+      background-color: #1f2937;
+  }
+
+  .logic-select:focus, .logic-input:focus {
+      border-color: #8b5cf6;
+  }
+
+  .logic-select.operator {
+      text-align: center;
+      font-weight: bold;
+      color: #8b5cf6;
+      font-size: 1.2rem;
+      background: rgba(139, 92, 246, 0.1);
+      border-color: rgba(139, 92, 246, 0.3);
+  }
+
+  /* Toggle Buttons for Value Source */
+  .value-type-toggle {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+  }
+
+  .toggle-buttons {
+      display: flex;
+      background: rgba(0,0,0,0.3);
+      border-radius: 4px;
+      padding: 2px;
+  }
+
+  .toggle-buttons button {
+      background: transparent;
+      border: none;
+      color: #6b7280;
+      padding: 2px 8px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      border-radius: 3px;
+      transition: all 0.2s;
+  }
+
+  .toggle-buttons button.active {
+      background: #8b5cf6;
+      color: #fff;
+  }
+
+  /* Equation Preview */
+  .preview-equation {
+      text-align: center;
+      font-family: monospace;
+      font-size: 1.1rem;
+      color: #9ca3af;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+  }
+
+  .eq-part {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin: 0 4px;
+  }
+
+  .eq-part.target {
+      color: #e2e8f0;
+      background: rgba(255,255,255,0.05);
+  }
+
+  .eq-part.op {
+      color: #8b5cf6;
+      font-weight: bold;
+  }
+
+  .eq-part.value {
+      color: #00ff88;
+      background: rgba(0,255,136,0.1);
+  }
+  .context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: #1f2937;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 4px;
+  min-width: 160px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+}
+
+.context-menu-item {
+  padding: 8px 12px;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-menu-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
 </style>
