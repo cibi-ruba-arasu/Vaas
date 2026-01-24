@@ -11,14 +11,13 @@ const token = localStorage.getItem("token")
 const menuOpen = ref(false)
 const toggleMenu = () => (menuOpen.value = !menuOpen.value)
 
-// --- NEW: Global Variables State ---
+// --- Global Variables State ---
 const globalVariables = ref([])
 const isAddingVariable = ref(false)
 const newVarName = ref("")
 const newVarValue = ref("")
-const newVarType = ref("string") // 'string' or 'integer'
+const newVarType = ref("string") 
 
-// --- SYNC VARIABLES TO CANVAS STATUS ---
 watch(globalVariables, (newVars) => {
     Canvas_Status.value.globalVariables = newVars
 }, { deep: true })
@@ -89,7 +88,6 @@ const availableRootNodes = computed(() => {
   return Canvas_Status.value.filter(n => n.node_type === 'General')
 })
 
-// --- Play Project Logic ---
 const playProjectFromRoot = () => {
   if (rootNodeId.value === null || rootNodeId.value === "") {
     alert("Please set a Root Node (Starting Point) in the Project Settings first.")
@@ -205,18 +203,13 @@ const isDraggingComponent = ref(false)
 const draggingComponentIndex = ref(null)
 const dragComponentOffset = ref({ x: 0, y: 0 })
 
-// Drag and Drop List State
 let dragSourceIndex = null
 let isHandleActive = false
 
-// Active Component State for Component Editor
 const activeComponent = ref(null)
-// Text Selection State
 const textSelection = ref({ start: 0, end: 0, text: '' })
-// Options Component Style Editor State
 const activeStyleState = ref('normal') 
 
-/* ================= SCENE SETTINGS ================= */
 const sceneSettings = ref({
   backgroundColor: '#000000' 
 })
@@ -224,7 +217,6 @@ const sceneSettings = ref({
 /* ================= AUDIO MANAGEMENT ================= */
 const sequenceAudio = ref(null)
 const audioInputRef = ref(null)
-
 
 const triggerAudioUpload = () => {
   audioInputRef.value.click()
@@ -489,7 +481,8 @@ const addDropdownOptions = [
   { id: 'image', label: 'Image', colorClass: 'hover-green' },
   { id: 'text', label: 'Text', colorClass: 'hover-blue' },
   { id: 'video', label: 'Video', colorClass: 'hover-yellow' },
-  { id: 'input', label: 'Input Box', colorClass: 'hover-purple' }, // NEW INPUT OPTION
+  { id: 'input', label: 'Input Box', colorClass: 'hover-purple' },
+  { id: 'variable', label: 'Variable', colorClass: 'hover-orange' }, // NEW VARIABLE OPTION
   { id: 'options', label: 'Options', colorClass: 'hover-red' } 
 ]
 
@@ -520,13 +513,61 @@ const selectAddOption = (option) => {
   } else if (option.id === 'video') {
     videoInputRef.value.click() 
   } else if (option.id === 'input') {
-    addInputComponent() // NEW HANDLER
+    addInputComponent() 
+  } else if (option.id === 'variable') {
+    addVariableComponent() // NEW HANDLER
   }
   showAddDropdown.value = false
 }
 
 const closeAddDropdown = () => {
   showAddDropdown.value = false
+}
+
+/* ================= VARIABLE DISPLAY HANDLING ================= */
+const addVariableComponent = () => {
+    const newVar = {
+        id: Date.now(),
+        type: 'variable',
+        name: 'New Variable Display',
+        x: 0,
+        y: 0,
+        width: 150,
+        height: 40,
+        rotation: 0,
+        
+        variableId: '', // ID of the global variable to display
+        
+        // Styles similar to text
+        fontSize: 24,
+        fontFamily: 'sans-serif',
+        fontWeight: 'bold',
+        fontStyle: 'normal',
+        textDecoration: 'none',
+        textDecorationColor: '#ffffff',
+        textDecorationStyle: 'solid',
+        color: '#ffffff',
+        backgroundColor: 'transparent',
+        borderColor: 'transparent',
+        borderWidth: 0,
+        borderRadius: 0,
+        
+        renderWhileClicked: true,
+        autoRender: false,
+        animationType: 'fade', 
+        animationDuration: 1.0 
+    }
+    
+    // Insert before options if exists
+    const optionsIndex = sceneComponents.value.findIndex(c => c.type === 'options');
+    if (optionsIndex !== -1) {
+        sceneComponents.value.splice(optionsIndex, 0, newVar);
+    } else {
+        sceneComponents.value.push(newVar);
+    }
+    
+    updateSceneContentDisplay()
+    drawComponents()
 }
 
 /* ================= INPUT BOX HANDLING ================= */
@@ -538,23 +579,24 @@ const addInputComponent = () => {
         x: 0,
         y: 0,
         width: 300,
-        height: 60,
+        height: 50,
         rotation: 0,
         
-        // Styles
         backgroundColor: '#ffffff',
         borderColor: '#9ca3af',
         borderRadius: 4,
         borderWidth: 1,
         textColor: '#000000',
+        
         fontFamily: 'sans-serif',
         fontSize: 16,
+        fontWeight: 'normal',
+        fontStyle: 'normal',
+        placeholderText: 'Type your answer...',
         
-        // Focus Styles
         focusBackgroundColor: '#ffffff',
         focusBorderColor: '#00ff88',
         
-        // Button Styles
         buttonText: 'Submit',
         buttonSubmittedText: 'Sent',
         buttonNormalColor: '#3b82f6',
@@ -562,10 +604,9 @@ const addInputComponent = () => {
         buttonClickColor: '#1d4ed8',
         buttonTextColor: '#ffffff',
         
-        // Logic
-        targetVariableId: '', // ID of the global variable to assign
-        currentValue: '', // Holds temp value
-        isSubmitted: false, // Flag to disable
+        targetVariableId: '', 
+        currentValue: '', 
+        isSubmitted: false, 
         
         renderWhileClicked: true,
         autoRender: false,
@@ -573,7 +614,6 @@ const addInputComponent = () => {
         animationDuration: 1.0
     }
     
-    // Insert before options if exists, otherwise push
     const optionsIndex = sceneComponents.value.findIndex(c => c.type === 'options');
     if (optionsIndex !== -1) {
         sceneComponents.value.splice(optionsIndex, 0, newInput);
@@ -585,20 +625,12 @@ const addInputComponent = () => {
     drawComponents()
 }
 
-// Logic to handle input submission in Preview Mode
 const handleInputSubmit = (comp) => {
     if (comp.isSubmitted) return;
-    
-    // 1. Validate Variable
-    if (!comp.targetVariableId) {
-        console.warn("No variable assigned to this input.");
-        // Proceeding purely for visual flow, or stop? Let's proceed but warn.
-    }
     
     const targetVar = globalVariables.value.find(v => v.id === comp.targetVariableId);
     let val = comp.currentValue;
 
-    // 2. Type Check
     if (targetVar) {
         if (targetVar.type === 'integer') {
             if (isNaN(val) || val.trim() === '') {
@@ -607,33 +639,14 @@ const handleInputSubmit = (comp) => {
             }
             val = Number(val);
         }
-        // Assign to Global State
         targetVar.value = val;
-        
-        // 3. Console Log
         console.log(`Variable '${targetVar.name}' assigned value:`, val);
     } else {
         console.log("Input submitted but no variable assigned. Value:", val);
     }
 
-    // 4. Update Component State
     comp.isSubmitted = true;
-    
-    // 5. Advance Sequence
     advancePreview();
-}
-
-// Helper to sanitize input typing based on variable type
-const handleInputTyping = (e, comp) => {
-    const targetVar = globalVariables.value.find(v => v.id === comp.targetVariableId);
-    if (targetVar && targetVar.type === 'integer') {
-        // Remove non-numeric chars
-        const val = e.target.value;
-        // Allow numeric and one dot? User said "numbers", assuming integer or float.
-        // Let's restrict strict non-digits for simplicity, or standard input type="number" logic
-        // But user might type "-".
-    }
-    comp.currentValue = e.target.value;
 }
 
 /* ================= OPTIONS HANDLING ================= */
@@ -768,8 +781,27 @@ const handleTextSelect = (e) => {
 }
 
 const applyTextStyle = (styleType, value) => {
-    if (!activeComponent.value || activeComponent.value.type !== 'text') return
+    if (!activeComponent.value || (activeComponent.value.type !== 'text' && activeComponent.value.type !== 'input' && activeComponent.value.type !== 'variable')) return
     
+    // Logic for Input and Variable components (they just use simple properties)
+    if (activeComponent.value.type === 'input' || activeComponent.value.type === 'variable') {
+        if (styleType === 'bold') {
+            activeComponent.value.fontWeight = activeComponent.value.fontWeight === 'bold' ? 'normal' : 'bold'
+        } else if (styleType === 'italic') {
+            activeComponent.value.fontStyle = activeComponent.value.fontStyle === 'italic' ? 'normal' : 'italic'
+        }
+        // Variable also supports underline/strikethrough via simple property
+        if (activeComponent.value.type === 'variable') {
+            if (styleType === 'underline') {
+                activeComponent.value.textDecoration = activeComponent.value.textDecoration === 'underline' ? 'none' : 'underline';
+            } else if (styleType === 'strikethrough') {
+                activeComponent.value.textDecoration = activeComponent.value.textDecoration === 'line-through' ? 'none' : 'line-through';
+            }
+        }
+        return;
+    }
+
+    // Default Text Logic
     if (styleType === 'bold') {
         activeComponent.value.fontWeight = value
     } else if (styleType === 'italic') {
@@ -976,7 +1008,8 @@ const updateSceneContentDisplay = () => {
             if (comp.type === 'image') indicator.classList.add('bg-green')
             else if (comp.type === 'text') indicator.classList.add('bg-blue')
             else if (comp.type === 'video') indicator.classList.add('bg-yellow')
-            else if (comp.type === 'input') indicator.classList.add('bg-purple') // NEW
+            else if (comp.type === 'input') indicator.classList.add('bg-purple') 
+            else if (comp.type === 'variable') indicator.classList.add('bg-orange') // NEW
             else if (comp.type === 'options') indicator.classList.add('bg-red') 
             
             if (comp.type !== 'options') {
@@ -1015,6 +1048,11 @@ const updateSceneContentDisplay = () => {
                 imgIconDiv.textContent = 'I' 
                 imgIconDiv.style.color = '#fff'
                 imgIconDiv.style.fontSize = '20px'
+                imgIconDiv.style.fontWeight = 'bold'
+            } else if (comp.type === 'variable') {
+                imgIconDiv.textContent = '{ }' 
+                imgIconDiv.style.color = '#fff'
+                imgIconDiv.style.fontSize = '16px'
                 imgIconDiv.style.fontWeight = 'bold'
             } else if (comp.type === 'options') {
                 imgIconDiv.textContent = '❖' 
@@ -1750,6 +1788,46 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         }
         ctx.translate(-screenPos.x, -screenPos.y)
     } 
+
+    // --- NEW: VARIABLE COMPONENT RENDER ---
+    else if (comp.type === 'variable') {
+        ctx.translate(screenPos.x, screenPos.y) 
+        
+        // Background
+        if (comp.backgroundColor && comp.backgroundColor !== 'transparent') {
+            ctx.fillStyle = comp.backgroundColor
+            if (comp.borderRadius > 0) { drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius); ctx.fill() } 
+            else { ctx.fillRect(-(comp.width/2), -(comp.height/2), comp.width, comp.height) }
+        }
+        // Border
+        if (comp.borderWidth > 0 && comp.borderColor !== 'transparent') {
+            ctx.strokeStyle = comp.borderColor; ctx.lineWidth = comp.borderWidth
+            if (comp.borderRadius > 0) { drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius); ctx.stroke() } 
+            else { ctx.strokeRect(-(comp.width/2), -(comp.height/2), comp.width, comp.height) }
+        }
+        
+        // Content
+        const fontWeight = comp.fontWeight || 'normal'; const fontStyle = comp.fontStyle || 'normal'; const fontFamily = comp.fontFamily || 'sans-serif'
+        ctx.font = `${fontStyle} ${fontWeight} ${comp.fontSize}px ${fontFamily}`; ctx.fillStyle = comp.color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+        
+        // Lookup Variable Value
+        const targetVar = globalVariables.value.find(v => v.id === comp.variableId);
+        // Default text if no var or if var has no value
+        let contentToDraw = targetVar ? String(targetVar.value) : (isPreviewMode.value ? "" : "{Variable}");
+        
+        if (animationOverride && animationOverride.type === 'typewriter') {
+            const progress = animationOverride.progress; const length = Math.floor(contentToDraw.length * progress); contentToDraw = contentToDraw.substring(0, length)
+        }
+        ctx.fillText(contentToDraw, 0, 0)
+        
+        if (comp.textDecoration === 'underline' || comp.textDecoration === 'line-through') {
+             const metrics = ctx.measureText(contentToDraw); const width = metrics.width
+             ctx.beginPath(); ctx.strokeStyle = comp.textDecorationColor || comp.color; ctx.lineWidth = comp.fontSize / 15
+             const yOffset = comp.textDecoration === 'underline' ? comp.fontSize/2 : 0; ctx.moveTo(-width/2, yOffset); ctx.lineTo(width/2, yOffset); ctx.stroke()
+        }
+        ctx.translate(-screenPos.x, -screenPos.y)
+    }
+
     
     // --- INPUT COMPONENT RENDER (Placeholder for Editor) ---
     else if (comp.type === 'input') {
@@ -1770,14 +1848,17 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         }
         
         // Placeholder Text
-        ctx.font = `${comp.fontSize}px ${comp.fontFamily}`;
+        ctx.font = `${comp.fontStyle} ${comp.fontWeight} ${comp.fontSize}px ${comp.fontFamily}`;
         ctx.fillStyle = '#ccc';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.fillText("Type here...", -(comp.width/2) + 10, 0);
+        ctx.fillText(comp.placeholderText || "Type here...", -(comp.width/2) + 10, 0);
         
-        // Draw Button Simulation (Right Side)
-        const btnWidth = 80;
+        // Calculate Button Width Dynamically based on text
+        ctx.font = `bold 14px sans-serif`;
+        const btnTextWidth = ctx.measureText(comp.buttonText).width;
+        const btnWidth = Math.max(60, btnTextWidth + 30); // 30px padding
+        
         const btnX = (comp.width/2) - btnWidth;
         const btnY = -(comp.height/2);
         
@@ -1787,7 +1868,6 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         
         ctx.fillStyle = comp.buttonTextColor;
         ctx.textAlign = 'center';
-        ctx.font = `bold 14px sans-serif`;
         ctx.fillText(comp.buttonText, btnX + btnWidth/2, 0);
 
         ctx.translate(-screenPos.x, -screenPos.y)
@@ -2847,7 +2927,6 @@ const advancePreview = () => {
     if (currentPreviewComponentIndex.value >= 0 && currentPreviewComponentIndex.value < components.length) {
          const currentComp = components[currentPreviewComponentIndex.value];
          if (currentComp.type === 'options') return; 
-         // NEW: Block advance if input is not submitted
          if (currentComp.type === 'input' && !currentComp.isSubmitted) return;
     }
 
@@ -3073,32 +3152,15 @@ const getPreviewLogicalCoords = (e) => {
 const getPreviewComponentStyle = (comp) => {
     if (!previewCanvasRef.value) return {};
     
-    // Calculate position same as canvas drawing
     const scale = previewScale.value;
-    const logicalW = previewCanvasRef.value.width / scale;
-    const logicalH = previewCanvasRef.value.height / scale;
-    const centerX = logicalW / 2;
-    const centerY = logicalH / 2;
+    const centerX = (previewCanvasRef.value.width / scale) / 2;
+    const centerY = (previewCanvasRef.value.height / scale) / 2;
     const pixelsPerUnit = 2;
     
     const screenX = centerX + (comp.x * pixelsPerUnit);
     const screenY = centerY - (comp.y * pixelsPerUnit);
     
-    // Convert to actual screen pixels (scaled)
-    // Canvas is scaled by `scale` via context, but DOM elements need CSS positioning
-    // Position relative to the .preview-overlay container (which is 100vw/100vh)
-    // We need to calculate where the logical coordinates land on the real screen.
-    
-    // Actually, simpler: The container is flex centered. The canvas has a specific width/height.
-    // We should position relative to the canvas if possible, or calculate offset.
-    // Best approach: Use percentage or precise calculation if wrapper matches canvas.
-    // Let's assume the overlay puts the canvas in center.
-    
     const rect = previewCanvasRef.value.getBoundingClientRect();
-    
-    // comp.x/y are in graph units.
-    // logical coordinates (0,0 at top-left of canvas content)
-    // screenX/screenY are logical pixels inside the scaled context.
     
     // Real screen pixels = (logical pixels * scale) + canvas offset
     const realX = (screenX * scale) + rect.left;
@@ -3152,7 +3214,10 @@ const onPreviewMouseMove = (e) => {
     }
 }
 
+// --- FIX: Prevent default canvas logic from firing on Inputs/Buttons ---
 const onPreviewMouseDown = (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+
     if (!isPreviewMode.value || !nodeScenes.value) return;
     const scene = nodeScenes.value[currentPreviewSceneIndex.value];
     if (!scene || !scene.components) return;
@@ -3165,7 +3230,10 @@ const onPreviewMouseDown = (e) => {
     }
 }
 
+// --- FIX: Prevent default canvas logic from firing on Inputs/Buttons ---
 const onPreviewMouseUp = (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+
     if (!isPreviewMode.value || !nodeScenes.value) return;
 
     const scene = nodeScenes.value[currentPreviewSceneIndex.value];
@@ -3753,6 +3821,11 @@ const onPreviewWheel = (e) => {
                              <span>Input Box</span>
                              <span style="font-size: 0.7rem; opacity: 0.8;">(Preview in Play Mode)</span>
                         </div>
+                        
+                        <div v-else-if="activeComponent.type === 'variable'" 
+                             style="color:white; font-size: 20px; text-align: center; border: 1px dashed #f97316; padding: 10px;">
+                             { Variable }
+                        </div>
 
                         <div v-else-if="activeComponent.type === 'options'" 
                             :style="{ width: '100px', height: '50px', border: '2px dashed #f87171', backgroundColor: 'rgba(31,41,55,0.5)', display: 'flex', alignItems:'center', justifyContent: 'center', color: '#f87171' }">
@@ -3770,6 +3843,72 @@ const onPreviewWheel = (e) => {
                         />
                         </div>
                         
+                        <div v-if="activeComponent.type === 'variable'">
+                            <div class="separator"></div>
+                            
+                            <div class="detail-section">
+                                <label class="detail-label" style="color: #f97316;">Variable Source</label>
+                                <select v-model="activeComponent.variableId" class="detail-input">
+                                    <option value="" disabled>Select Variable to Display</option>
+                                    <option v-for="v in globalVariables" :key="v.id" :value="v.id">
+                                        {{ v.name }} ({{ v.type }})
+                                    </option>
+                                </select>
+                            </div>
+                            
+                            <div class="detail-section">
+                                <label class="detail-label">Font Family:</label>
+                                <select v-model="activeComponent.fontFamily" class="detail-input" @change="drawComponents">
+                                    <option value="sans-serif">Sans Serif</option>
+                                    <option value="serif">Serif</option>
+                                    <option value="monospace">Monospace</option>
+                                    <option value="cursive">Cursive</option>
+                                    <option value="fantasy">Fantasy</option>
+                                </select>
+                            </div>
+                            <div class="detail-section">
+                                <label class="detail-label">Font Size:</label>
+                                <input type="number" v-model.number="activeComponent.fontSize" class="detail-input" @input="drawComponents" />
+                            </div>
+                            <div class="detail-section">
+                                <label class="detail-label">Text Color:</label>
+                                <div class="color-picker-container">
+                                    <input type="color" v-model="activeComponent.color" class="color-input" @input="drawComponents" />
+                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.color }"></div>
+                                </div>
+                            </div>
+                            <div class="detail-section">
+                                <div class="formatting-controls">
+                                    <button class="format-btn" @click="activeComponent.fontWeight = activeComponent.fontWeight === 'bold' ? 'normal' : 'bold'; drawComponents()" :class="{ active: activeComponent.fontWeight === 'bold' }" title="Bold">B</button>
+                                    <button class="format-btn" @click="activeComponent.fontStyle = activeComponent.fontStyle === 'italic' ? 'normal' : 'italic'; drawComponents()" :class="{ active: activeComponent.fontStyle === 'italic' }" title="Italic">I</button>
+                                    <button class="format-btn" @click="activeComponent.textDecoration = activeComponent.textDecoration === 'underline' ? 'none' : 'underline'; drawComponents()" :class="{ active: activeComponent.textDecoration === 'underline' }" title="Underline">U</button>
+                                    <button class="format-btn" @click="activeComponent.textDecoration = activeComponent.textDecoration === 'line-through' ? 'none' : 'line-through'; drawComponents()" :class="{ active: activeComponent.textDecoration === 'line-through' }" title="Strikethrough">S</button>
+                                </div>
+                            </div>
+                             <div class="detail-section">
+                                <label class="detail-label">Background Color:</label>
+                                <div class="color-picker-container">
+                                    <input type="color" v-model="activeComponent.backgroundColor" class="color-input" @input="drawComponents" />
+                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.backgroundColor }"></div>
+                                </div>
+                            </div>
+                            <div class="detail-section">
+                                <label class="detail-label">Border Color:</label>
+                                <div class="color-picker-container">
+                                    <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="drawComponents" />
+                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
+                                </div>
+                            </div>
+                            <div class="detail-section">
+                                <label class="detail-label">Border Width:</label>
+                                <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="drawComponents" />
+                            </div>
+                             <div class="detail-section">
+                                <label class="detail-label">Border Radius:</label>
+                                <input type="number" v-model.number="activeComponent.borderRadius" class="detail-input" @input="drawComponents" />
+                            </div>
+                        </div>
+
                         <div v-if="activeComponent.type === 'input'">
                             <div class="separator"></div>
                             
@@ -3783,6 +3922,30 @@ const onPreviewWheel = (e) => {
                                 </select>
                                 <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px;">
                                     User input will be validated against variable type.
+                                </div>
+                            </div>
+
+                            <div class="detail-section">
+                                <label class="detail-label" style="color: #a855f7;">Text Settings</label>
+                                <div class="detail-section">
+                                    <label class="detail-label">Placeholder:</label>
+                                    <input v-model="activeComponent.placeholderText" class="detail-input" @input="drawComponents" placeholder="e.g. Type here..." />
+                                </div>
+                                <div class="detail-section">
+                                    <label class="detail-label">Font Family:</label>
+                                    <select v-model="activeComponent.fontFamily" class="detail-input" @change="drawComponents">
+                                        <option value="sans-serif">Sans Serif</option>
+                                        <option value="serif">Serif</option>
+                                        <option value="monospace">Monospace</option>
+                                    </select>
+                                </div>
+                                <div class="detail-section">
+                                    <label class="detail-label">Font Size:</label>
+                                    <input type="number" v-model.number="activeComponent.fontSize" class="detail-input" @input="drawComponents" />
+                                </div>
+                                <div class="formatting-controls">
+                                    <button class="format-btn" @click="activeComponent.fontWeight = activeComponent.fontWeight === 'bold' ? 'normal' : 'bold'; drawComponents()" :class="{ active: activeComponent.fontWeight === 'bold' }" title="Bold">B</button>
+                                    <button class="format-btn" @click="activeComponent.fontStyle = activeComponent.fontStyle === 'italic' ? 'normal' : 'italic'; drawComponents()" :class="{ active: activeComponent.fontStyle === 'italic' }" title="Italic">I</button>
                                 </div>
                             </div>
 
@@ -4322,16 +4485,23 @@ const onPreviewWheel = (e) => {
              <div class="preview-dom-layer">
                 <template v-if="nodeScenes[currentPreviewSceneIndex]">
                     <div 
-                        v-for="comp in nodeScenes[currentPreviewSceneIndex].components"
+                        v-for="(comp, index) in nodeScenes[currentPreviewSceneIndex].components"
                         :key="comp.id"
                         class="preview-component-wrapper"
                         :style="getPreviewComponentStyle(comp)" 
                     >
-                        <div v-if="comp.type === 'input'" class="preview-input-group" :style="{ '--focus-bg': comp.focusBackgroundColor, '--focus-border': comp.focusBorderColor }">
+                        <div 
+                            v-if="comp.type === 'input' && index <= currentPreviewComponentIndex" 
+                            class="preview-input-group" 
+                            :style="{ 
+                                '--focus-bg': comp.focusBackgroundColor, 
+                                '--focus-border': comp.focusBorderColor 
+                            }"
+                        >
                             <input 
                                 v-model="comp.currentValue"
                                 :disabled="comp.isSubmitted"
-                                :placeholder="comp.isSubmitted ? '' : 'Type here...'"
+                                :placeholder="comp.isSubmitted ? '' : (comp.placeholderText || 'Type here...')"
                                 class="preview-real-input"
                                 :style="{ 
                                     backgroundColor: comp.backgroundColor, 
@@ -4340,8 +4510,12 @@ const onPreviewWheel = (e) => {
                                     borderWidth: comp.borderWidth + 'px',
                                     color: comp.textColor,
                                     fontFamily: comp.fontFamily,
-                                    fontSize: comp.fontSize + 'px'
+                                    fontSize: comp.fontSize + 'px',
+                                    fontWeight: comp.fontWeight,
+                                    fontStyle: comp.fontStyle
                                 }"
+                                @mousedown.stop
+                                @mouseup.stop
                             />
                             <button 
                                 class="preview-input-btn"
@@ -4350,11 +4524,11 @@ const onPreviewWheel = (e) => {
                                     backgroundColor: comp.isSubmitted ? '#10b981' : comp.buttonNormalColor,
                                     color: comp.buttonTextColor
                                 }"
-                                @click="handleInputSubmit(comp)"
+                                @click.stop="handleInputSubmit(comp)"
+                                @mousedown.stop="(e) => !comp.isSubmitted && (e.target.style.backgroundColor = comp.buttonClickColor)"
+                                @mouseup.stop="(e) => !comp.isSubmitted && (e.target.style.backgroundColor = comp.buttonHoverColor)"
                                 @mouseover="(e) => !comp.isSubmitted && (e.target.style.backgroundColor = comp.buttonHoverColor)"
                                 @mouseleave="(e) => !comp.isSubmitted && (e.target.style.backgroundColor = comp.buttonNormalColor)"
-                                @mousedown="(e) => !comp.isSubmitted && (e.target.style.backgroundColor = comp.buttonClickColor)"
-                                @mouseup="(e) => !comp.isSubmitted && (e.target.style.backgroundColor = comp.buttonHoverColor)"
                             >
                                 {{ comp.isSubmitted ? comp.buttonSubmittedText : comp.buttonText }}
                             </button>
@@ -5491,6 +5665,7 @@ const onPreviewWheel = (e) => {
   .hover-yellow:hover { background-color: rgba(234, 179, 8, 0.2); }
   .hover-red:hover { background-color: rgba(248, 113, 113, 0.2); } /* Red for options */
   .hover-purple:hover { background-color: rgba(168, 85, 247, 0.2); } /* Purple for input */
+  .hover-orange:hover { background-color: rgba(249, 115, 22, 0.2); } /* Orange for variables */
 
 
   /* Scene Content Body Styles */
@@ -5571,6 +5746,7 @@ const onPreviewWheel = (e) => {
   :deep(.bg-yellow) { background-color: #eab308; }
   :deep(.bg-red) { background-color: #f87171; } /* Red for options */
   :deep(.bg-purple) { background-color: #a855f7; } /* Purple for input */
+  :deep(.bg-orange) { background-color: #f97316; } /* Orange for variables */
 
   /* Drag Handle (New) */
   :deep(.image-drag-handle) {
@@ -5795,6 +5971,7 @@ const onPreviewWheel = (e) => {
       width: 100%;
       height: 100%;
       box-sizing: border-box;
+      pointer-events: auto; /* Ensure inputs are clickable */
   }
 
   .preview-real-input {
@@ -5806,6 +5983,7 @@ const onPreviewWheel = (e) => {
       border-bottom-right-radius: 0 !important;
       transition: all 0.2s;
       box-sizing: border-box;
+      cursor: text !important; /* Force I-beam cursor */
   }
 
   .preview-real-input:focus {
@@ -5817,7 +5995,7 @@ const onPreviewWheel = (e) => {
       height: 100%;
       padding: 0 20px;
       border: none;
-      cursor: pointer;
+      cursor: pointer !important; /* Force pointer cursor */
       font-weight: bold;
       border-top-right-radius: 4px;
       border-bottom-right-radius: 4px;
@@ -5826,10 +6004,12 @@ const onPreviewWheel = (e) => {
       display: flex;
       align-items: center;
       justify-content: center;
+      white-space: nowrap;
+      min-width: fit-content;
   }
   
   .preview-input-btn:disabled {
-      cursor: default;
+      cursor: default !important;
       opacity: 0.9;
   }
 
