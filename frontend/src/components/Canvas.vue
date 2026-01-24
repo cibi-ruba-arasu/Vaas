@@ -11,7 +11,7 @@ const token = localStorage.getItem("token")
 const menuOpen = ref(false)
 const toggleMenu = () => (menuOpen.value = !menuOpen.value)
 
-// --- Global Variables State ---
+/* ================= GLOBAL VARIABLES STATE ================= */
 const globalVariables = ref([])
 const isAddingVariable = ref(false)
 const newVarName = ref("")
@@ -43,11 +43,13 @@ const addGlobalVariable = () => {
     return
   }
 
+  // Strict check for initialization
+  if (value === "" || value === null || value === undefined) {
+      alert(`Please provide an initial value for the ${type}.`)
+      return
+  }
+
   if (type === 'integer') {
-      if (value === "" || value === null || value === undefined) {
-          alert("Integer variables must have an initial value.")
-          return
-      }
       if (isNaN(value)) {
           alert("Value must be a valid number.")
           return
@@ -60,8 +62,9 @@ const addGlobalVariable = () => {
   globalVariables.value.push({
     id: Date.now(),
     name: name,
-    value: value,
-    type: type
+    type: type,
+    value: value,        
+    defaultValue: value  
   })
 
   isAddingVariable.value = false
@@ -76,9 +79,94 @@ const deleteGlobalVariable = (id) => {
   }
 }
 
+/* ================= SET VARIABLE EDITOR STATE (MOVED UP) ================= */
+// These must be defined BEFORE the computed properties below use them
+const setVarId = ref("")
+const setVarOperator = ref("=")
+const setVarValueType = ref("constant") 
+const setVarValue = ref("")
+const setVarStringPrefix = ref("") 
+const setVarStringSuffix = ref("") 
+
+// --- Computed & Watchers relying on setVarId ---
+const availableOperators = computed(() => {
+    const v = globalVariables.value.find(g => g.id === setVarId.value);
+    if (v && v.type === 'string') {
+        return ['=', '+']; 
+    }
+    return ['=', '+', '-', '*', '/']; 
+});
+
+watch(setVarId, (newId) => {
+    const v = globalVariables.value.find(g => g.id === newId);
+    if (v && v.type === 'string' && setVarOperator.value !== '=' && setVarOperator.value !== '+') {
+        setVarOperator.value = '=';
+    }
+});
+
 // --- Project Settings State ---
 const showProjectSettings = ref(false)
-const rootNodeId = ref(null) 
+const rootNodeId = ref(null)
+
+const processLogicNode = (nodeStatus) => {
+   if (nodeStatus.node_type === 'Set Variables') {
+       // Find Target Variable in Global State
+       const targetVar = globalVariables.value.find(v => v.id === nodeStatus.varId);
+       
+       if (targetVar) {
+           // 1. INTEGER LOGIC
+           if (targetVar.type === 'integer') {
+               let operand = nodeStatus.varValue;
+               // Handle Variable-to-Variable math
+               if (nodeStatus.varValueType === 'variable') {
+                   const sourceVar = globalVariables.value.find(v => v.id === nodeStatus.varValue);
+                   operand = sourceVar ? sourceVar.value : 0;
+               }
+               
+               operand = Number(operand);
+               let current = Number(targetVar.value);
+               if (isNaN(current)) current = 0; // Safety
+               
+               if (!isNaN(operand)) {
+                   switch(nodeStatus.varOperator) {
+                       case '=': targetVar.value = operand; break;
+                       case '+': targetVar.value = current + operand; break;
+                       case '-': targetVar.value = current - operand; break;
+                       case '*': targetVar.value = current * operand; break;
+                       case '/': targetVar.value = current / operand; break;
+                   }
+               }
+           } 
+           // 2. STRING LOGIC
+           else if (targetVar.type === 'string') {
+               if (nodeStatus.varOperator === '=') {
+                   // Direct Assignment
+                   let newVal = nodeStatus.varValue;
+                   if (nodeStatus.varValueType === 'variable') {
+                        const sourceVar = globalVariables.value.find(v => v.id === nodeStatus.varValue);
+                        newVal = sourceVar ? sourceVar.value : "";
+                   }
+                   targetVar.value = String(newVal);
+               } 
+               else if (nodeStatus.varOperator === '+') {
+                   // String Concatenation: Prefix + CurrentValue + Suffix
+                   const prefix = nodeStatus.stringPrefix || "";
+                   const suffix = nodeStatus.stringSuffix || "";
+                   const currentVal = String(targetVar.value || "");
+                   
+                   targetVar.value = prefix + currentVal + suffix;
+               }
+           }
+           console.log(`[Logic Executed] Variable '${targetVar.name}' is now:`, targetVar.value);
+       }
+       
+       // Return the ID of the node this Logic Node connects to
+       return nodeStatus.Next; 
+   } 
+   
+   // Future logic nodes (If-Else) would go here
+   return null; 
+}
 
 const toggleProjectSettings = () => {
   showProjectSettings.value = !showProjectSettings.value
@@ -450,11 +538,6 @@ const hoveredSceneId = ref(null)
 const selectedScene = ref(null) 
 const viewMode = ref('scenes') 
 
-/* ================= NEW: SET VARIABLE EDITOR STATE ================= */
-const setVarId = ref("")
-const setVarOperator = ref("=")
-const setVarValueType = ref("constant") 
-const setVarValue = ref("")
 
 /* ================= CONSTANT UPDATE WATCHERS ================= */
 watch(sequenceAudio, () => {
@@ -628,24 +711,33 @@ const addInputComponent = () => {
 const handleInputSubmit = (comp) => {
     if (comp.isSubmitted) return;
     
+    // Validate Variable
     const targetVar = globalVariables.value.find(v => v.id === comp.targetVariableId);
     let val = comp.currentValue;
 
+    // Type Check
     if (targetVar) {
         if (targetVar.type === 'integer') {
-            if (isNaN(val) || val.trim() === '') {
+            // FIX: Check if value is valid without using .trim() on a potential number
+            if (val === '' || val === null || val === undefined || isNaN(Number(val))) {
                 alert("Please enter a valid number.");
                 return;
             }
             val = Number(val);
         }
+        // Assign to Global State
         targetVar.value = val;
+        
+        // Console Log
         console.log(`Variable '${targetVar.name}' assigned value:`, val);
     } else {
         console.log("Input submitted but no variable assigned. Value:", val);
     }
 
+    // Update Component State
     comp.isSubmitted = true;
+    
+    // Advance Sequence
     advancePreview();
 }
 
@@ -1415,6 +1507,16 @@ const openPopup = node => {
   activeComponent.value = null 
   
   const nodeStatus = Canvas_Status.value.find(s => s.index === node.id)
+  if (nodeStatus.node_type === 'Set Variables') {
+         viewMode.value = 'setVariables'
+         setVarId.value = nodeStatus.varId || ""
+         setVarOperator.value = nodeStatus.varOperator || "="
+         setVarValueType.value = nodeStatus.varValueType || "constant"
+         setVarValue.value = nodeStatus.varValue || ""
+         // Load new fields
+         setVarStringPrefix.value = nodeStatus.stringPrefix || ""
+         setVarStringSuffix.value = nodeStatus.stringSuffix || ""
+    }
   if (nodeStatus) {
     if (!nodeStatus.Node_name) {
       nodeStatus.Node_name = `Node ${node.id}`
@@ -1470,8 +1572,20 @@ const openPopup = node => {
 
 // Animation Loop
 const startRenderLoop = () => {
+  // FIX 1: Prevent duplicate loops
+  if (animationFrameId) return; 
+
   const loop = () => {
-    if (showPopup.value && (viewMode.value === 'scenes' || viewMode.value === 'sceneDetails' || viewMode.value === 'componentEditor')) {
+    // Stop loop if neither Editor nor Preview is active
+    if (!showPopup.value && !isPreviewMode.value) {
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId)
+            animationFrameId = null
+        }
+        return
+    }
+
+    if (showPopup.value) {
         drawComponents()
     }
     if (isPreviewMode.value) {
@@ -1495,6 +1609,18 @@ const closePopup = () => {
           status.varOperator = setVarOperator.value
           status.varValueType = setVarValueType.value
           status.varValue = setVarValue.value
+      }
+  }
+  if (popupNode.value) {
+      const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
+      if (status && status.node_type === 'Set Variables') {
+          status.varId = setVarId.value
+          status.varOperator = setVarOperator.value
+          status.varValueType = setVarValueType.value
+          status.varValue = setVarValue.value
+          // Save new fields
+          status.stringPrefix = setVarStringPrefix.value
+          status.stringSuffix = setVarStringSuffix.value
       }
   }
 
@@ -2805,6 +2931,29 @@ watch(showPopup, (newVal) => {
   }
 })
 
+const resetComponentsRuntimeState = (scenes) => {
+    scenes.forEach(scene => {
+        if (scene.components) {
+            scene.components.forEach(comp => {
+                // Reset Input Component
+                if (comp.type === 'input') {
+                    comp.currentValue = '';
+                    comp.isSubmitted = false;
+                }
+                // Reset Options Component
+                if (comp.type === 'options') {
+                    comp._hoveredOptionIndex = -1;
+                    comp._clickedOptionIndex = -1;
+                }
+                // Reset Video Component
+                if (comp.type === 'video' && comp.videoElement) {
+                    comp.videoElement.currentTime = 0;
+                }
+            })
+        }
+    })
+}
+
 /* ================= PREVIEW LOGIC ================= */
 const startPreview = () => {
     if (nodeScenes.value.length === 0) {
@@ -2814,29 +2963,15 @@ const startPreview = () => {
 
     stopAllVideos();
 
+    // --- FIX: Reset Component Runtime State (Inputs, etc.) ---
+    resetComponentsRuntimeState(nodeScenes.value);
+
     isPreviewMode.value = true
     currentPreviewSceneIndex.value = 0
     currentPreviewComponentIndex.value = -1 
     
     // Reset timer logic
     componentStartTime.value = 0; 
-    
-    // Clear leftover interaction state
-    nodeScenes.value.forEach(scene => {
-         if(scene.components) {
-             scene.components.forEach(comp => {
-                 if(comp.type === 'options') {
-                     comp._hoveredOptionIndex = -1;
-                     comp._clickedOptionIndex = -1;
-                 }
-                 // Reset input components
-                 if(comp.type === 'input') {
-                     comp.isSubmitted = false;
-                     comp.currentValue = '';
-                 }
-             })
-         }
-    });
 
     if (sequenceAudio.value && sequenceAudio.value.url) {
         previewAudioElement.value = new Audio(sequenceAudio.value.url)
@@ -2867,6 +3002,8 @@ const initializePreviewCanvas = () => {
     previewCtx = previewCanvasRef.value.getContext('2d')
     resizePreviewCanvas()
     drawPreview()
+    // FIX 3: Ensure loop is running (safe due to the check in startRenderLoop)
+    startRenderLoop() 
 }
 
 const resizePreviewCanvas = () => {
@@ -3125,7 +3262,24 @@ const exitPreview = () => {
         previewAudioElement.value = null
     }
     stopAllVideos();
+    
+    // --- NEW: Reset Global Variables to Default ---
+    globalVariables.value.forEach(v => {
+        v.value = v.defaultValue
+    })
+    
     isPreviewMode.value = false
+    isSceneExiting.value = false;
+}
+
+const getInputType = (comp) => {
+    if (comp.type !== 'input') return 'text';
+    const targetVar = globalVariables.value.find(v => v.id === comp.targetVariableId);
+    // If mapped to an integer variable, force number input to prevent letters
+    if (targetVar && targetVar.type === 'integer') {
+        return 'number';
+    }
+    return 'text';
 }
 
 // --- PREVIEW MOUSE EVENT HANDLERS FOR CLICKABLE OPTIONS ---
@@ -3280,9 +3434,40 @@ const handleOptionNavigation = (compId, optionId) => {
 }
 
 const loadNodeForPreview = (targetNodeId) => {
-    const targetStatus = Canvas_Status.value.find(s => s.index === targetNodeId);
-    if (!targetStatus) {
-        alert("Error: Target node data not found.");
+    // 1. Recursive Logic Processing Loop
+    let currentId = targetNodeId;
+    let currentStatus = Canvas_Status.value.find(s => s.index === currentId);
+    let safetyCounter = 0;
+
+    // While we have a node, and that node is a "Logic" node (not visual)
+    while (currentStatus && (currentStatus.node_type === 'Set Variables')) {
+        
+        // Infinite loop protection
+        if (safetyCounter > 50) {
+            alert("Error: Infinite loop detected in logic nodes.");
+            exitPreview();
+            return;
+        }
+
+        // EXECUTE THE LOGIC IMMEDIATELY
+        const nextId = processLogicNode(currentStatus);
+
+        // Check if the logic node leads to a dead end
+        if (nextId === null || nextId === undefined) {
+            alert("Flow ended at a Set Variable node with no output connection.");
+            exitPreview();
+            return;
+        }
+
+        // Move to the next node
+        currentId = nextId;
+        currentStatus = Canvas_Status.value.find(s => s.index === currentId);
+        safetyCounter++;
+    }
+
+    // 2. We found a Visual Node (General). Render it.
+    if (!currentStatus) {
+        alert("Error: Target node not found.");
         exitPreview();
         return;
     }
@@ -3295,19 +3480,22 @@ const loadNodeForPreview = (targetNodeId) => {
         previewAudioElement.value = null;
     }
 
-    const realNode = nodes.value.find(n => n.id === targetNodeId);
-    popupNode.value = realNode || { id: targetNodeId, x: 0, y: 0 }; 
+    // Update PopupNode to the visual node we eventually found
+    const realNode = nodes.value.find(n => n.id === currentId);
+    popupNode.value = realNode || { id: currentId, x: 0, y: 0 }; 
 
-    if (targetStatus.scenes) {
-      nodeScenes.value = targetStatus.scenes.map(s => ({
+    // Load scenes for the visual node
+    if (currentStatus.scenes) {
+      nodeScenes.value = currentStatus.scenes.map(s => ({
           ...s,
           components: s.components ? [...s.components] : [] 
       }))
+      resetComponentsRuntimeState(nodeScenes.value);
     } else {
       nodeScenes.value = [];
     }
 
-    sequenceAudio.value = targetStatus.audio || null;
+    sequenceAudio.value = currentStatus.audio || null;
     if (sequenceAudio.value && sequenceAudio.value.url) {
         previewAudioElement.value = new Audio(sequenceAudio.value.url);
         previewAudioElement.value.volume = sequenceAudio.value.volume || 1.0;
@@ -3321,12 +3509,12 @@ const loadNodeForPreview = (targetNodeId) => {
     
     nextTick(() => {
         if (!previewCanvasRef.value) return;
-        
         previewCtx = previewCanvasRef.value.getContext('2d');
-        
         resizePreviewCanvas();
         drawPreview();
+        startRenderLoop(); // Ensure loop runs
 
+        // Auto-render first component of the new visual node if set
         const firstScene = nodeScenes.value[0]
         if (firstScene && firstScene.components && firstScene.components.length > 0) {
             if (firstScene.components[0].autoRender) {
@@ -4397,56 +4585,82 @@ const onPreviewWheel = (e) => {
                             <div class="logic-group small">
                                 <label>Operator</label>
                                 <select v-model="setVarOperator" class="logic-select operator">
-                                    <option value="=">=</option>
-                                    <option value="+">+</option>
-                                    <option value="-">-</option>
-                                    <option value="*">x</option>
-                                    <option value="/">/</option>
+                                    <option v-for="op in availableOperators" :key="op" :value="op">{{ op }}</option>
                                 </select>
                             </div>
 
                             <div class="logic-group large">
-                                <div class="value-type-toggle">
-                                    <label>Value Source:</label>
-                                    <div class="toggle-buttons">
-                                        <button 
-                                            :class="{ active: setVarValueType === 'constant' }" 
-                                            @click="setVarValueType = 'constant'"
-                                        >Number</button>
-                                        <button 
-                                            :class="{ active: setVarValueType === 'variable' }" 
-                                            @click="setVarValueType = 'variable'"
-                                        >Variable</button>
+                                <template v-if="setVarOperator === '+' && globalVariables.find(v => v.id === setVarId)?.type === 'string'">
+                                    <div class="string-concat-ui">
+                                        <div class="concat-row">
+                                            <label>Before string (Prefix)</label>
+                                            <input v-model="setVarStringPrefix" class="logic-input" placeholder="e.g. Hello " />
+                                        </div>
+                                        
+                                        <div class="var-badge-display">
+                                            &lt; {{ globalVariables.find(v => v.id === setVarId)?.name }} &gt;
+                                        </div>
+                                        
+                                        <div class="concat-row">
+                                            <label>After string (Suffix)</label>
+                                            <input v-model="setVarStringSuffix" class="logic-input" placeholder="e.g.  Wadup" />
+                                        </div>
                                     </div>
-                                </div>
+                                </template>
                                 
-                                <div v-if="setVarValueType === 'constant'">
-                                    <input 
-                                        type="number" 
-                                        v-model="setVarValue" 
-                                        class="logic-input" 
-                                        placeholder="Enter number..."
-                                    />
-                                </div>
-                                <div v-else>
-                                    <select v-model="setVarValue" class="logic-select">
-                                        <option value="" disabled>Select Source Variable</option>
-                                        <option v-for="v in globalVariables" :key="v.id" :value="v.id">
-                                            {{ v.name }}
-                                        </option>
-                                    </select>
-                                </div>
+                                <template v-else>
+                                    <div class="value-type-toggle">
+                                        <label>Value Source:</label>
+                                        <div class="toggle-buttons">
+                                            <button 
+                                                :class="{ active: setVarValueType === 'constant' }" 
+                                                @click="setVarValueType = 'constant'"
+                                            >Value</button>
+                                            <button 
+                                                :class="{ active: setVarValueType === 'variable' }" 
+                                                @click="setVarValueType = 'variable'"
+                                            >Variable</button>
+                                        </div>
+                                    </div>
+                                    
+                                    <div v-if="setVarValueType === 'constant'">
+                                        <input 
+                                            :type="globalVariables.find(v => v.id === setVarId)?.type === 'integer' ? 'number' : 'text'"
+                                            v-model="setVarValue" 
+                                            class="logic-input" 
+                                            placeholder="Enter value..."
+                                        />
+                                    </div>
+                                    <div v-else>
+                                        <select v-model="setVarValue" class="logic-select">
+                                            <option value="" disabled>Select Source Variable</option>
+                                            <option v-for="v in globalVariables" :key="v.id" :value="v.id">
+                                                {{ v.name }}
+                                            </option>
+                                        </select>
+                                    </div>
+                                </template>
                             </div>
 
                         </div>
 
                         <div class="preview-equation">
                             <span class="eq-part target">{{ globalVariables.find(v => v.id === setVarId)?.name || '?' }}</span>
-                            <span class="eq-part op">{{ setVarOperator }}</span>
-                            <span class="eq-part value">
-                                <template v-if="setVarValueType === 'constant'">{{ setVarValue || '0' }}</template>
-                                <template v-else>{{ globalVariables.find(v => v.id === setVarValue)?.name || '?' }}</template>
-                            </span>
+                            <span class="eq-part op">=</span>
+                            
+                            <template v-if="setVarOperator === '+' && globalVariables.find(v => v.id === setVarId)?.type === 'string'">
+                                <span class="eq-part value" v-if="setVarStringPrefix">"{{ setVarStringPrefix }}" + </span>
+                                <span class="eq-part target">{{ globalVariables.find(v => v.id === setVarId)?.name }}</span>
+                                <span class="eq-part value" v-if="setVarStringSuffix"> + "{{ setVarStringSuffix }}"</span>
+                            </template>
+                            
+                            <template v-else>
+                                <span class="eq-part target" v-if="setVarOperator !== '='">{{ globalVariables.find(v => v.id === setVarId)?.name }} {{ setVarOperator }}</span>
+                                <span class="eq-part value">
+                                    <template v-if="setVarValueType === 'constant'">{{ setVarValue || '...' }}</template>
+                                    <template v-else>{{ globalVariables.find(v => v.id === setVarValue)?.name || '?' }}</template>
+                                </span>
+                            </template>
                         </div>
 
                     </div>
@@ -4499,6 +4713,7 @@ const onPreviewWheel = (e) => {
                             }"
                         >
                             <input 
+                                :type="getInputType(comp)"
                                 v-model="comp.currentValue"
                                 :disabled="comp.isSubmitted"
                                 :placeholder="comp.isSubmitted ? '' : (comp.placeholderText || 'Type here...')"
@@ -6350,5 +6565,36 @@ const onPreviewWheel = (e) => {
       color: #00ff88;
       background: rgba(0,255,136,0.1);
   }
+  /* NEW: String Concatenation UI Styles */
+.string-concat-ui {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: rgba(0,0,0,0.2);
+    padding: 10px;
+    border-radius: 6px;
+}
 
+.concat-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.concat-row label {
+    font-size: 0.75rem;
+    color: #9ca3af;
+}
+
+.var-badge-display {
+    background: rgba(139, 92, 246, 0.15);
+    border: 1px dashed rgba(139, 92, 246, 0.5);
+    color: #a78bfa;
+    padding: 6px;
+    text-align: center;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.9rem;
+    font-weight: bold;
+}
 </style>
