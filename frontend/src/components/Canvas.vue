@@ -16,30 +16,59 @@ const globalVariables = ref([])
 const isAddingVariable = ref(false)
 const newVarName = ref("")
 const newVarValue = ref("")
+const newVarType = ref("string") // 'string' or 'integer'
+
+// --- SYNC VARIABLES TO CANVAS STATUS ---
+watch(globalVariables, (newVars) => {
+    Canvas_Status.value.globalVariables = newVars
+}, { deep: true })
 
 const toggleAddVariable = () => {
   isAddingVariable.value = !isAddingVariable.value
   newVarName.value = ""
   newVarValue.value = ""
+  newVarType.value = "string"
 }
 
 const addGlobalVariable = () => {
-  if (!newVarName.value.trim()) {
+  const name = newVarName.value.trim()
+  const type = newVarType.value
+  let value = newVarValue.value
+
+  if (!name) {
     alert("Variable name is required")
     return
   }
-  if (globalVariables.value.some(v => v.name === newVarName.value.trim())) {
+  if (globalVariables.value.some(v => v.name === name)) {
     alert("Variable name already exists")
     return
   }
+
+  if (type === 'integer') {
+      if (value === "" || value === null || value === undefined) {
+          alert("Integer variables must have an initial value.")
+          return
+      }
+      if (isNaN(value)) {
+          alert("Value must be a valid number.")
+          return
+      }
+      value = Number(value)
+  } else {
+      value = String(value) 
+  }
+
   globalVariables.value.push({
     id: Date.now(),
-    name: newVarName.value.trim(),
-    value: newVarValue.value
+    name: name,
+    value: value,
+    type: type
   })
+
   isAddingVariable.value = false
   newVarName.value = ""
   newVarValue.value = ""
+  newVarType.value = "string"
 }
 
 const deleteGlobalVariable = (id) => {
@@ -48,31 +77,27 @@ const deleteGlobalVariable = (id) => {
   }
 }
 
-// --- NEW: Project Settings State ---
+// --- Project Settings State ---
 const showProjectSettings = ref(false)
-const rootNodeId = ref(null) // Stores the ID of the starting node
+const rootNodeId = ref(null) 
 
 const toggleProjectSettings = () => {
   showProjectSettings.value = !showProjectSettings.value
 }
 
-// --- UPDATED: Computed property to filter Root Nodes ---
 const availableRootNodes = computed(() => {
   return Canvas_Status.value.filter(n => n.node_type === 'General')
 })
 
-// --- NEW: Play Project Logic ---
+// --- Play Project Logic ---
 const playProjectFromRoot = () => {
   if (rootNodeId.value === null || rootNodeId.value === "") {
     alert("Please set a Root Node (Starting Point) in the Project Settings first.")
-    showProjectSettings.value = true // Auto-open settings
+    showProjectSettings.value = true 
     return
   }
   
-  // Convert to number just in case the select value is a string
   const targetId = Number(rootNodeId.value)
-  
-  // Check if node exists
   const status = Canvas_Status.value.find(s => s.index === targetId)
   if (!status) {
       alert("The selected Root Node no longer exists.")
@@ -80,7 +105,6 @@ const playProjectFromRoot = () => {
       return
   }
 
-  // Reuse the existing preview loader to start the game loop
   loadNodeForPreview(targetId)
 }
 
@@ -120,7 +144,7 @@ let mouseWorld = { x: 0, y: 0 }
 /* ================= NODES ================= */
 const nodes = ref([])
 const selectedNodeId = ref(null)
-const Canvas_Status = ref([]) // THE MASTER ARRAY
+const Canvas_Status = ref([]) 
 const editingNodeName = ref("") 
 const showContextMenu = ref(false)
 const contextMenuPos = ref({ x: 0, y: 0 })
@@ -129,15 +153,15 @@ const contextMenuTargetNode = ref(null)
 let draggingNode = null
 let dragOffset = { x: 0, y: 0 }
 let menuDragging = false
-let draggedType = "General" // NEW: Tracks which type of node is being dragged from menu
+let draggedType = "General" 
 
 const NODE_W = 180
-const NODE_H = 110 // Base Height
+const NODE_H = 110 
 const HEADER_H = 28
 const NODE_RADIUS = 12
 const ARROW_OFFSET = 14
 const ARROW_HIT_R = 10
-const OPTION_ROW_H = 30 // Height per option row
+const OPTION_ROW_H = 30 
 
 let hoveredArrow = null
 let connectingLine = null 
@@ -158,7 +182,7 @@ const previewAudioElement = ref(null)
 const previewScale = ref(1) 
 
 // ANIMATION STATE
-const componentStartTime = ref(0) // Timestamp when the current component started rendering
+const componentStartTime = ref(0) 
 
 /* ================= GRAPH SETTINGS ================= */
 const graphCanvasRef = ref(null)
@@ -217,7 +241,6 @@ const handleAudioUpload = (event) => {
     loop: true   
   }
 
-  // Triggered by watcher, but call explicit to be safe
   updateNodeAudioInStatus()
   event.target.value = ''
 }
@@ -229,17 +252,14 @@ const removeAudio = (e) => {
 }
 
 const onContextMenu = (e) => {
-  // Calculate World Coords to find if a node was clicked
   const w = screenToWorld(e.clientX, e.clientY)
   const hitNode = getNodeAt(w.x, w.y)
 
   if (hitNode) {
-    // Save target and show menu at mouse position
     contextMenuTargetNode.value = hitNode
     contextMenuPos.value = { x: e.clientX, y: e.clientY }
     showContextMenu.value = true
   } else {
-    // If clicked on empty space, hide menu
     showContextMenu.value = false
   }
 }
@@ -253,7 +273,6 @@ const deleteTargetNode = () => {
         return;
     }
 
-    // 1. Remove references TO this node (Incoming links from other nodes)
     Canvas_Status.value.forEach(node => {
         if (node.Next === id) node.Next = null;
         if (node.NextTrue === id) node.NextTrue = null;
@@ -265,14 +284,12 @@ const deleteTargetNode = () => {
         }
     });
 
-    // 2. Remove the node itself
     nodes.value = nodes.value.filter(n => n.id !== id);
     Canvas_Status.value = Canvas_Status.value.filter(n => n.index !== id);
 
-    // 3. Reset UI & Redraw
     showContextMenu.value = false;
     contextMenuTargetNode.value = null;
-    selectedNodeId.value = null; // Deselect if it was selected
+    selectedNodeId.value = null; 
     draw();
 }
 
@@ -280,7 +297,6 @@ const removeTargetLinks = () => {
     if (!contextMenuTargetNode.value) return;
     const id = contextMenuTargetNode.value.id;
 
-    // 1. Clear Outgoing Links (From this node)
     const status = Canvas_Status.value.find(n => n.index === id);
     if (status) {
         status.Next = null;
@@ -291,7 +307,6 @@ const removeTargetLinks = () => {
         }
     }
 
-    // 2. Clear Incoming Links (To this node from others) - Optional, but recommended for "Remove ALL links"
     Canvas_Status.value.forEach(node => {
         if (node.Next === id) node.Next = null;
         if (node.NextTrue === id) node.NextTrue = null;
@@ -312,18 +327,16 @@ const updateAudioProperties = () => {
 }
 
 const calculateOptionsLayout = (comp, ctx) => {
-    // Default styles for measurement
     const style = comp.styles?.normal || {};
     const fontSize = style.fontSize || 16;
     const fontFamily = style.fontFamily || 'sans-serif';
     ctx.font = `${fontSize}px ${fontFamily}`;
 
-    const paddingX = 12; // Horizontal padding inside button
-    const paddingY = 8;  // Vertical padding inside button
-    const gap = 10;      // Gap between buttons
-    const boxPadding = 10; // Padding inside the main options box
+    const paddingX = 12; 
+    const paddingY = 8;  
+    const gap = 10;      
+    const boxPadding = 10; 
     
-    // Start drawing from top-left of the box (relative to center)
     let currentX = -comp.width / 2 + boxPadding;
     let currentY = -comp.height / 2 + boxPadding;
     
@@ -339,12 +352,9 @@ const calculateOptionsLayout = (comp, ctx) => {
         if (btnW > maxButtonWidth) maxButtonWidth = btnW;
         if (btnH > rowHeight) rowHeight = btnH;
 
-        // Check if button fits in current row, else wrap
-        // We check if currentX + btnW exceeds the right edge (minus padding)
         const rightEdge = comp.width / 2 - boxPadding;
         
         if (currentX + btnW > rightEdge && currentX !== (-comp.width / 2 + boxPadding)) {
-            // Move to next line
             currentX = -comp.width / 2 + boxPadding;
             currentY += rowHeight + gap;
         }
@@ -358,38 +368,22 @@ const calculateOptionsLayout = (comp, ctx) => {
             h: btnH
         });
 
-        // Advance X
         currentX += btnW + gap;
     });
 
-    // Total content height is the bottom of the last button minus the top of the box
-    // Note: We add rowHeight to the last currentY to get the bottom edge
     const totalContentHeight = (currentY + rowHeight + boxPadding) - (-comp.height / 2);
 
     return { buttons, totalContentHeight, maxButtonWidth };
 }
 
-// 2. New Helper: Centralized Hit Testing for Options
 const getOptionAtPosition = (comp, localX, localY, ctx) => {
     const layout = calculateOptionsLayout(comp, ctx);
     const scrollY = comp.scrollY || 0;
-
-    // Adjust local mouse Y by the scroll amount (inverse logic)
-    // If we scrolled down 50px, the content moved up 50px.
-    // So a click at Y=10 maps to content at Y=10 + 50
-    const contentY = localY; 
-
-    // Find intersecting button
-    // Note: layout.buttons coordinates are relative to the box center (0,0 is center)
-    // localX/localY passed in are also relative to center
-    // However, we render with a scroll offset: drawY = btn.y - scrollY
-    // So we check: is mouse within (btn.y - scrollY) and (btn.y - scrollY + h)
     
     for (let i = 0; i < layout.buttons.length; i++) {
         const btn = layout.buttons[i];
         const drawY = btn.y - scrollY;
         
-        // Check Bounds
         if (localX >= btn.x && localX <= btn.x + btn.w &&
             localY >= drawY && localY <= drawY + btn.h) {
             return { index: i, id: btn.id };
@@ -405,7 +399,6 @@ const updateNodeAudioInStatus = () => {
     if (nodeStatusIndex !== -1) {
         Canvas_Status.value[nodeStatusIndex].audio = sequenceAudio.value
     } else {
-        // Create if missing (edge case)
         Canvas_Status.value.push({ 
             index: popupNode.value.id, 
             x: popupNode.value.x, 
@@ -422,7 +415,6 @@ const updateNodeAudioInStatus = () => {
     }
 }
 
-/* ================= SYNC OPTIONS TO CANVAS STATUS ================= */
 const updateNodeOptionsInStatus = () => {
     if (!popupNode.value) return
     const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
@@ -437,7 +429,6 @@ const updateNodeOptionsInStatus = () => {
     const lastScene = scenes[scenes.length - 1]
     let comps = lastScene.components || []
     
-    // If we are currently editing the last scene, use the live sceneComponents
     if (selectedScene.value && selectedScene.value.id === lastScene.id) {
         comps = sceneComponents.value
     }
@@ -458,44 +449,37 @@ const updateNodeOptionsInStatus = () => {
         status.options = []
     }
     
-    draw() // Redraw graph to show/hide arrow connection points
+    draw() 
 }
 
 /* ================= SCENES MANAGEMENT ================= */
 const nodeScenes = ref([]) 
 const hoveredSceneId = ref(null) 
 const selectedScene = ref(null) 
-const viewMode = ref('scenes') // 'scenes', 'sceneDetails', 'componentEditor', 'setVariables', 'ifElse'
+const viewMode = ref('scenes') 
 
 /* ================= NEW: SET VARIABLE EDITOR STATE ================= */
 const setVarId = ref("")
 const setVarOperator = ref("=")
-const setVarValueType = ref("constant") // 'constant' or 'variable'
+const setVarValueType = ref("constant") 
 const setVarValue = ref("")
 
 /* ================= CONSTANT UPDATE WATCHERS ================= */
-// 1. Watch Sequence Audio
 watch(sequenceAudio, () => {
     updateNodeAudioInStatus()
 }, { deep: true })
 
-// 2. Watch Scene Components (The active editor)
 watch(sceneComponents, (newVal) => {
     if (selectedScene.value) {
-        // Find the scene in nodeScenes and update its components array
         const idx = nodeScenes.value.findIndex(s => s.id === selectedScene.value.id)
         if (idx !== -1) {
-            // Update the local manifest of scenes
             nodeScenes.value[idx].components = [...newVal]
-            // This will trigger the 'nodeScenes' watcher below
         }
     }
 }, { deep: true })
 
-// 3. Watch Node Scenes (The list of scenes for the current node)
 watch(nodeScenes, () => {
     updateNodeScenesInStatus()
-    // Also check options because options depend on the components of the last scene
     updateNodeOptionsInStatus() 
 }, { deep: true })
 
@@ -505,6 +489,7 @@ const addDropdownOptions = [
   { id: 'image', label: 'Image', colorClass: 'hover-green' },
   { id: 'text', label: 'Text', colorClass: 'hover-blue' },
   { id: 'video', label: 'Video', colorClass: 'hover-yellow' },
+  { id: 'input', label: 'Input Box', colorClass: 'hover-purple' }, // NEW INPUT OPTION
   { id: 'options', label: 'Options', colorClass: 'hover-red' } 
 ]
 
@@ -513,7 +498,6 @@ const toggleAddDropdown = () => {
 }
 
 const selectAddOption = (option) => {
-  // Logic to prevent adding options if not the last scene or if options exist
   const isLastScene = selectedScene.value && nodeScenes.value.length > 0 && selectedScene.value.id === nodeScenes.value[nodeScenes.value.length - 1].id;
 
   if (option.id === 'options') {
@@ -535,12 +519,121 @@ const selectAddOption = (option) => {
     addTextComponent()
   } else if (option.id === 'video') {
     videoInputRef.value.click() 
+  } else if (option.id === 'input') {
+    addInputComponent() // NEW HANDLER
   }
   showAddDropdown.value = false
 }
 
 const closeAddDropdown = () => {
   showAddDropdown.value = false
+}
+
+/* ================= INPUT BOX HANDLING ================= */
+const addInputComponent = () => {
+    const newInput = {
+        id: Date.now(),
+        type: 'input',
+        name: 'Input Box',
+        x: 0,
+        y: 0,
+        width: 300,
+        height: 60,
+        rotation: 0,
+        
+        // Styles
+        backgroundColor: '#ffffff',
+        borderColor: '#9ca3af',
+        borderRadius: 4,
+        borderWidth: 1,
+        textColor: '#000000',
+        fontFamily: 'sans-serif',
+        fontSize: 16,
+        
+        // Focus Styles
+        focusBackgroundColor: '#ffffff',
+        focusBorderColor: '#00ff88',
+        
+        // Button Styles
+        buttonText: 'Submit',
+        buttonSubmittedText: 'Sent',
+        buttonNormalColor: '#3b82f6',
+        buttonHoverColor: '#2563eb',
+        buttonClickColor: '#1d4ed8',
+        buttonTextColor: '#ffffff',
+        
+        // Logic
+        targetVariableId: '', // ID of the global variable to assign
+        currentValue: '', // Holds temp value
+        isSubmitted: false, // Flag to disable
+        
+        renderWhileClicked: true,
+        autoRender: false,
+        animationType: 'fade',
+        animationDuration: 1.0
+    }
+    
+    // Insert before options if exists, otherwise push
+    const optionsIndex = sceneComponents.value.findIndex(c => c.type === 'options');
+    if (optionsIndex !== -1) {
+        sceneComponents.value.splice(optionsIndex, 0, newInput);
+    } else {
+        sceneComponents.value.push(newInput);
+    }
+    
+    updateSceneContentDisplay()
+    drawComponents()
+}
+
+// Logic to handle input submission in Preview Mode
+const handleInputSubmit = (comp) => {
+    if (comp.isSubmitted) return;
+    
+    // 1. Validate Variable
+    if (!comp.targetVariableId) {
+        console.warn("No variable assigned to this input.");
+        // Proceeding purely for visual flow, or stop? Let's proceed but warn.
+    }
+    
+    const targetVar = globalVariables.value.find(v => v.id === comp.targetVariableId);
+    let val = comp.currentValue;
+
+    // 2. Type Check
+    if (targetVar) {
+        if (targetVar.type === 'integer') {
+            if (isNaN(val) || val.trim() === '') {
+                alert("Please enter a valid number.");
+                return;
+            }
+            val = Number(val);
+        }
+        // Assign to Global State
+        targetVar.value = val;
+        
+        // 3. Console Log
+        console.log(`Variable '${targetVar.name}' assigned value:`, val);
+    } else {
+        console.log("Input submitted but no variable assigned. Value:", val);
+    }
+
+    // 4. Update Component State
+    comp.isSubmitted = true;
+    
+    // 5. Advance Sequence
+    advancePreview();
+}
+
+// Helper to sanitize input typing based on variable type
+const handleInputTyping = (e, comp) => {
+    const targetVar = globalVariables.value.find(v => v.id === comp.targetVariableId);
+    if (targetVar && targetVar.type === 'integer') {
+        // Remove non-numeric chars
+        const val = e.target.value;
+        // Allow numeric and one dot? User said "numbers", assuming integer or float.
+        // Let's restrict strict non-digits for simplicity, or standard input type="number" logic
+        // But user might type "-".
+    }
+    comp.currentValue = e.target.value;
 }
 
 /* ================= OPTIONS HANDLING ================= */
@@ -565,13 +658,11 @@ const addOptionsComponent = () => {
         height: 200,
         rotation: 0,
         
-        // --- NEW CONTAINER PROPERTIES ---
-        boxColor: '#1f2937',      // Dark Gray
-        boxOpacity: 0.8,          // Transparency
-        borderColor: '#f87171',   // Redish default
-        borderWidth: 0,           // No border by default
-        borderRadius: 8,          // Rounded corners
-        // --------------------------------
+        boxColor: '#1f2937',      
+        boxOpacity: 0.8,          
+        borderColor: '#f87171',   
+        borderWidth: 0,           
+        borderRadius: 8,          
         
         optionsList: [
             { id: 1, text: 'Option 1' },
@@ -601,7 +692,6 @@ const addOptionToComponent = () => {
         ? Math.max(...activeComponent.value.optionsList.map(o => o.id)) + 1 
         : 1;
     activeComponent.value.optionsList.push({ id: newId, text: `Option ${newId}` });
-    // Watchers handle the update
     drawComponents();
 }
 
@@ -612,26 +702,11 @@ const removeOptionFromComponent = (index) => {
         return;
     }
     activeComponent.value.optionsList.splice(index, 1);
-    // Watchers handle the update
     drawComponents();
-}
-
-const getConnectedNodeName = (optionId) => {
-    if (!popupNode.value) return "Not connected yet";
-    const status = Canvas_Status.value.find(s => s.index === popupNode.value.id);
-    if (!status || !status.options) return "Not connected yet";
-    
-    const optStatus = status.options.find(o => o.id === optionId);
-    if (optStatus && optStatus.next) {
-        const target = Canvas_Status.value.find(s => s.index === optStatus.next);
-        return target ? (target.Node_name || `Node ${target.index}`) : "Unknown Node";
-    }
-    return "Not connected yet";
 }
 
 watch(() => activeComponent.value?.optionsList, (newVal) => {
     if (activeComponent.value && activeComponent.value.type === 'options') {
-        // Direct watchers on sceneComponents catch this, but explicit redraw helps
         drawComponents() 
     }
 }, { deep: true })
@@ -664,7 +739,6 @@ const addTextComponent = () => {
     url: '',
     renderWhileClicked: true,
     autoRender: false,
-    // Animation Props
     animationType: 'fade', 
     animationDuration: 1.0 
   }
@@ -770,13 +844,12 @@ const handleVideoUpload = (event) => {
         height: height,
         rotation: 0,
         aspectRatio: ratio,
-        videoElement: vid, // Store DOM element for Editor preview
+        videoElement: vid, 
         isLoop: true,
         isMuted: false,
         bgMusicVolume: 0.2,
         renderWhileClicked: true,
         autoRender: false,
-        // Animation Props
         animationType: 'fade', 
         animationDuration: 1.0 
       }
@@ -835,10 +908,9 @@ const handleImageUpload = (event) => {
       rotation: 0,
       originalFile: file, 
       aspectRatio: 1,
-      imgObject: img, // Store DOM element for Editor preview
+      imgObject: img, 
       renderWhileClicked: true,
       autoRender: false,
-      // Animation Props
       animationType: 'fade', 
       animationDuration: 1.0 
     }
@@ -883,7 +955,6 @@ const handleImageUpload = (event) => {
   event.target.value = ''
 }
 
-/* ================= LIST REORDERING & DOM DISPLAY ================= */
 const updateSceneContentDisplay = () => {
   nextTick(() => {
     const contentBody = document.querySelector('.scene-content-body')
@@ -905,6 +976,7 @@ const updateSceneContentDisplay = () => {
             if (comp.type === 'image') indicator.classList.add('bg-green')
             else if (comp.type === 'text') indicator.classList.add('bg-blue')
             else if (comp.type === 'video') indicator.classList.add('bg-yellow')
+            else if (comp.type === 'input') indicator.classList.add('bg-purple') // NEW
             else if (comp.type === 'options') indicator.classList.add('bg-red') 
             
             if (comp.type !== 'options') {
@@ -939,6 +1011,11 @@ const updateSceneContentDisplay = () => {
                 imgIconDiv.style.display = 'flex'
                 imgIconDiv.style.alignItems = 'center'
                 imgIconDiv.style.justifyContent = 'center'
+            } else if (comp.type === 'input') {
+                imgIconDiv.textContent = 'I' 
+                imgIconDiv.style.color = '#fff'
+                imgIconDiv.style.fontSize = '20px'
+                imgIconDiv.style.fontWeight = 'bold'
             } else if (comp.type === 'options') {
                 imgIconDiv.textContent = '❖' 
                 imgIconDiv.style.color = '#fff'
@@ -978,7 +1055,6 @@ const updateSceneContentDisplay = () => {
                 openComponentEditor(comp)
             })
 
-            /* --- DRAG AND DROP EVENTS --- */
             if (comp.type !== 'options') {
                 imageContainer.addEventListener('dragstart', (e) => {
                     if (!isHandleActive) {
@@ -1010,11 +1086,9 @@ const updateSceneContentDisplay = () => {
                     e.preventDefault()
                     
                     if (dragSourceIndex !== null && dragSourceIndex !== index) {
-                        // Reorder Components
                         const item = sceneComponents.value.splice(dragSourceIndex, 1)[0]
                         sceneComponents.value.splice(index, 0, item)
                         
-                        // Enforce Options at end logic
                         const optIdx = sceneComponents.value.findIndex(c => c.type === 'options');
                         if (optIdx !== -1 && optIdx !== sceneComponents.value.length - 1) {
                              const opt = sceneComponents.value.splice(optIdx, 1)[0];
@@ -1023,7 +1097,6 @@ const updateSceneContentDisplay = () => {
                         
                         updateSceneContentDisplay()
                         drawComponents()
-                        // Watcher on sceneComponents handles the state update
                     }
                     return false
                 })
@@ -1078,7 +1151,6 @@ const onGraphMouseDown = (event) => {
   if (mouseX >= rect.left && mouseX <= rect.right && mouseY >= rect.top && mouseY <= rect.bottom) {
     const coords = screenToGraphCoords(mouseX, mouseY)
     let clickedComp = null
-    // Reverse loop for Z-index
     for (let i = sceneComponents.value.length - 1; i >= 0; i--) {
       const comp = sceneComponents.value[i]
       if(coords.x >= comp.x - comp.width/2 && coords.x <= comp.x + comp.width/2 &&
@@ -1127,14 +1199,9 @@ const onGraphMouseMove = (event) => {
         if (comp.type === 'options') {
              const dx = coords.x - comp.x;
              const dy = coords.y - comp.y;
-             // Inverse Rotate
              const rad = -(comp.rotation || 0) * Math.PI / 180;
              const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
              const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
-             // Editor has Y flipped relative to drawing
-             // Drawing: +Y is Down. Graph: +Y is Up. 
-             // calculateOptionsLayout returns drawing coords (+Y down).
-             // localY is graph coords (+Y up). So we pass -localY to get drawing coords.
              
              const hit = getOptionAtPosition(comp, localX, -localY, imagesCtx);
              
@@ -1216,7 +1283,6 @@ const updateRenderMode = (mode) => {
 const updateActiveComponentPosition = () => {
     if (activeComponent.value) {
         drawComponents()
-        // Watchers automatically trigger updateNodeScenesInStatus -> Canvas_Status
     }
 }
 
@@ -1227,10 +1293,9 @@ const updateActiveComponentSize = () => {
              activeComponent.value.height = activeComponent.value.width / ratio
         }
         
-        // NEW: Min width check for Options
         if (activeComponent.value.type === 'options' && imagesCtx) {
             const layout = calculateOptionsLayout(activeComponent.value, imagesCtx);
-            const minW = layout.maxButtonWidth + 20; // 20px padding
+            const minW = layout.maxButtonWidth + 20; 
             if (activeComponent.value.width < minW) {
                 activeComponent.value.width = minW;
             }
@@ -1284,7 +1349,6 @@ const changeLayer = (action) => {
     
     drawComponents()
     updateSceneContentDisplay() 
-    // Array mutation triggers watcher
 }
 
 /* ================= NODE & POPUP RENAME LOGIC ================= */
@@ -1302,7 +1366,6 @@ const updateNodeName = () => {
 const openPopup = node => {
   popupNode.value = node
   
-  // -- UPDATE: Reset specific editor states --
   setVarId.value = ""
   setVarOperator.value = "="
   setVarValueType.value = "constant"
@@ -1320,21 +1383,17 @@ const openPopup = node => {
     }
     editingNodeName.value = nodeStatus.Node_name
 
-    // --- NEW: HANDLE NODE TYPES FOR POPUP CONTENT ---
     if (nodeStatus.node_type === 'Set Variables') {
          viewMode.value = 'setVariables'
-         // Load data
          setVarId.value = nodeStatus.varId || ""
          setVarOperator.value = nodeStatus.varOperator || "="
          setVarValueType.value = nodeStatus.varValueType || "constant"
          setVarValue.value = nodeStatus.varValue || ""
     } else if (nodeStatus.node_type === 'If-Else') {
-         viewMode.value = 'ifElse' // Shows placeholder or simple view
+         viewMode.value = 'ifElse' 
     } else {
          viewMode.value = 'scenes'
-         // Load Scenes (Deep Copy to isolate, though watchers will re-sync)
          if (nodeStatus.scenes) {
-            // NOTE: Simple spread [...] is shallow. We need deeper copy for scenes, but preserve components
             nodeScenes.value = nodeStatus.scenes.map(s => ({
                 ...s,
                 components: s.components ? [...s.components] : [] 
@@ -1349,16 +1408,13 @@ const openPopup = node => {
          }
     }
 
-    // Load Audio
     if (nodeStatus.audio) {
-        // Clone audio object
         sequenceAudio.value = { ...nodeStatus.audio }
     } else {
         sequenceAudio.value = null
     }
 
   } else {
-    // FALLBACK IF STATUS NOT FOUND (Should rarely happen)
     editingNodeName.value = `Node ${node.id}`
     nodeScenes.value = []
     sequenceAudio.value = null
@@ -1394,7 +1450,6 @@ const closePopup = () => {
     updateSceneDetails()
   }
   
-  // --- NEW: Save Set Variable Data ---
   if (popupNode.value) {
       const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
       if (status && status.node_type === 'Set Variables') {
@@ -1696,6 +1751,48 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         ctx.translate(-screenPos.x, -screenPos.y)
     } 
     
+    // --- INPUT COMPONENT RENDER (Placeholder for Editor) ---
+    else if (comp.type === 'input') {
+        ctx.translate(screenPos.x, screenPos.y)
+        
+        // Draw Input Box (Simulation for editor)
+        if (comp.backgroundColor && comp.backgroundColor !== 'transparent') {
+            ctx.fillStyle = comp.backgroundColor
+            drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius);
+            ctx.fill();
+        }
+        if (comp.borderWidth > 0 && comp.borderColor !== 'transparent') {
+            ctx.strokeStyle = comp.borderColor;
+            ctx.lineWidth = comp.borderWidth;
+            ctx.setLineDash([]);
+            drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius);
+            ctx.stroke();
+        }
+        
+        // Placeholder Text
+        ctx.font = `${comp.fontSize}px ${comp.fontFamily}`;
+        ctx.fillStyle = '#ccc';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText("Type here...", -(comp.width/2) + 10, 0);
+        
+        // Draw Button Simulation (Right Side)
+        const btnWidth = 80;
+        const btnX = (comp.width/2) - btnWidth;
+        const btnY = -(comp.height/2);
+        
+        ctx.fillStyle = comp.buttonNormalColor;
+        // Simple rect for button in canvas editor preview
+        ctx.fillRect(btnX, btnY, btnWidth, comp.height);
+        
+        ctx.fillStyle = comp.buttonTextColor;
+        ctx.textAlign = 'center';
+        ctx.font = `bold 14px sans-serif`;
+        ctx.fillText(comp.buttonText, btnX + btnWidth/2, 0);
+
+        ctx.translate(-screenPos.x, -screenPos.y)
+    }
+
     // --- UPDATED OPTIONS LOGIC ---
     else if (comp.type === 'options') {
         ctx.translate(screenPos.x, screenPos.y) 
@@ -1998,7 +2095,6 @@ const drawRoundedRect = (x, y, w, h, r) => {
 const arrowHit = (n, wx, wy) => {
   const status = Canvas_Status.value.find(s => s.index === n.id);
   
-  // --- UPDATED: IF-ELSE ARROW HIT LOGIC ---
   if (status && status.node_type === 'If-Else') {
       const trueX = n.x + NODE_W / 2 - ARROW_OFFSET
       const trueY = n.y - 10
@@ -2050,20 +2146,16 @@ const arrowHit = (n, wx, wy) => {
           return { node: n, side: "left", x: leftAx, y: leftAy }
 
   } else if (status && status.node_type === 'Set Variables') {
-      // --- NEW: HIT LOGIC FOR SET VARIABLES NODE ---
-      // Right Arrow (Output)
       const rightAy = n.y - NODE_H / 2 + HEADER_H / 2
       const rightAx = n.x + NODE_W / 2 - ARROW_OFFSET
       if (Math.hypot(wx - rightAx, wy - rightAy) < ARROW_HIT_R) 
           return { node: n, side: "right", x: rightAx, y: rightAy }
           
-      // Left Arrow (Input)
       const leftAy = n.y - NODE_H / 2 + HEADER_H / 2
       const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
       if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) 
           return { node: n, side: "left", x: leftAx, y: leftAy }
   } else {
-      // General Node without options -> ONLY Left Input
       const leftAy = n.y - NODE_H / 2 + HEADER_H / 2
       const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
       if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) 
@@ -2190,16 +2282,15 @@ const drawNodes = () => {
 
     const grad = ctx.createLinearGradient(x - NODE_W / 2, y - currentH / 2, x + NODE_W / 2, y - currentH / 2)
     
-    // --- UPDATED: COLOR LOGIC ---
     const nodeType = status ? status.node_type : "General"
     if (nodeType === 'If-Else') {
          grad.addColorStop(0, "#eab308") 
          grad.addColorStop(1, "#000")
     } else if (nodeType === 'Set Variables') {
-         grad.addColorStop(0, "#8b5cf6") // Purple for Set Variables
+         grad.addColorStop(0, "#8b5cf6") 
          grad.addColorStop(1, "#000")
     } else {
-         grad.addColorStop(0, "#ff2a2a") // Default Red for General
+         grad.addColorStop(0, "#ff2a2a") 
          grad.addColorStop(1, "#000")
     }
     
@@ -2236,25 +2327,21 @@ const drawNodes = () => {
     ctx.font = "16px sans-serif"
     ctx.textAlign = "center"
     ctx.textBaseline = "middle"
-    ctx.fillText("▷", leftAx, leftAy) // Always draw left input arrow
+    ctx.fillText("▷", leftAx, leftAy)
     
-    // --- UPDATED: DRAW OUTPUTS ---
     if (nodeType === 'If-Else') {
-         // True Output (Greenish)
          ctx.fillStyle = "#00ff88"
          ctx.font = "14px sans-serif"
          ctx.textAlign = "right"
          ctx.fillText("T", x + NODE_W / 2 - 25, y - 10)
          ctx.fillText("▷", x + NODE_W / 2 - ARROW_OFFSET, y - 10)
 
-         // False Output (Redish)
          ctx.fillStyle = "#ff2a2a"
          ctx.textAlign = "right"
          ctx.fillText("F", x + NODE_W / 2 - 25, y + 20)
          ctx.fillText("▷", x + NODE_W / 2 - ARROW_OFFSET, y + 20)
          
     } else if (nodeType === 'Set Variables') {
-         // --- NEW: Draw standard single output for Set Variables ---
          const rightAy = y - currentH / 2 + HEADER_H / 2
          const rightAx = x + NODE_W / 2 - ARROW_OFFSET
          ctx.fillStyle = "#fff"
@@ -2293,7 +2380,6 @@ const drawNodes = () => {
              ctx.fillText(optLabel, optX - 15, optY)
         });
     }
-    // Removed else block for General Node default arrow
   }
 }
 
@@ -2302,12 +2388,10 @@ const drawConnections = () => {
   ctx.lineWidth = 4 / scale
   for (const n of Canvas_Status.value) {
     
-    // IF-ELSE CONNECTIONS
     if (n.node_type === 'If-Else') {
         const fromNode = nodes.value.find(nd => nd.id === n.index)
         if (!fromNode) continue
 
-        // Draw True Line - CHANGED CHECK
         if (n.NextTrue != null) { 
             const toNode = nodes.value.find(nd => nd.id === n.NextTrue)
             if (toNode) {
@@ -2329,7 +2413,6 @@ const drawConnections = () => {
             }
         }
 
-        // Draw False Line - CHANGED CHECK
         if (n.NextFalse != null) { 
             const toNode = nodes.value.find(nd => nd.id === n.NextFalse)
             if (toNode) {
@@ -2360,7 +2443,6 @@ const drawConnections = () => {
             const startY = fromNode.y - h / 2 + HEADER_H + 20;
 
             n.options.forEach((opt, idx) => {
-                // CHANGED CHECK: use != null instead of just if(opt.next)
                 if (opt.next != null) { 
                     const toNode = nodes.value.find(nd => nd.id === opt.next)
                     if (toNode) {
@@ -2384,7 +2466,6 @@ const drawConnections = () => {
             })
         }
     } 
-    // CHANGED CHECK
     else if (n.Next != null) { 
       const fromNode = nodes.value.find(nd => nd.id === n.index)
       const toNode = nodes.value.find(nd => nd.id === n.Next)
@@ -2426,16 +2507,14 @@ let lastClickTime = 0
 const onMouseDown = e => {
   if (showContextMenu.value) {
       showContextMenu.value = false
-      return // Optional: return immediately if you don't want to select what's under the menu
+      return 
   }
-  // ----------------------------------------
 
   const w = screenToWorld(e.clientX, e.clientY)
   hoveredArrow = null
 
   for (const n of nodes.value) {
     const hit = arrowHit(n, w.x, w.y)
-    // Updated Logic to support right-true and right-false
     if (hit && (hit.side === "right" || hit.side === "right-true" || hit.side === "right-false")) {
       outputDragging = { 
           node: n, 
@@ -2443,7 +2522,7 @@ const onMouseDown = e => {
           fromY: hit.y,
           optionIndex: hit.optionIndex, 
           optionId: hit.optionId,
-          type: hit.side // Pass along the specific type (right, right-true, right-false)
+          type: hit.side 
       }
       connectingLine = { fromNode: n, fromX: hit.x, fromY: hit.y, toX: hit.x, toY: hit.y }
       return
@@ -2528,7 +2607,6 @@ const onMouseUp = e => {
           } else if (outputDragging.type === 'right-false') {
               cs.NextFalse = targetNode.id
           } else if (outputDragging.optionIndex !== undefined && cs.options) {
-               // --- NEW LOGIC: Prevent duplicate connections ---
                const isDuplicate = cs.options.some((opt, idx) => 
                    idx !== outputDragging.optionIndex && opt.next === targetNode.id
                )
@@ -2540,7 +2618,6 @@ const onMouseUp = e => {
                        cs.options[outputDragging.optionIndex].next = targetNode.id
                    }
                }
-               // ------------------------------------------------
           } else {
                cs.Next = targetNode.id
           }
@@ -2672,6 +2749,11 @@ const startPreview = () => {
                      comp._hoveredOptionIndex = -1;
                      comp._clickedOptionIndex = -1;
                  }
+                 // Reset input components
+                 if(comp.type === 'input') {
+                     comp.isSubmitted = false;
+                     comp.currentValue = '';
+                 }
              })
          }
     });
@@ -2691,7 +2773,6 @@ const startPreview = () => {
     nextTick(() => {
         initializePreviewCanvas()
         
-        // --- FIX: Check for Auto-Start on First Component ---
         const firstScene = nodeScenes.value[0]
         if (firstScene && firstScene.components && firstScene.components.length > 0) {
             if (firstScene.components[0].autoRender) {
@@ -2762,10 +2843,12 @@ const advancePreview = () => {
     const currentScene = nodeScenes.value[currentPreviewSceneIndex.value]
     const components = currentScene.components || []
 
-    // Block advance if Options component is visible (must click option)
+    // Block advance if Options or UN-SUBMITTED INPUT component is visible
     if (currentPreviewComponentIndex.value >= 0 && currentPreviewComponentIndex.value < components.length) {
          const currentComp = components[currentPreviewComponentIndex.value];
          if (currentComp.type === 'options') return; 
+         // NEW: Block advance if input is not submitted
+         if (currentComp.type === 'input' && !currentComp.isSubmitted) return;
     }
 
     // Animation Skip Check
@@ -2787,7 +2870,6 @@ const advancePreview = () => {
         
         const comp = components[currentPreviewComponentIndex.value]
         
-        // Video Auto-Play Logic
         if (comp.type === 'video' && comp.videoElement) {
              comp.videoElement.currentTime = 0;
              comp.videoElement.play().catch(e => console.error("Auto-play prevented", e));
@@ -2798,7 +2880,6 @@ const advancePreview = () => {
                  comp.videoElement.onended = null;
              }
         } 
-        // Standard Auto-Render Lookahead
         else {
              const subsequentComp = components[currentPreviewComponentIndex.value + 1];
              if (subsequentComp && subsequentComp.autoRender) {
@@ -2808,13 +2889,11 @@ const advancePreview = () => {
         }
 
     } else {
-        // --- SCENE CHANGE LOGIC ---
         if (currentPreviewSceneIndex.value < nodeScenes.value.length - 1) {
             stopVideosInScene(currentScene);
             currentPreviewSceneIndex.value++
             currentPreviewComponentIndex.value = -1 
             
-            // --- FIX: Check Auto-Start for New Scene ---
             const nextScene = nodeScenes.value[currentPreviewSceneIndex.value]
             if (nextScene.components && nextScene.components.length > 0) {
                  if (nextScene.components[0].autoRender) {
@@ -2824,8 +2903,9 @@ const advancePreview = () => {
 
         } else {
             // End of sequence
-            if (components.length > 0 && components[components.length-1].type === 'options') {
-                 // Do nothing, wait for option click
+            const lastComp = components[components.length-1];
+            if (lastComp && (lastComp.type === 'options' || (lastComp.type === 'input' && !lastComp.isSubmitted))) {
+                 // Do nothing, wait for user action
             } else {
                  exitPreview()
             }
@@ -2913,7 +2993,6 @@ const drawPreview = () => {
             // --- ANIMATION CALCULATION ---
             let progress = 1
             
-            // Only the *current* component animates. Previous ones are fully shown (progress = 1)
             if (i === currentPreviewComponentIndex.value) {
                 const duration = (comp.animationDuration || 1) * 1000
                 if (duration > 0) {
@@ -2927,19 +3006,15 @@ const drawPreview = () => {
             
             ctx.save()
 
-            // Apply Animations via Context Transformations
             if (animType === 'fade') {
                 ctx.globalAlpha = progress
             } else if (animType === 'scale') {
-                // Zoom In
                 ctx.translate(screenPos.x, screenPos.y)
                 ctx.scale(progress, progress)
                 ctx.translate(-screenPos.x, -screenPos.y)
             } else if (animType === 'slide') {
-                // Slide from Left
                 const offset = 200 * (1 - progress)
                 ctx.translate(-offset, 0)
-                // Fade in slightly during slide
                 ctx.globalAlpha = Math.max(0, progress) 
             }
             
@@ -2983,18 +3058,63 @@ const getPreviewLogicalCoords = (e) => {
     const canvasX = (e.clientX - rect.left) / scale;
     const canvasY = (e.clientY - rect.top) / scale;
     
-    // Convert to Graph Units (Assuming Center is 0,0 and pixel factor is 2)
     const logicalW = previewCanvasRef.value.width / scale;
     const logicalH = previewCanvasRef.value.height / scale;
     const centerX = logicalW / 2;
     const centerY = logicalH / 2;
     
-    // Formula: screen = center + (graph * 2) => graph = (screen - center) / 2
     const graphX = (canvasX - centerX) / 2;
-    // Formula: screen = center - (graph * 2) => graph = (center - screen) / 2 (Y is flipped)
     const graphY = (centerY - canvasY) / 2;
 
     return { x: graphX, y: graphY };
+}
+
+// NEW HELPER: Get style for DOM overlay elements in Preview
+const getPreviewComponentStyle = (comp) => {
+    if (!previewCanvasRef.value) return {};
+    
+    // Calculate position same as canvas drawing
+    const scale = previewScale.value;
+    const logicalW = previewCanvasRef.value.width / scale;
+    const logicalH = previewCanvasRef.value.height / scale;
+    const centerX = logicalW / 2;
+    const centerY = logicalH / 2;
+    const pixelsPerUnit = 2;
+    
+    const screenX = centerX + (comp.x * pixelsPerUnit);
+    const screenY = centerY - (comp.y * pixelsPerUnit);
+    
+    // Convert to actual screen pixels (scaled)
+    // Canvas is scaled by `scale` via context, but DOM elements need CSS positioning
+    // Position relative to the .preview-overlay container (which is 100vw/100vh)
+    // We need to calculate where the logical coordinates land on the real screen.
+    
+    // Actually, simpler: The container is flex centered. The canvas has a specific width/height.
+    // We should position relative to the canvas if possible, or calculate offset.
+    // Best approach: Use percentage or precise calculation if wrapper matches canvas.
+    // Let's assume the overlay puts the canvas in center.
+    
+    const rect = previewCanvasRef.value.getBoundingClientRect();
+    
+    // comp.x/y are in graph units.
+    // logical coordinates (0,0 at top-left of canvas content)
+    // screenX/screenY are logical pixels inside the scaled context.
+    
+    // Real screen pixels = (logical pixels * scale) + canvas offset
+    const realX = (screenX * scale) + rect.left;
+    const realY = (screenY * scale) + rect.top;
+    const realW = comp.width * scale;
+    const realH = comp.height * scale;
+    
+    return {
+        position: 'absolute',
+        left: `${realX - (realW/2)}px`, // Centered anchor
+        top: `${realY - (realH/2)}px`,  // Centered anchor
+        width: `${realW}px`,
+        height: `${realH}px`,
+        transform: `rotate(${comp.rotation}deg)`,
+        zIndex: 100 // Above canvas
+    };
 }
 
 const onPreviewMouseMove = (e) => {
@@ -3010,10 +3130,6 @@ const onPreviewMouseMove = (e) => {
         
         const dx = coords.x - activeComp.x;
         const dy = coords.y - activeComp.y;
-        // Preview coords are already "Y Down" (Top-Left 0,0), BUT graph logic was "Center 0,0, Y Up".
-        // Let's re-verify getPreviewLogicalCoords.
-        // Formula: graphY = (centerY - canvasY) / 2. This implies +Y is UP.
-        // So we pass -localY to getOptionAtPosition (which expects +Y Down).
         
         const rad = -(activeComp.rotation || 0) * Math.PI / 180;
         const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
@@ -3055,9 +3171,6 @@ const onPreviewMouseUp = (e) => {
     const scene = nodeScenes.value[currentPreviewSceneIndex.value];
     if (!scene || !scene.components) return;
     
-    // --- FIX: Removed the "if index < 0 return" check to allow clicking the background to start ---
-    
-    // Only check options logic if a component is actually active
     if (currentPreviewComponentIndex.value >= 0) {
         const activeComp = scene.components[currentPreviewComponentIndex.value];
 
@@ -3066,9 +3179,7 @@ const onPreviewMouseUp = (e) => {
             activeComp._clickedOptionIndex = -1;
             drawPreview();
             
-            // If release happens on the same button
             if (clickedIdx !== -1 && clickedIdx === activeComp._hoveredOptionIndex) {
-                // OPTION CLICKED!
                 const option = activeComp.optionsList[clickedIdx];
                 handleOptionNavigation(activeComp.id, option.id);
                 return;
@@ -3076,12 +3187,10 @@ const onPreviewMouseUp = (e) => {
         }
     }
     
-    // If we didn't click an option (or we are at index -1), advance
     advancePreview();
 }
 
 const handleOptionNavigation = (compId, optionId) => {
-    // 1. Identify current node ID (stored in popupNode or Canvas_Status)
     if (!popupNode.value) {
         exitPreview();
         return;
@@ -3093,13 +3202,11 @@ const handleOptionNavigation = (compId, optionId) => {
         return;
     }
 
-    // 2. Find connection
     const optStatus = currentStatus.options.find(o => o.id === optionId);
-    if (!optStatus || !optStatus.next) {
-        // Not connected -> Exit
+    
+    if (!optStatus || optStatus.next == null) {
         exitPreview();
     } else {
-        // 3. Switch Node
         loadNodeForPreview(optStatus.next);
     }
 }
@@ -3112,22 +3219,18 @@ const loadNodeForPreview = (targetNodeId) => {
         return;
     }
 
-    // 1. ACTIVATE PREVIEW MODE (This was missing!)
     isPreviewMode.value = true;
 
-    // 2. Stop any existing media
     stopAllVideos();
     if (previewAudioElement.value) {
         previewAudioElement.value.pause();
         previewAudioElement.value = null;
     }
 
-    // 3. Load Node Data
     const realNode = nodes.value.find(n => n.id === targetNodeId);
     popupNode.value = realNode || { id: targetNodeId, x: 0, y: 0 }; 
 
     if (targetStatus.scenes) {
-      // Deep copy scenes to ensure we don't mutate original status during preview
       nodeScenes.value = targetStatus.scenes.map(s => ({
           ...s,
           components: s.components ? [...s.components] : [] 
@@ -3136,7 +3239,6 @@ const loadNodeForPreview = (targetNodeId) => {
       nodeScenes.value = [];
     }
 
-    // 4. Setup Audio
     sequenceAudio.value = targetStatus.audio || null;
     if (sequenceAudio.value && sequenceAudio.value.url) {
         previewAudioElement.value = new Audio(sequenceAudio.value.url);
@@ -3145,22 +3247,18 @@ const loadNodeForPreview = (targetNodeId) => {
         previewAudioElement.value.play().catch(e => console.log("Autoplay prevented:", e));
     }
 
-    // 5. Reset State
     currentPreviewSceneIndex.value = 0;
     currentPreviewComponentIndex.value = -1;
     componentStartTime.value = 0;
     
-    // 6. Wait for DOM Update (Vital for v-if="isPreviewMode")
     nextTick(() => {
         if (!previewCanvasRef.value) return;
         
-        // Re-acquire context in case it was lost or not yet initialized
         previewCtx = previewCanvasRef.value.getContext('2d');
         
         resizePreviewCanvas();
         drawPreview();
 
-        // 7. Check Auto-Start for First Scene
         const firstScene = nodeScenes.value[0]
         if (firstScene && firstScene.components && firstScene.components.length > 0) {
             if (firstScene.components[0].autoRender) {
@@ -3190,34 +3288,29 @@ window.addEventListener('resize', () => {
     }
 })
 
-// NEW: Handle Scrolling in Preview
 const onPreviewWheel = (e) => {
     if (!isPreviewMode.value || !nodeScenes.value) return;
     const scene = nodeScenes.value[currentPreviewSceneIndex.value];
     if (!scene || !scene.components) return;
     
-    // Find options component
     const optComp = scene.components.find(c => c.type === 'options');
     if (!optComp) return;
 
-    // Check if mouse is over it
     const coords = getPreviewLogicalCoords(e);
     const dx = coords.x - optComp.x;
     const dy = coords.y - optComp.y;
     
-    // Simple bounds check (ignoring rotation for scroll convenience)
     if (Math.abs(dx) <= optComp.width/2 && Math.abs(dy) <= optComp.height/2) {
         if(!previewCtx) return;
         const layout = calculateOptionsLayout(optComp, previewCtx);
         
         if (layout.totalContentHeight > optComp.height) {
-            e.preventDefault(); // Stop page scroll
-            const maxScroll = layout.totalContentHeight - optComp.height + 20; // +20 buffer
+            e.preventDefault(); 
+            const maxScroll = layout.totalContentHeight - optComp.height + 20; 
             
             if (!optComp.scrollY) optComp.scrollY = 0;
             optComp.scrollY += e.deltaY;
             
-            // Clamp
             if (optComp.scrollY < 0) optComp.scrollY = 0;
             if (optComp.scrollY > maxScroll) optComp.scrollY = maxScroll;
             
@@ -3237,6 +3330,7 @@ const onPreviewWheel = (e) => {
       @wheel="onWheel"
       @contextmenu.prevent="onContextMenu" 
     />
+    
     <div 
       v-if="showContextMenu" 
       class="context-menu" 
@@ -3249,6 +3343,7 @@ const onPreviewWheel = (e) => {
         🔗 Remove all links
       </div>
     </div>
+
     <header class="header">
       <button class="hamburger" @click="toggleMenu">☰</button>
       <div class="center">
@@ -3310,8 +3405,32 @@ const onPreviewWheel = (e) => {
         
         <transition name="fade">
             <div v-if="isAddingVariable" class="add-var-form">
-                <input v-model="newVarName" placeholder="Variable Name" class="var-input" required="true"/>
-                <input v-model="newVarValue" placeholder="Initial Value" class="var-input" required="true"/>
+                <div class="var-type-selector">
+                    <label :class="{ active: newVarType === 'string' }">
+                        <input type="radio" value="string" v-model="newVarType"> String
+                    </label>
+                    <label :class="{ active: newVarType === 'integer' }">
+                        <input type="radio" value="integer" v-model="newVarType"> Integer
+                    </label>
+                </div>
+
+                <input v-model="newVarName" placeholder="Variable Name" class="var-input" />
+                
+                <input 
+                    v-if="newVarType === 'integer'"
+                    type="number" 
+                    v-model="newVarValue" 
+                    placeholder="Value (Required)" 
+                    class="var-input" 
+                />
+                <input 
+                    v-else
+                    type="text" 
+                    v-model="newVarValue" 
+                    placeholder="Value (Optional)" 
+                    class="var-input" 
+                />
+
                 <div class="var-form-actions">
                     <button class="save-var-btn" @click="addGlobalVariable">Save</button>
                     <button class="cancel-var-btn" @click="toggleAddVariable">Cancel</button>
@@ -3322,7 +3441,10 @@ const onPreviewWheel = (e) => {
         <div class="variable-list">
             <div v-for="v in globalVariables" :key="v.id" class="variable-item">
                 <div class="var-info">
-                    <span class="var-name">{{ v.name }}</span>
+                    <span class="var-name">
+                        {{ v.name }} 
+                        <span class="var-type-tag">{{ v.type === 'integer' ? '#' : 'Aa' }}</span>
+                    </span>
                     <span class="var-value-display">{{ v.value }}</span>
                 </div>
                 <button class="delete-var-btn" @click="deleteGlobalVariable(v.id)">×</button>
@@ -3608,368 +3730,483 @@ const onPreviewWheel = (e) => {
                   </div>
 
                   <div v-else-if="viewMode === 'componentEditor' && activeComponent" class="component-editor-view">
-  <div class="scene-panel-header">
-    <button class="back-btn" @click="closeComponentEditor" title="Back to Scene Details">
-      ←
-    </button>
-    <span class="scene-panel-title">Component Editor</span>
-  </div>
+                    <div class="scene-panel-header">
+                        <button class="back-btn" @click="closeComponentEditor" title="Back to Scene Details">
+                        ←
+                        </button>
+                        <span class="scene-panel-title">Component Editor</span>
+                    </div>
 
-  <div class="scene-details-content">
-    <div class="component-preview">
-      <img v-if="activeComponent.type === 'image'" :src="activeComponent.url" alt="Preview" />
-      <div v-else-if="activeComponent.type === 'text'" style="color:white; font-size: 24px; text-align: center;">T</div>
-      <video 
-        v-else-if="activeComponent.type === 'video'" 
-        :src="activeComponent.url" 
-        style="max-width: 100%; max-height: 100%;"
-        controls
-      ></video>
-      <div v-else-if="activeComponent.type === 'options'" 
-           :style="{ width: '100px', height: '50px', border: '2px dashed #f87171', backgroundColor: 'rgba(31,41,55,0.5)', display: 'flex', alignItems:'center', justifyContent: 'center', color: '#f87171' }">
-           Opt
-      </div>
-      <div v-else style="color:white">?</div>
-    </div>
+                    <div class="scene-details-content">
+                        <div class="component-preview">
+                        <img v-if="activeComponent.type === 'image'" :src="activeComponent.url" alt="Preview" />
+                        <div v-else-if="activeComponent.type === 'text'" style="color:white; font-size: 24px; text-align: center;">T</div>
+                        <video 
+                            v-else-if="activeComponent.type === 'video'" 
+                            :src="activeComponent.url" 
+                            style="max-width: 100%; max-height: 100%;"
+                            controls
+                        ></video>
+                        
+                        <div v-else-if="activeComponent.type === 'input'" 
+                             :style="{ width: '300px', height: '60px', border: '1px dashed #a855f7', backgroundColor: 'rgba(59, 130, 246, 0.1)', display: 'flex', alignItems:'center', justifyContent: 'center', color: '#a855f7', flexDirection: 'column' }">
+                             <span>Input Box</span>
+                             <span style="font-size: 0.7rem; opacity: 0.8;">(Preview in Play Mode)</span>
+                        </div>
 
-    <div class="detail-section">
-      <label class="detail-label">Name:</label>
-      <input 
-        v-model="activeComponent.name" 
-        class="detail-input"
-        @change="updateSceneContentDisplay"
-      />
-    </div>
-    
-    <div class="detail-section">
-      <label class="detail-label">Entrance Animation:</label>
-      <select v-model="activeComponent.animationType" class="detail-input">
-        <option value="none">None</option>
-        <option value="fade">Fade In</option>
-        <option value="scale">Zoom In</option>
-        <option value="slide">Slide In (Left)</option>
-        <option v-if="activeComponent.type === 'text'" value="typewriter">Typewriter</option>
-      </select>
-    </div>
+                        <div v-else-if="activeComponent.type === 'options'" 
+                            :style="{ width: '100px', height: '50px', border: '2px dashed #f87171', backgroundColor: 'rgba(31,41,55,0.5)', display: 'flex', alignItems:'center', justifyContent: 'center', color: '#f87171' }">
+                            Opt
+                        </div>
+                        <div v-else style="color:white">?</div>
+                        </div>
 
-    <div class="detail-section" v-if="activeComponent.animationType && activeComponent.animationType !== 'none'">
-      <label class="detail-label">Animation Duration (sec):</label>
-      <div class="input-row">
-        <input 
-          type="range" 
-          v-model.number="activeComponent.animationDuration" 
-          min="0.1" max="10" step="0.1"
-          class="range-input" 
-        />
-        <input 
-          type="number" 
-          v-model.number="activeComponent.animationDuration" 
-          class="number-input" 
-          min="0.1" max="10" step="0.1"
-        />
-      </div>
-    </div>
+                        <div class="detail-section">
+                        <label class="detail-label">Name:</label>
+                        <input 
+                            v-model="activeComponent.name" 
+                            class="detail-input"
+                            @change="updateSceneContentDisplay"
+                        />
+                        </div>
+                        
+                        <div v-if="activeComponent.type === 'input'">
+                            <div class="separator"></div>
+                            
+                            <div class="detail-section">
+                                <label class="detail-label" style="color: #a855f7;">Variable Assignment</label>
+                                <select v-model="activeComponent.targetVariableId" class="detail-input">
+                                    <option value="" disabled>Select Target Variable</option>
+                                    <option v-for="v in globalVariables" :key="v.id" :value="v.id">
+                                        {{ v.name }} ({{ v.type }})
+                                    </option>
+                                </select>
+                                <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px;">
+                                    User input will be validated against variable type.
+                                </div>
+                            </div>
 
-    <div class="separator"></div>
+                            <div class="detail-section">
+                                <label class="detail-label" style="color: #a855f7;">Input Styles</label>
+                                
+                                <div class="detail-section">
+                                    <label class="detail-label">Background:</label>
+                                    <div class="color-picker-container">
+                                        <input type="color" v-model="activeComponent.backgroundColor" class="color-input" @input="drawComponents" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.backgroundColor }"></div>
+                                    </div>
+                                </div>
+                                
+                                <div class="detail-section">
+                                    <label class="detail-label">Text Color:</label>
+                                    <div class="color-picker-container">
+                                        <input type="color" v-model="activeComponent.textColor" class="color-input" @input="drawComponents" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.textColor }"></div>
+                                    </div>
+                                </div>
 
-    <div class="detail-section">
-      <div class="checkbox-row" style="margin-bottom: 8px;">
-        <label class="detail-label" style="margin-bottom:0; flex: 1;">Render on click:</label>
-        <input type="checkbox" :checked="activeComponent.renderWhileClicked" @change="updateRenderMode('click')" />
-      </div>
-      <div style="font-size: 0.75rem; color: #9ca3af; margin-bottom: 8px; margin-left: 20px;">
-        User must click to show this component.
-      </div>
+                                <div class="detail-section">
+                                    <label class="detail-label">Border:</label>
+                                    <div class="color-picker-container">
+                                        <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="drawComponents" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
+                                    </div>
+                                </div>
+                                <div class="detail-section">
+                                    <label class="detail-label">Border Radius:</label>
+                                    <input type="number" v-model.number="activeComponent.borderRadius" class="detail-input" @input="drawComponents" />
+                                </div>
+                            </div>
 
-      <div class="checkbox-row">
-        <label class="detail-label" style="margin-bottom:0; flex: 1;">Automatic rendering:</label>
-        <input type="checkbox" :checked="activeComponent.autoRender" @change="updateRenderMode('auto')" />
-      </div>
-      <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; margin-left: 20px;">
-        Renders immediately after the previous component finishes.
-      </div>
-    </div>
+                            <div class="detail-section">
+                                <label class="detail-label" style="color: #a855f7;">Focus State Styles</label>
+                                <div class="detail-section">
+                                    <label class="detail-label">Focus Background:</label>
+                                    <div class="color-picker-container">
+                                        <input type="color" v-model="activeComponent.focusBackgroundColor" class="color-input" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.focusBackgroundColor }"></div>
+                                    </div>
+                                </div>
+                                <div class="detail-section">
+                                    <label class="detail-label">Focus Border:</label>
+                                    <div class="color-picker-container">
+                                        <input type="color" v-model="activeComponent.focusBorderColor" class="color-input" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.focusBorderColor }"></div>
+                                    </div>
+                                </div>
+                            </div>
 
-    <div class="detail-section">
-      <label class="detail-label">Layering:</label>
-      <div class="layering-controls">
-        <button class="layer-btn" @click="changeLayer('top')" title="Bring to Front">⇈</button>
-        <button class="layer-btn" @click="changeLayer('up')" title="Bring Forward">↑</button>
-        <button class="layer-btn" @click="changeLayer('down')" title="Send Backward">↓</button>
-        <button class="layer-btn" @click="changeLayer('bottom')" title="Send to Back">⇊</button>
-      </div>
-    </div>
-    
-    <div class="separator"></div>
+                            <div class="detail-section">
+                                <label class="detail-label" style="color: #a855f7;">Button Settings</label>
+                                <div class="detail-section">
+                                    <label class="detail-label">Button Text:</label>
+                                    <input v-model="activeComponent.buttonText" class="detail-input" @input="drawComponents" />
+                                </div>
+                                <div class="detail-section">
+                                    <label class="detail-label">Submitted Text:</label>
+                                    <input v-model="activeComponent.buttonSubmittedText" class="detail-input" />
+                                </div>
+                                
+                                <div class="detail-section">
+                                    <label class="detail-label">Normal Color:</label>
+                                    <div class="color-picker-container">
+                                        <input type="color" v-model="activeComponent.buttonNormalColor" class="color-input" @input="drawComponents" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.buttonNormalColor }"></div>
+                                    </div>
+                                </div>
+                                <div class="detail-section">
+                                    <label class="detail-label">Hover Color:</label>
+                                    <div class="color-picker-container">
+                                        <input type="color" v-model="activeComponent.buttonHoverColor" class="color-input" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.buttonHoverColor }"></div>
+                                    </div>
+                                </div>
+                                <div class="detail-section">
+                                    <label class="detail-label">Click Color:</label>
+                                    <div class="color-picker-container">
+                                        <input type="color" v-model="activeComponent.buttonClickColor" class="color-input" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.buttonClickColor }"></div>
+                                    </div>
+                                </div>
+                                <div class="detail-section">
+                                    <label class="detail-label">Text Color:</label>
+                                    <div class="color-picker-container">
+                                        <input type="color" v-model="activeComponent.buttonTextColor" class="color-input" @input="drawComponents" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.buttonTextColor }"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="detail-section">
+                        <label class="detail-label">Entrance Animation:</label>
+                        <select v-model="activeComponent.animationType" class="detail-input">
+                            <option value="none">None</option>
+                            <option value="fade">Fade In</option>
+                            <option value="scale">Zoom In</option>
+                            <option value="slide">Slide In (Left)</option>
+                            <option v-if="activeComponent.type === 'text'" value="typewriter">Typewriter</option>
+                        </select>
+                        </div>
 
-    <div v-if="activeComponent.type === 'options'" class="options-editor-panel">
-      
-      <div class="detail-section" style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; margin-bottom: 16px;">
-        <label class="detail-label" style="color:#00ff88; margin-bottom: 12px;">Container Styles</label>
-        
-        <div class="detail-section">
-          <label class="detail-label">Box Color & Opacity:</label>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <input type="color" v-model="activeComponent.boxColor" class="color-input" @input="drawComponents" />
-            <div class="input-row" style="flex: 1;">
-              <input type="range" v-model.number="activeComponent.boxOpacity" min="0" max="1" step="0.05" class="range-input" @input="drawComponents" />
-              <span class="audio-val-text">{{ Math.round((activeComponent.boxOpacity || 0) * 100) }}%</span>
-            </div>
-          </div>
-        </div>
-        
-        <div class="detail-section">
-          <label class="detail-label">Border Color:</label>
-           <div class="color-picker-container">
-             <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="drawComponents" />
-             <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
-           </div>
-        </div>
+                        <div class="detail-section" v-if="activeComponent.animationType && activeComponent.animationType !== 'none'">
+                        <label class="detail-label">Animation Duration (sec):</label>
+                        <div class="input-row">
+                            <input 
+                            type="range" 
+                            v-model.number="activeComponent.animationDuration" 
+                            min="0.1" max="10" step="0.1"
+                            class="range-input" 
+                            />
+                            <input 
+                            type="number" 
+                            v-model.number="activeComponent.animationDuration" 
+                            class="number-input" 
+                            min="0.1" max="10" step="0.1"
+                            />
+                        </div>
+                        </div>
 
-        <div class="detail-section">
-          <label class="detail-label">Border Width:</label>
-          <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="drawComponents" />
-        </div>
+                        <div class="separator"></div>
 
-        <div class="detail-section">
-          <label class="detail-label">Border Radius:</label>
-          <input type="number" v-model.number="activeComponent.borderRadius" class="detail-input" @input="drawComponents" />
-        </div>
-      </div>
+                        <div class="detail-section">
+                        <div class="checkbox-row" style="margin-bottom: 8px;">
+                            <label class="detail-label" style="margin-bottom:0; flex: 1;">Render on click:</label>
+                            <input type="checkbox" :checked="activeComponent.renderWhileClicked" @change="updateRenderMode('click')" />
+                        </div>
+                        <div style="font-size: 0.75rem; color: #9ca3af; margin-bottom: 8px; margin-left: 20px;">
+                            User must click to show this component.
+                        </div>
 
-      <div class="detail-section">
-        <div class="scene-panel-header" style="margin-bottom: 12px; border-bottom: 0; padding: 0;">
-          <span class="detail-label" style="font-size: 1rem;">Options List</span>
-          <button class="add-content-btn" @click="addOptionToComponent" style="padding: 4px 8px;">+ Add Option</button>
-        </div>
-        
-        <div class="options-list-container">
-          <div v-for="(opt, index) in activeComponent.optionsList" :key="opt.id" class="option-list-item-wrapper">
-            <div class="option-list-item">
-              <input v-model="opt.text" class="detail-input" @input="drawComponents" />
-              <button class="remove-image-btn" @click="removeOptionFromComponent(index)">🗑️</button>
-            </div>
-            <div style="font-size: 0.75rem; color: #00ff88; margin-top: 4px; padding-left: 4px; font-style: italic;">
-              Connected to: {{ getConnectedNodeName(opt.id) }}
-            </div>
-          </div>
-          <div v-if="activeComponent.optionsList.length === 0" style="text-align:center; color: #6b7280; font-style:italic; padding: 10px;">
-            No options.
-          </div>
-        </div>
-      </div>
+                        <div class="checkbox-row">
+                            <label class="detail-label" style="margin-bottom:0; flex: 1;">Automatic rendering:</label>
+                            <input type="checkbox" :checked="activeComponent.autoRender" @change="updateRenderMode('auto')" />
+                        </div>
+                        <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; margin-left: 20px;">
+                            Renders immediately after the previous component finishes.
+                        </div>
+                        </div>
 
-      <div class="detail-section">
-        <label class="detail-label">Button Styles:</label>
-        
-        <div class="style-tabs">
-          <button 
-            class="style-tab-btn" 
-            :class="{ active: activeStyleState === 'normal' }" 
-            @click="activeStyleState = 'normal'"
-          >
-            Normal
-          </button>
-          <button 
-            class="style-tab-btn" 
-            :class="{ active: activeStyleState === 'hovered' }" 
-            @click="activeStyleState = 'hovered'"
-          >
-            Hovered
-          </button>
-          <button 
-            class="style-tab-btn" 
-            :class="{ active: activeStyleState === 'clicked' }" 
-            @click="activeStyleState = 'clicked'"
-          >
-            Clicked
-          </button>
-        </div>
+                        <div class="detail-section">
+                        <label class="detail-label">Layering:</label>
+                        <div class="layering-controls">
+                            <button class="layer-btn" @click="changeLayer('top')" title="Bring to Front">⇈</button>
+                            <button class="layer-btn" @click="changeLayer('up')" title="Bring Forward">↑</button>
+                            <button class="layer-btn" @click="changeLayer('down')" title="Send Backward">↓</button>
+                            <button class="layer-btn" @click="changeLayer('bottom')" title="Send to Back">⇊</button>
+                        </div>
+                        </div>
+                        
+                        <div class="separator"></div>
 
-        <div class="style-editor-box">
-          <div class="detail-section">
-            <label class="detail-label">Background Color:</label>
-             <div class="color-picker-container">
-               <input type="color" v-model="activeComponent.styles[activeStyleState].backgroundColor" class="color-input" @input="drawComponents" />
-               <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].backgroundColor }"></div>
-             </div>
-          </div>
-          
-          <div class="detail-section">
-            <label class="detail-label">Text Color:</label>
-             <div class="color-picker-container">
-               <input type="color" v-model="activeComponent.styles[activeStyleState].color" class="color-input" @input="drawComponents" />
-               <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].color }"></div>
-             </div>
-          </div>
-          
-          <div class="detail-section">
-            <label class="detail-label">Border Color:</label>
-             <div class="color-picker-container">
-               <input type="color" v-model="activeComponent.styles[activeStyleState].borderColor" class="color-input" @input="drawComponents" />
-               <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].borderColor }"></div>
-             </div>
-          </div>
+                        <div v-if="activeComponent.type === 'options'" class="options-editor-panel">
+                        
+                        <div class="detail-section" style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; margin-bottom: 16px;">
+                            <label class="detail-label" style="color:#00ff88; margin-bottom: 12px;">Container Styles</label>
+                            
+                            <div class="detail-section">
+                            <label class="detail-label">Box Color & Opacity:</label>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <input type="color" v-model="activeComponent.boxColor" class="color-input" @input="drawComponents" />
+                                <div class="input-row" style="flex: 1;">
+                                <input type="range" v-model.number="activeComponent.boxOpacity" min="0" max="1" step="0.05" class="range-input" @input="drawComponents" />
+                                <span class="audio-val-text">{{ Math.round((activeComponent.boxOpacity || 0) * 100) }}%</span>
+                                </div>
+                            </div>
+                            </div>
+                            
+                            <div class="detail-section">
+                            <label class="detail-label">Border Color:</label>
+                            <div class="color-picker-container">
+                                <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="drawComponents" />
+                                <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
+                            </div>
+                            </div>
 
-          <div class="detail-section">
-            <label class="detail-label">Border Width:</label>
-            <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderWidth" class="detail-input" @input="drawComponents" />
-          </div>
+                            <div class="detail-section">
+                            <label class="detail-label">Border Width:</label>
+                            <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="drawComponents" />
+                            </div>
 
-          <div class="detail-section">
-            <label class="detail-label">Border Radius:</label>
-            <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderRadius" class="detail-input" @input="drawComponents" />
-          </div>
-          
-          <div class="detail-section">
-            <label class="detail-label">Font Size:</label>
-            <input type="number" v-model.number="activeComponent.styles[activeStyleState].fontSize" class="detail-input" @input="drawComponents" />
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="separator"></div>
+                            <div class="detail-section">
+                            <label class="detail-label">Border Radius:</label>
+                            <input type="number" v-model.number="activeComponent.borderRadius" class="detail-input" @input="drawComponents" />
+                            </div>
+                        </div>
 
-    <div class="detail-section">
-      <label class="detail-label">Position X:</label>
-      <div class="input-row">
-        <input type="range" v-model.number="activeComponent.x" :min="GRAPH_MIN_X" :max="GRAPH_MAX_X" class="range-input" @input="updateActiveComponentPosition" />
-        <input type="number" v-model.number="activeComponent.x" class="number-input" @input="updateActiveComponentPosition" />
-      </div>
-    </div>
-    <div class="detail-section">
-      <label class="detail-label">Position Y:</label>
-      <div class="input-row">
-        <input type="range" v-model.number="activeComponent.y" :min="GRAPH_MIN_Y" :max="GRAPH_MAX_Y" class="range-input" @input="updateActiveComponentPosition" />
-        <input type="number" v-model.number="activeComponent.y" class="number-input" @input="updateActiveComponentPosition" />
-      </div>
-    </div>
-    
-    <div class="detail-section">
-      <label class="detail-label">Width (px):</label>
-      <div class="input-row">
-        <input type="range" v-model.number="activeComponent.width" min="10" max="800" class="range-input" @input="updateActiveComponentSize" />
-        <input type="number" v-model.number="activeComponent.width" class="number-input" @input="updateActiveComponentSize" />
-      </div>
-    </div>
-    
-    <div class="detail-section">
-      <label class="detail-label">Height (px):</label>
-      <div class="input-row">
-        <input type="range" v-model.number="activeComponent.height" min="10" max="600" class="range-input" @input="updateActiveComponentSize" />
-        <input type="number" v-model.number="activeComponent.height" class="number-input" @input="updateActiveComponentSize" />
-      </div>
-    </div>
+                        <div class="detail-section">
+                            <div class="scene-panel-header" style="margin-bottom: 12px; border-bottom: 0; padding: 0;">
+                            <span class="detail-label" style="font-size: 1rem;">Options List</span>
+                            <button class="add-content-btn" @click="addOptionToComponent" style="padding: 4px 8px;">+ Add Option</button>
+                            </div>
+                            
+                            <div class="options-list-container">
+                            <div v-for="(opt, index) in activeComponent.optionsList" :key="opt.id" class="option-list-item-wrapper">
+                                <div class="option-list-item">
+                                <input v-model="opt.text" class="detail-input" @input="drawComponents" />
+                                <button class="remove-image-btn" @click="removeOptionFromComponent(index)">🗑️</button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: #00ff88; margin-top: 4px; padding-left: 4px; font-style: italic;">
+                                Connected to: {{ getConnectedNodeName(opt.id) }}
+                                </div>
+                            </div>
+                            <div v-if="activeComponent.optionsList.length === 0" style="text-align:center; color: #6b7280; font-style:italic; padding: 10px;">
+                                No options.
+                            </div>
+                            </div>
+                        </div>
 
-    <div v-if="activeComponent.type !== 'options'">
-      <div class="detail-section">
-        <label class="detail-label">Rotation (deg):</label>
-        <div class="input-row">
-          <input type="range" v-model.number="activeComponent.rotation" min="0" max="360" class="range-input" @input="updateActiveComponentPosition" />
-          <input type="number" v-model.number="activeComponent.rotation" class="number-input" @input="updateActiveComponentPosition" />
-        </div>
-      </div>
-    </div>
+                        <div class="detail-section">
+                            <label class="detail-label">Button Styles:</label>
+                            
+                            <div class="style-tabs">
+                            <button 
+                                class="style-tab-btn" 
+                                :class="{ active: activeStyleState === 'normal' }" 
+                                @click="activeStyleState = 'normal'"
+                            >
+                                Normal
+                            </button>
+                            <button 
+                                class="style-tab-btn" 
+                                :class="{ active: activeStyleState === 'hovered' }" 
+                                @click="activeStyleState = 'hovered'"
+                            >
+                                Hovered
+                            </button>
+                            <button 
+                                class="style-tab-btn" 
+                                :class="{ active: activeStyleState === 'clicked' }" 
+                                @click="activeStyleState = 'clicked'"
+                            >
+                                Clicked
+                            </button>
+                            </div>
 
-    <div v-if="activeComponent.type === 'video'">
-      <div class="detail-section">
-           <div class="checkbox-row">
-              <label class="detail-label" style="margin-bottom:0;">Loop:</label>
-              <input type="checkbox" v-model="activeComponent.isLoop" @change="updateVideoProperties" />
-           </div>
-      </div>
-       <div class="detail-section">
-           <div class="checkbox-row">
-              <label class="detail-label" style="margin-bottom:0;">Mute:</label>
-              <input type="checkbox" v-model="activeComponent.isMuted" @change="updateVideoProperties" />
-           </div>
-      </div>
-      
-      <div class="detail-section">
-          <label class="detail-label">Background Music Volume:</label>
-          <div class="input-row">
-              <input 
-                  type="range" 
-                  v-model.number="activeComponent.bgMusicVolume" 
-                  min="0" max="1" step="0.05"
-                  class="range-input"
-              />
-              <span style="color: #00ff88; font-family: monospace; width: 40px; text-align:right;">
-                  {{ Math.round((activeComponent.bgMusicVolume || 0.2) * 100) }}%
-              </span>
-          </div>
-          <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; font-style: italic;">
-              Music volume when this video plays.
-          </div>
-      </div>
-    </div>
+                            <div class="style-editor-box">
+                            <div class="detail-section">
+                                <label class="detail-label">Background Color:</label>
+                                <div class="color-picker-container">
+                                <input type="color" v-model="activeComponent.styles[activeStyleState].backgroundColor" class="color-input" @input="drawComponents" />
+                                <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].backgroundColor }"></div>
+                                </div>
+                            </div>
+                            
+                            <div class="detail-section">
+                                <label class="detail-label">Text Color:</label>
+                                <div class="color-picker-container">
+                                <input type="color" v-model="activeComponent.styles[activeStyleState].color" class="color-input" @input="drawComponents" />
+                                <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].color }"></div>
+                                </div>
+                            </div>
+                            
+                            <div class="detail-section">
+                                <label class="detail-label">Border Color:</label>
+                                <div class="color-picker-container">
+                                <input type="color" v-model="activeComponent.styles[activeStyleState].borderColor" class="color-input" @input="drawComponents" />
+                                <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].borderColor }"></div>
+                                </div>
+                            </div>
 
-    <div v-if="activeComponent.type === 'text'">
-      <div class="detail-section">
-        <label class="detail-label">Content:</label>
-        <input 
-          v-model="activeComponent.content" 
-          class="detail-input" 
-          @input="updateActiveComponentPosition" 
-          @select="handleTextSelect"
-        />
-        
-        <div v-if="textSelection.text.length > 0" class="formatting-controls">
-          <button class="format-btn" @click="applyTextStyle('bold', activeComponent.fontWeight === 'bold' ? 'normal' : 'bold')" :class="{ active: activeComponent.fontWeight === 'bold' }" title="Bold">B</button>
-          <button class="format-btn" @click="applyTextStyle('italic')" :class="{ active: activeComponent.fontStyle === 'italic' }" title="Italic">I</button>
-          <button class="format-btn" @click="applyTextStyle('underline')" :class="{ active: activeComponent.textDecoration === 'underline' }" title="Underline">U</button>
-          <button class="format-btn" @click="applyTextStyle('strikethrough')" :class="{ active: activeComponent.textDecoration === 'line-through' }" title="Strikethrough">S</button>
-          <input type="color" v-model="activeComponent.textDecorationColor" class="mini-color-input" title="Line Color" />
-        </div>
-      </div>
+                            <div class="detail-section">
+                                <label class="detail-label">Border Width:</label>
+                                <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderWidth" class="detail-input" @input="drawComponents" />
+                            </div>
 
-      <div class="detail-section">
-        <label class="detail-label">Font Family:</label>
-        <select v-model="activeComponent.fontFamily" class="detail-input" @change="updateActiveComponentPosition">
-          <option value="sans-serif">Sans Serif</option>
-          <option value="serif">Serif</option>
-          <option value="monospace">Monospace</option>
-          <option value="cursive">Cursive</option>
-          <option value="fantasy">Fantasy</option>
-        </select>
-      </div>
-      <div class="detail-section">
-        <label class="detail-label">Font Size:</label>
-        <input type="number" v-model.number="activeComponent.fontSize" class="detail-input" @input="updateActiveComponentPosition" />
-      </div>
-      <div class="detail-section">
-        <label class="detail-label">Text Color:</label>
-         <div class="color-picker-container">
-           <input type="color" v-model="activeComponent.color" class="color-input" @input="updateActiveComponentPosition" />
-           <div class="color-preview" :style="{ backgroundColor: activeComponent.color }"></div>
-         </div>
-      </div>
-      <div class="detail-section">
-        <label class="detail-label">Background Color:</label>
-         <div class="color-picker-container">
-           <input type="color" v-model="activeComponent.backgroundColor" class="color-input" @input="updateActiveComponentPosition" />
-           <div class="color-preview" :style="{ backgroundColor: activeComponent.backgroundColor }"></div>
-         </div>
-      </div>
-      <div class="detail-section">
-        <label class="detail-label">Border Color:</label>
-         <div class="color-picker-container">
-           <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="updateActiveComponentPosition" />
-           <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
-         </div>
-      </div>
-       <div class="detail-section">
-        <label class="detail-label">Border Width:</label>
-        <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="updateActiveComponentPosition" />
-      </div>
-       <div class="detail-section">
-        <label class="detail-label">Round Corners:</label>
-        <input type="range" v-model.number="activeComponent.borderRadius" min="0" max="50" class="range-input" @input="updateActiveComponentPosition" />
-      </div>
-    </div>
+                            <div class="detail-section">
+                                <label class="detail-label">Border Radius:</label>
+                                <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderRadius" class="detail-input" @input="drawComponents" />
+                            </div>
+                            
+                            <div class="detail-section">
+                                <label class="detail-label">Font Size:</label>
+                                <input type="number" v-model.number="activeComponent.styles[activeStyleState].fontSize" class="detail-input" @input="drawComponents" />
+                            </div>
+                            </div>
+                        </div>
+                        </div>
 
-  </div>
-</div>
+                        <div class="separator"></div>
+
+                        <div class="detail-section">
+                        <label class="detail-label">Position X:</label>
+                        <div class="input-row">
+                            <input type="range" v-model.number="activeComponent.x" :min="GRAPH_MIN_X" :max="GRAPH_MAX_X" class="range-input" @input="updateActiveComponentPosition" />
+                            <input type="number" v-model.number="activeComponent.x" class="number-input" @input="updateActiveComponentPosition" />
+                        </div>
+                        </div>
+                        <div class="detail-section">
+                        <label class="detail-label">Position Y:</label>
+                        <div class="input-row">
+                            <input type="range" v-model.number="activeComponent.y" :min="GRAPH_MIN_Y" :max="GRAPH_MAX_Y" class="range-input" @input="updateActiveComponentPosition" />
+                            <input type="number" v-model.number="activeComponent.y" class="number-input" @input="updateActiveComponentPosition" />
+                        </div>
+                        </div>
+                        
+                        <div class="detail-section">
+                        <label class="detail-label">Width (px):</label>
+                        <div class="input-row">
+                            <input type="range" v-model.number="activeComponent.width" min="10" max="800" class="range-input" @input="updateActiveComponentSize" />
+                            <input type="number" v-model.number="activeComponent.width" class="number-input" @input="updateActiveComponentSize" />
+                        </div>
+                        </div>
+                        
+                        <div class="detail-section">
+                        <label class="detail-label">Height (px):</label>
+                        <div class="input-row">
+                            <input type="range" v-model.number="activeComponent.height" min="10" max="600" class="range-input" @input="updateActiveComponentSize" />
+                            <input type="number" v-model.number="activeComponent.height" class="number-input" @input="updateActiveComponentSize" />
+                        </div>
+                        </div>
+
+                        <div v-if="activeComponent.type !== 'options'">
+                        <div class="detail-section">
+                            <label class="detail-label">Rotation (deg):</label>
+                            <div class="input-row">
+                            <input type="range" v-model.number="activeComponent.rotation" min="0" max="360" class="range-input" @input="updateActiveComponentPosition" />
+                            <input type="number" v-model.number="activeComponent.rotation" class="number-input" @input="updateActiveComponentPosition" />
+                            </div>
+                        </div>
+                        </div>
+
+                        <div v-if="activeComponent.type === 'video'">
+                        <div class="detail-section">
+                            <div class="checkbox-row">
+                                <label class="detail-label" style="margin-bottom:0;">Loop:</label>
+                                <input type="checkbox" v-model="activeComponent.isLoop" @change="updateVideoProperties" />
+                            </div>
+                        </div>
+                        <div class="detail-section">
+                            <div class="checkbox-row">
+                                <label class="detail-label" style="margin-bottom:0;">Mute:</label>
+                                <input type="checkbox" v-model="activeComponent.isMuted" @change="updateVideoProperties" />
+                            </div>
+                        </div>
+                        
+                        <div class="detail-section">
+                            <label class="detail-label">Background Music Volume:</label>
+                            <div class="input-row">
+                                <input 
+                                    type="range" 
+                                    v-model.number="activeComponent.bgMusicVolume" 
+                                    min="0" max="1" step="0.05"
+                                    class="range-input"
+                                />
+                                <span style="color: #00ff88; font-family: monospace; width: 40px; text-align:right;">
+                                    {{ Math.round((activeComponent.bgMusicVolume || 0.2) * 100) }}%
+                                </span>
+                            </div>
+                            <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; font-style: italic;">
+                                Music volume when this video plays.
+                            </div>
+                        </div>
+                        </div>
+
+                        <div v-if="activeComponent.type === 'text'">
+                        <div class="detail-section">
+                            <label class="detail-label">Content:</label>
+                            <input 
+                            v-model="activeComponent.content" 
+                            class="detail-input" 
+                            @input="updateActiveComponentPosition" 
+                            @select="handleTextSelect"
+                            />
+                            
+                            <div v-if="textSelection.text.length > 0" class="formatting-controls">
+                            <button class="format-btn" @click="applyTextStyle('bold', activeComponent.fontWeight === 'bold' ? 'normal' : 'bold')" :class="{ active: activeComponent.fontWeight === 'bold' }" title="Bold">B</button>
+                            <button class="format-btn" @click="applyTextStyle('italic')" :class="{ active: activeComponent.fontStyle === 'italic' }" title="Italic">I</button>
+                            <button class="format-btn" @click="applyTextStyle('underline')" :class="{ active: activeComponent.textDecoration === 'underline' }" title="Underline">U</button>
+                            <button class="format-btn" @click="applyTextStyle('strikethrough')" :class="{ active: activeComponent.textDecoration === 'line-through' }" title="Strikethrough">S</button>
+                            <input type="color" v-model="activeComponent.textDecorationColor" class="mini-color-input" title="Line Color" />
+                            </div>
+                        </div>
+
+                        <div class="detail-section">
+                            <label class="detail-label">Font Family:</label>
+                            <select v-model="activeComponent.fontFamily" class="detail-input" @change="updateActiveComponentPosition">
+                            <option value="sans-serif">Sans Serif</option>
+                            <option value="serif">Serif</option>
+                            <option value="monospace">Monospace</option>
+                            <option value="cursive">Cursive</option>
+                            <option value="fantasy">Fantasy</option>
+                            </select>
+                        </div>
+                        <div class="detail-section">
+                            <label class="detail-label">Font Size:</label>
+                            <input type="number" v-model.number="activeComponent.fontSize" class="detail-input" @input="updateActiveComponentPosition" />
+                        </div>
+                        <div class="detail-section">
+                            <label class="detail-label">Text Color:</label>
+                            <div class="color-picker-container">
+                            <input type="color" v-model="activeComponent.color" class="color-input" @input="updateActiveComponentPosition" />
+                            <div class="color-preview" :style="{ backgroundColor: activeComponent.color }"></div>
+                            </div>
+                        </div>
+                        <div class="detail-section">
+                            <label class="detail-label">Background Color:</label>
+                            <div class="color-picker-container">
+                            <input type="color" v-model="activeComponent.backgroundColor" class="color-input" @input="updateActiveComponentPosition" />
+                            <div class="color-preview" :style="{ backgroundColor: activeComponent.backgroundColor }"></div>
+                            </div>
+                        </div>
+                        <div class="detail-section">
+                            <label class="detail-label">Border Color:</label>
+                            <div class="color-picker-container">
+                            <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="updateActiveComponentPosition" />
+                            <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
+                            </div>
+                        </div>
+                        <div class="detail-section">
+                            <label class="detail-label">Border Width:</label>
+                            <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="updateActiveComponentPosition" />
+                        </div>
+                        <div class="detail-section">
+                            <label class="detail-label">Round Corners:</label>
+                            <input type="range" v-model.number="activeComponent.borderRadius" min="0" max="50" class="range-input" @input="updateActiveComponentPosition" />
+                        </div>
+                        </div>
+
+                    </div>
+                  </div>
 
                 </div>
             </template>
@@ -4047,12 +4284,6 @@ const onPreviewWheel = (e) => {
                                 <template v-if="setVarValueType === 'constant'">{{ setVarValue || '0' }}</template>
                                 <template v-else>{{ globalVariables.find(v => v.id === setVarValue)?.name || '?' }}</template>
                             </span>
-                            <span class="eq-part op">  
-                              =
-                            </span>
-                            <span class="eq-part value">
-                              {{globalVariables.find(v => v.id === setVarId)?.name || '?'}}
-                            </span>
                         </div>
 
                     </div>
@@ -4085,7 +4316,53 @@ const onPreviewWheel = (e) => {
              @mousedown="onPreviewMouseDown"
              @mouseup="onPreviewMouseUp"
              @wheel="onPreviewWheel">
+             
              <canvas ref="previewCanvasRef" class="preview-canvas"></canvas>
+             
+             <div class="preview-dom-layer">
+                <template v-if="nodeScenes[currentPreviewSceneIndex]">
+                    <div 
+                        v-for="comp in nodeScenes[currentPreviewSceneIndex].components"
+                        :key="comp.id"
+                        class="preview-component-wrapper"
+                        :style="getPreviewComponentStyle(comp)" 
+                    >
+                        <div v-if="comp.type === 'input'" class="preview-input-group" :style="{ '--focus-bg': comp.focusBackgroundColor, '--focus-border': comp.focusBorderColor }">
+                            <input 
+                                v-model="comp.currentValue"
+                                :disabled="comp.isSubmitted"
+                                :placeholder="comp.isSubmitted ? '' : 'Type here...'"
+                                class="preview-real-input"
+                                :style="{ 
+                                    backgroundColor: comp.backgroundColor, 
+                                    borderColor: comp.borderColor, 
+                                    borderRadius: comp.borderRadius + 'px',
+                                    borderWidth: comp.borderWidth + 'px',
+                                    color: comp.textColor,
+                                    fontFamily: comp.fontFamily,
+                                    fontSize: comp.fontSize + 'px'
+                                }"
+                            />
+                            <button 
+                                class="preview-input-btn"
+                                :disabled="comp.isSubmitted"
+                                :style="{
+                                    backgroundColor: comp.isSubmitted ? '#10b981' : comp.buttonNormalColor,
+                                    color: comp.buttonTextColor
+                                }"
+                                @click="handleInputSubmit(comp)"
+                                @mouseover="(e) => !comp.isSubmitted && (e.target.style.backgroundColor = comp.buttonHoverColor)"
+                                @mouseleave="(e) => !comp.isSubmitted && (e.target.style.backgroundColor = comp.buttonNormalColor)"
+                                @mousedown="(e) => !comp.isSubmitted && (e.target.style.backgroundColor = comp.buttonClickColor)"
+                                @mouseup="(e) => !comp.isSubmitted && (e.target.style.backgroundColor = comp.buttonHoverColor)"
+                            >
+                                {{ comp.isSubmitted ? comp.buttonSubmittedText : comp.buttonText }}
+                            </button>
+                        </div>
+                    </div>
+                </template>
+             </div>
+
              <button class="preview-close-btn" @click.stop="exitPreview">Stop Preview ✕</button>
              <div class="preview-hint">Click to advance sequence</div>
         </div>
@@ -4103,6 +4380,37 @@ const onPreviewWheel = (e) => {
     background-color: #000;
   }
   .canvas { position: absolute; inset: 0 }
+
+  /* Context Menu Styles */
+  .context-menu {
+    position: fixed;
+    z-index: 1000;
+    background: #1f2937;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 4px;
+    min-width: 160px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .context-menu-item {
+    padding: 8px 12px;
+    color: #e2e8f0;
+    font-size: 0.9rem;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .context-menu-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
 
   .header {
     position: absolute;
@@ -4155,7 +4463,7 @@ const onPreviewWheel = (e) => {
     transform: rotate(30deg);
   }
 
-  /* NEW: Play Project Button Styles */
+  /* Play Project Button Styles */
   .play-project-btn {
     position: absolute;
     right: 104px; /* Left of settings (60px) + gap */
@@ -4274,6 +4582,41 @@ const onPreviewWheel = (e) => {
       border: 1px solid rgba(255,255,255,0.1);
   }
 
+  /* Variable Type Selector (Radio Buttons) */
+  .var-type-selector {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 4px;
+  }
+
+  .var-type-selector label {
+      flex: 1;
+      text-align: center;
+      background: rgba(0,0,0,0.3);
+      padding: 6px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.75rem;
+      color: #9ca3af;
+      border: 1px solid transparent;
+      transition: all 0.2s;
+  }
+
+  .var-type-selector label:hover {
+      background: rgba(255,255,255,0.05);
+  }
+
+  .var-type-selector label.active {
+      background: rgba(0, 255, 136, 0.1);
+      color: #00ff88;
+      border-color: rgba(0, 255, 136, 0.3);
+      font-weight: 600;
+  }
+
+  .var-type-selector input {
+      display: none; /* Hide default radio */
+  }
+
   .var-input {
       background: rgba(0,0,0,0.3);
       border: 1px solid rgba(255,255,255,0.1);
@@ -4347,12 +4690,28 @@ const onPreviewWheel = (e) => {
       color: #e2e8f0;
       font-size: 0.9rem;
       font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+  }
+
+  /* Variable Type Tag (Icon) */
+  .var-type-tag {
+      font-size: 0.65rem;
+      padding: 1px 4px;
+      border-radius: 3px;
+      background: rgba(255,255,255,0.1);
+      color: #9ca3af;
+      font-family: monospace;
   }
 
   .var-value-display {
       color: #9ca3af;
       font-size: 0.8rem;
       font-family: monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
   }
 
   .delete-var-btn {
@@ -5131,6 +5490,7 @@ const onPreviewWheel = (e) => {
   .hover-blue:hover { background-color: rgba(59, 130, 246, 0.2); }
   .hover-yellow:hover { background-color: rgba(234, 179, 8, 0.2); }
   .hover-red:hover { background-color: rgba(248, 113, 113, 0.2); } /* Red for options */
+  .hover-purple:hover { background-color: rgba(168, 85, 247, 0.2); } /* Purple for input */
 
 
   /* Scene Content Body Styles */
@@ -5210,6 +5570,7 @@ const onPreviewWheel = (e) => {
   :deep(.bg-blue) { background-color: #3b82f6; }
   :deep(.bg-yellow) { background-color: #eab308; }
   :deep(.bg-red) { background-color: #f87171; } /* Red for options */
+  :deep(.bg-purple) { background-color: #a855f7; } /* Purple for input */
 
   /* Drag Handle (New) */
   :deep(.image-drag-handle) {
@@ -5409,6 +5770,69 @@ const onPreviewWheel = (e) => {
       border-radius: 20px;
   }
 
+  /* ==========================================================================
+     NEW: PREVIEW DOM OVERLAY STYLES
+     ========================================================================== */
+  .preview-dom-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none; /* Let background clicks pass through */
+      z-index: 100;
+  }
+
+  .preview-component-wrapper {
+      pointer-events: auto; /* Re-enable clicks for input elements */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+  }
+
+  .preview-input-group {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+  }
+
+  .preview-real-input {
+      flex: 1;
+      height: 100%;
+      outline: none;
+      padding: 0 10px;
+      border-top-right-radius: 0 !important;
+      border-bottom-right-radius: 0 !important;
+      transition: all 0.2s;
+      box-sizing: border-box;
+  }
+
+  .preview-real-input:focus {
+      background-color: var(--focus-bg) !important;
+      border-color: var(--focus-border) !important;
+  }
+
+  .preview-input-btn {
+      height: 100%;
+      padding: 0 20px;
+      border: none;
+      cursor: pointer;
+      font-weight: bold;
+      border-top-right-radius: 4px;
+      border-bottom-right-radius: 4px;
+      transition: background-color 0.2s;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+  }
+  
+  .preview-input-btn:disabled {
+      cursor: default;
+      opacity: 0.9;
+  }
+
   .fade-enter-active,
   .fade-leave-active {
     transition: opacity 0.5s ease;
@@ -5487,7 +5911,7 @@ const onPreviewWheel = (e) => {
       border-radius: 6px;
   }
 
-  /* NEW: Settings Overlay & Modal Styles */
+  /* Settings Overlay & Modal Styles */
   .settings-overlay {
     position: fixed;
     inset: 0;
@@ -5746,33 +6170,5 @@ const onPreviewWheel = (e) => {
       color: #00ff88;
       background: rgba(0,255,136,0.1);
   }
-  .context-menu {
-  position: fixed;
-  z-index: 1000;
-  background: #1f2937;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  padding: 4px;
-  min-width: 160px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-  display: flex;
-  flex-direction: column;
-}
 
-.context-menu-item {
-  padding: 8px 12px;
-  color: #e2e8f0;
-  font-size: 0.9rem;
-  cursor: pointer;
-  border-radius: 4px;
-  transition: background 0.2s;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.context-menu-item:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
-}
 </style>
