@@ -18,6 +18,7 @@ const newVarName = ref("")
 const newVarValue = ref("")
 const newVarType = ref("string") 
 
+
 watch(globalVariables, (newVars) => {
     Canvas_Status.value.globalVariables = newVars
 }, { deep: true })
@@ -28,6 +29,13 @@ const toggleAddVariable = () => {
   newVarValue.value = ""
   newVarType.value = "string"
 }
+
+/* ================= IF-ELSE EDITOR STATE ================= */
+const ifElseVarId = ref("")
+const ifElseOperator = ref("==")
+const ifElseValueType = ref("constant") 
+const ifElseValue = ref("")
+const ifElseOperators = ['==', '!=', '>', '<', '>=', '<='] // Defined here to prevent crash
 
 const addGlobalVariable = () => {
   const name = newVarName.value.trim()
@@ -86,7 +94,7 @@ const setVarOperator = ref("=")
 const setVarValueType = ref("constant") 
 const setVarValue = ref("")
 const setVarStringPrefix = ref("") 
-const setVarStringSuffix = ref("") 
+const setVarStringSuffix = ref("")
 
 // --- Computed & Watchers relying on setVarId ---
 const availableOperators = computed(() => {
@@ -108,24 +116,22 @@ watch(setVarId, (newId) => {
 const showProjectSettings = ref(false)
 const rootNodeId = ref(null)
 
+/* ================= LOGIC ENGINE ================= */
 const processLogicNode = (nodeStatus) => {
+   // 1. SET VARIABLE LOGIC
    if (nodeStatus.node_type === 'Set Variables') {
-       // Find Target Variable in Global State
        const targetVar = globalVariables.value.find(v => v.id === nodeStatus.varId);
        
        if (targetVar) {
-           // 1. INTEGER LOGIC
            if (targetVar.type === 'integer') {
                let operand = nodeStatus.varValue;
-               // Handle Variable-to-Variable math
                if (nodeStatus.varValueType === 'variable') {
                    const sourceVar = globalVariables.value.find(v => v.id === nodeStatus.varValue);
                    operand = sourceVar ? sourceVar.value : 0;
                }
-               
                operand = Number(operand);
                let current = Number(targetVar.value);
-               if (isNaN(current)) current = 0; // Safety
+               if (isNaN(current)) current = 0;
                
                if (!isNaN(operand)) {
                    switch(nodeStatus.varOperator) {
@@ -136,35 +142,60 @@ const processLogicNode = (nodeStatus) => {
                        case '/': targetVar.value = current / operand; break;
                    }
                }
-           } 
-           // 2. STRING LOGIC
-           else if (targetVar.type === 'string') {
+           } else if (targetVar.type === 'string') {
                if (nodeStatus.varOperator === '=') {
-                   // Direct Assignment
                    let newVal = nodeStatus.varValue;
                    if (nodeStatus.varValueType === 'variable') {
                         const sourceVar = globalVariables.value.find(v => v.id === nodeStatus.varValue);
                         newVal = sourceVar ? sourceVar.value : "";
                    }
                    targetVar.value = String(newVal);
-               } 
-               else if (nodeStatus.varOperator === '+') {
-                   // String Concatenation: Prefix + CurrentValue + Suffix
+               } else if (nodeStatus.varOperator === '+') {
                    const prefix = nodeStatus.stringPrefix || "";
                    const suffix = nodeStatus.stringSuffix || "";
                    const currentVal = String(targetVar.value || "");
-                   
                    targetVar.value = prefix + currentVal + suffix;
                }
            }
            console.log(`[Logic Executed] Variable '${targetVar.name}' is now:`, targetVar.value);
        }
-       
-       // Return the ID of the node this Logic Node connects to
        return nodeStatus.Next; 
    } 
    
-   // Future logic nodes (If-Else) would go here
+   // 2. IF-ELSE LOGIC
+   else if (nodeStatus.node_type === 'If-Else') {
+       const variable = globalVariables.value.find(v => v.id === nodeStatus.varId);
+       if (!variable) return nodeStatus.NextFalse; // Default to false if error
+
+       let leftVal = variable.value;
+       let rightVal = nodeStatus.compareValue;
+
+       if (nodeStatus.compareValueType === 'variable') {
+           const rightVar = globalVariables.value.find(v => v.id === nodeStatus.compareValue);
+           rightVal = rightVar ? rightVar.value : 0;
+       }
+
+       if (variable.type === 'integer') {
+           leftVal = Number(leftVal);
+           rightVal = Number(rightVal);
+       } else {
+           leftVal = String(leftVal);
+           rightVal = String(rightVal);
+       }
+
+       let result = false;
+       switch (nodeStatus.operator) {
+           case '==': result = (leftVal == rightVal); break;
+           case '!=': result = (leftVal != rightVal); break;
+           case '>':  result = (leftVal > rightVal); break;
+           case '<':  result = (leftVal < rightVal); break;
+           case '>=': result = (leftVal >= rightVal); break;
+           case '<=': result = (leftVal <= rightVal); break;
+       }
+       console.log(`[If-Else] Result: ${result}`);
+       return result ? nodeStatus.NextTrue : nodeStatus.NextFalse;
+   }
+   
    return null; 
 }
 
@@ -1531,7 +1562,14 @@ const openPopup = node => {
          setVarValue.value = nodeStatus.varValue || ""
     } else if (nodeStatus.node_type === 'If-Else') {
          viewMode.value = 'ifElse' 
-    } else {
+    }else if (nodeStatus.node_type === 'If-Else') {
+         viewMode.value = 'ifElse'
+         ifElseVarId.value = nodeStatus.varId || ""
+         ifElseOperator.value = nodeStatus.operator || "=="
+         ifElseValueType.value = nodeStatus.compareValueType || "constant"
+         ifElseValue.value = nodeStatus.compareValue || ""
+    } 
+    else {
          viewMode.value = 'scenes'
          if (nodeStatus.scenes) {
             nodeScenes.value = nodeStatus.scenes.map(s => ({
@@ -1621,6 +1659,19 @@ const closePopup = () => {
           // Save new fields
           status.stringPrefix = setVarStringPrefix.value
           status.stringSuffix = setVarStringSuffix.value
+      }
+    }
+    if (popupNode.value) {
+      const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
+      
+      if (status && status.node_type === 'Set Variables') {
+          // ... (existing Set Var save logic)
+      } 
+      else if (status && status.node_type === 'If-Else') {
+          status.varId = ifElseVarId.value
+          status.operator = ifElseOperator.value
+          status.compareValueType = ifElseValueType.value
+          status.compareValue = ifElseValue.value
       }
   }
 
@@ -3438,44 +3489,43 @@ const handleOptionNavigation = (compId, optionId) => {
 }
 
 const loadNodeForPreview = (targetNodeId) => {
-    // 1. Recursive Logic Processing Loop
     let currentId = targetNodeId;
     let currentStatus = Canvas_Status.value.find(s => s.index === currentId);
     let safetyCounter = 0;
 
-    // While we have a node, and that node is a "Logic" node (not visual)
-    while (currentStatus && (currentStatus.node_type === 'Set Variables')) {
+    // --- SEAMLESS LOGIC LOOP ---
+    // Keep processing and jumping until we hit a visual node (General) or stop
+    while (currentStatus && (currentStatus.node_type === 'Set Variables' || currentStatus.node_type === 'If-Else')) {
         
-        // Infinite loop protection
-        if (safetyCounter > 50) {
+        if (safetyCounter > 100) {
             alert("Error: Infinite loop detected in logic nodes.");
             exitPreview();
             return;
         }
 
-        // EXECUTE THE LOGIC IMMEDIATELY
+        // Execute logic immediately and get the next ID
         const nextId = processLogicNode(currentStatus);
 
-        // Check if the logic node leads to a dead end
         if (nextId === null || nextId === undefined) {
-            alert("Flow ended at a Set Variable node with no output connection.");
+            // Flow ends here (e.g. end of a branch)
             exitPreview();
             return;
         }
 
-        // Move to the next node
+        // Jump to next node
         currentId = nextId;
         currentStatus = Canvas_Status.value.find(s => s.index === currentId);
         safetyCounter++;
     }
 
-    // 2. We found a Visual Node (General). Render it.
+    // If we are here, 'currentStatus' is a General Node (Visual)
     if (!currentStatus) {
-        alert("Error: Target node not found.");
+        alert("Error: Target node data not found.");
         exitPreview();
         return;
     }
 
+    // --- SETUP VISUAL PREVIEW ---
     isPreviewMode.value = true;
 
     stopAllVideos();
@@ -3484,16 +3534,15 @@ const loadNodeForPreview = (targetNodeId) => {
         previewAudioElement.value = null;
     }
 
-    // Update PopupNode to the visual node we eventually found
     const realNode = nodes.value.find(n => n.id === currentId);
     popupNode.value = realNode || { id: currentId, x: 0, y: 0 }; 
 
-    // Load scenes for the visual node
     if (currentStatus.scenes) {
       nodeScenes.value = currentStatus.scenes.map(s => ({
           ...s,
           components: s.components ? [...s.components] : [] 
       }))
+      // Reset inputs for the new scene
       resetComponentsRuntimeState(nodeScenes.value);
     } else {
       nodeScenes.value = [];
@@ -3516,9 +3565,8 @@ const loadNodeForPreview = (targetNodeId) => {
         previewCtx = previewCanvasRef.value.getContext('2d');
         resizePreviewCanvas();
         drawPreview();
-        startRenderLoop(); // Ensure loop runs
+        startRenderLoop(); // Kickstart animation
 
-        // Auto-render first component of the new visual node if set
         const firstScene = nodeScenes.value[0]
         if (firstScene && firstScene.components && firstScene.components.length > 0) {
             if (firstScene.components[0].autoRender) {
@@ -4675,9 +4723,82 @@ const onPreviewWheel = (e) => {
                 <div class="set-variable-view">
                      <div class="logic-editor-container">
                         <div class="logic-header">
-                            <h3>If-Else Logic</h3>
-                            <p style="color:#eab308">Condition configuration coming soon...</p>
+                            <h3 style="color: #eab308;">If-Else Condition</h3>
+                            <p>Route the flow based on a variable's value.</p>
                         </div>
+
+                        <div class="variable-logic-row">
+                            <div class="logic-group">
+                                <label>Variable</label>
+                                <select v-model="ifElseVarId" class="logic-select">
+                                    <option value="" disabled>Select Variable</option>
+                                    <option v-for="v in globalVariables" :key="v.id" :value="v.id">
+                                        {{ v.name }} ({{ v.type }})
+                                    </option>
+                                </select>
+                            </div>
+
+                            <div class="logic-group small">
+                                <label>Operator</label>
+                                <select v-model="ifElseOperator" class="logic-select operator" style="border-color: #eab308; color: #eab308; background: rgba(234, 179, 8, 0.1);">
+                                    <option v-for="op in ifElseOperators" :key="op" :value="op">{{ op }}</option>
+                                </select>
+                            </div>
+
+                            <div class="logic-group large">
+                                <div class="value-type-toggle">
+                                    <label>Compare To:</label>
+                                    <div class="toggle-buttons">
+                                        <button 
+                                            :class="{ active: ifElseValueType === 'constant' }" 
+                                            @click="ifElseValueType = 'constant'"
+                                        >Value</button>
+                                        <button 
+                                            :class="{ active: ifElseValueType === 'variable' }" 
+                                            @click="ifElseValueType = 'variable'"
+                                        >Variable</button>
+                                    </div>
+                                </div>
+                                
+                                <div v-if="ifElseValueType === 'constant'">
+                                    <input 
+                                        :type="globalVariables.find(v => v.id === ifElseVarId)?.type === 'integer' ? 'number' : 'text'"
+                                        v-model="ifElseValue" 
+                                        class="logic-input" 
+                                        placeholder="Value..."
+                                    />
+                                </div>
+                                <div v-else>
+                                    <select v-model="ifElseValue" class="logic-select">
+                                        <option value="" disabled>Select Variable</option>
+                                        <option v-for="v in globalVariables" :key="v.id" :value="v.id">
+                                            {{ v.name }}
+                                        </option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="preview-equation" style="border-color: #eab308;">
+                            <span class="eq-part target">{{ globalVariables.find(v => v.id === ifElseVarId)?.name || '?' }}</span>
+                            <span class="eq-part op" style="color: #eab308;">{{ ifElseOperator }}</span>
+                            <span class="eq-part value" style="background: rgba(234, 179, 8, 0.1); color: #eab308;">
+                                <template v-if="ifElseValueType === 'constant'">{{ ifElseValue || '?' }}</template>
+                                <template v-else>{{ globalVariables.find(v => v.id === ifElseValue)?.name || '?' }}</template>
+                            </span>
+                        </div>
+                        
+                        <div style="display:flex; justify-content:space-between; margin-top: 20px; padding: 0 40px;">
+                            <div style="text-align:center; color: #00ff88;">
+                                <div>True</div>
+                                <div style="font-size:20px;">↓</div>
+                            </div>
+                            <div style="text-align:center; color: #ff2a2a;">
+                                <div>False</div>
+                                <div style="font-size:20px;">↓</div>
+                            </div>
+                        </div>
+
                      </div>
                 </div>
             </template>
