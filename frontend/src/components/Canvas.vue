@@ -2834,7 +2834,11 @@ const onMouseUp = e => {
   }
 
   if (menuDragging) {
-    const id = nodes.value.length
+    // --- FIX START: Calculate ID based on Max ID instead of Length ---
+    const maxId = nodes.value.length > 0 ? Math.max(...nodes.value.map(n => n.id)) : -1
+    const id = maxId + 1
+    // --- FIX END ---
+
     const x = mouseWorld.x
     const y = mouseWorld.y
     nodes.value.push({ id, x, y })
