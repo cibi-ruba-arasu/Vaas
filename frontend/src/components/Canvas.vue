@@ -19,6 +19,7 @@ const newVarValue = ref("")
 const newVarType = ref("string") 
 
 
+
 watch(globalVariables, (newVars) => {
     Canvas_Status.value.globalVariables = newVars
 }, { deep: true })
@@ -115,6 +116,48 @@ watch(setVarId, (newId) => {
 // --- Project Settings State ---
 const showProjectSettings = ref(false)
 const rootNodeId = ref(null)
+
+// --- NEW: Language Settings State ---
+const projectLanguage = ref("en-US") // Default to American English
+const supportedLanguages = [
+    { code: "ar", name: "Arabic" },
+    { code: "bg", name: "Bulgarian" },
+    { code: "zh-Hans", name: "Chinese (Simplified)" },
+    { code: "zh-Hant", name: "Chinese (Traditional)" },
+    { code: "cs", name: "Czech" },
+    { code: "da", name: "Danish" },
+    { code: "nl", name: "Dutch" },
+    { code: "en-GB", name: "English (British)" },
+    { code: "en-US", name: "English (American)" },
+    { code: "et", name: "Estonian" },
+    { code: "fi", name: "Finnish" },
+    { code: "fr", name: "French" },
+    { code: "de", name: "German" },
+    { code: "el", name: "Greek" },
+    { code: "he", name: "Hebrew" },
+    { code: "hu", name: "Hungarian" },
+    { code: "id", name: "Indonesian" },
+    { code: "it", name: "Italian" },
+    { code: "ja", name: "Japanese" },
+    { code: "ko", name: "Korean" },
+    { code: "lv", name: "Latvian" },
+    { code: "lt", name: "Lithuanian" },
+    { code: "nb", name: "Norwegian Bokmål" },
+    { code: "pl", name: "Polish" },
+    { code: "pt-BR", name: "Portuguese (Brazilian)" },
+    { code: "pt-PT", name: "Portuguese (European)" },
+    { code: "ro", name: "Romanian" },
+    { code: "ru", name: "Russian" },
+    { code: "sk", name: "Slovak" },
+    { code: "sl", name: "Slovenian" },
+    { code: "es", name: "Spanish (European)" },
+    { code: "es-419", name: "Spanish (Latin American)" },
+    { code: "sv", name: "Swedish" },
+    { code: "th", name: "Thai" },
+    { code: "tr", name: "Turkish" },
+    { code: "uk", name: "Ukrainian" },
+    { code: "vi", name: "Vietnamese" }
+]
 
 /* ================= LOGIC ENGINE ================= */
 const processLogicNode = (nodeStatus) => {
@@ -3784,6 +3827,15 @@ const onPreviewWheel = (e) => {
                     </option>
                 </select>
             </div>
+            <div class="setting-item">
+                <label class="setting-label">Story Language:</label>
+                <div class="setting-desc">Select the primary language for your story content.</div>
+                <select v-model="projectLanguage" class="setting-select">
+                    <option v-for="lang in supportedLanguages" :key="lang.code" :value="lang.code">
+                        {{ lang.name }}
+                    </option>
+                </select>
+            </div>
 
             <div class="setting-item" style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
                  <p style="color: #6b7280; font-size: 0.9rem; font-style: italic;">
@@ -4099,11 +4151,21 @@ const onPreviewWheel = (e) => {
                             <div class="detail-section">
                                 <label class="detail-label">Font Family:</label>
                                 <select v-model="activeComponent.fontFamily" class="detail-input" @change="drawComponents">
-                                    <option value="sans-serif">Sans Serif</option>
-                                    <option value="serif">Serif</option>
-                                    <option value="monospace">Monospace</option>
-                                    <option value="cursive">Cursive</option>
-                                    <option value="fantasy">Fantasy</option>
+                                    <option value="sans-serif">Default (Sans Serif)</option>
+                                    <option value="Arial, sans-serif">Arial</option>
+                                    <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica</option>
+                                    <option value="'Times New Roman', Times, serif">Times New Roman</option>
+                                    <option value="Georgia, serif">Georgia</option>
+                                    <option value="'Courier New', Courier, monospace">Courier New</option>
+                                    <option value="Verdana, sans-serif">Verdana</option>
+                                    <option value="Tahoma, sans-serif">Tahoma</option>
+                                    <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
+                                    <option value="Impact, sans-serif">Impact</option>
+                                    <option value="'Brush Script MT', cursive">Brush Script</option>
+                                    <option value="serif">Generic Serif</option>
+                                    <option value="monospace">Generic Monospace</option>
+                                    <option value="cursive">Generic Cursive</option>
+                                    <option value="fantasy">Generic Fantasy</option>
                                 </select>
                             </div>
                             <div class="detail-section">
@@ -4153,17 +4215,25 @@ const onPreviewWheel = (e) => {
                             <div class="separator"></div>
                             
                             <div class="detail-section">
-                                <label class="detail-label" style="color: #a855f7;">Variable Assignment</label>
-                                <select v-model="activeComponent.targetVariableId" class="detail-input">
-                                    <option value="" disabled>Select Target Variable</option>
-                                    <option v-for="v in globalVariables" :key="v.id" :value="v.id">
-                                        {{ v.name }} ({{ v.type }})
-                                    </option>
-                                </select>
-                                <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px;">
-                                    User input will be validated against variable type.
+                                    <label class="detail-label">Font Family:</label>
+                                    <select v-model="activeComponent.fontFamily" class="detail-input" @change="drawComponents">
+                                        <option value="sans-serif">Default (Sans Serif)</option>
+                                        <option value="Arial, sans-serif">Arial</option>
+                                        <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica</option>
+                                        <option value="'Times New Roman', Times, serif">Times New Roman</option>
+                                        <option value="Georgia, serif">Georgia</option>
+                                        <option value="'Courier New', Courier, monospace">Courier New</option>
+                                        <option value="Verdana, sans-serif">Verdana</option>
+                                        <option value="Tahoma, sans-serif">Tahoma</option>
+                                        <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
+                                        <option value="Impact, sans-serif">Impact</option>
+                                        <option value="'Brush Script MT', cursive">Brush Script</option>
+                                        <option value="serif">Generic Serif</option>
+                                        <option value="monospace">Generic Monospace</option>
+                                        <option value="cursive">Generic Cursive</option>
+                                        <option value="fantasy">Generic Fantasy</option>
+                                    </select>
                                 </div>
-                            </div>
 
                             <div class="detail-section">
                                 <label class="detail-label" style="color: #a855f7;">Text Settings</label>
@@ -4566,11 +4636,21 @@ const onPreviewWheel = (e) => {
                         <div class="detail-section">
                             <label class="detail-label">Font Family:</label>
                             <select v-model="activeComponent.fontFamily" class="detail-input" @change="updateActiveComponentPosition">
-                            <option value="sans-serif">Sans Serif</option>
-                            <option value="serif">Serif</option>
-                            <option value="monospace">Monospace</option>
-                            <option value="cursive">Cursive</option>
-                            <option value="fantasy">Fantasy</option>
+                                <option value="sans-serif">Default (Sans Serif)</option>
+                                <option value="Arial, sans-serif">Arial</option>
+                                <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica</option>
+                                <option value="'Times New Roman', Times, serif">Times New Roman</option>
+                                <option value="Georgia, serif">Georgia</option>
+                                <option value="'Courier New', Courier, monospace">Courier New</option>
+                                <option value="Verdana, sans-serif">Verdana</option>
+                                <option value="Tahoma, sans-serif">Tahoma</option>
+                                <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
+                                <option value="Impact, sans-serif">Impact</option>
+                                <option value="'Brush Script MT', cursive">Brush Script</option>
+                                <option value="serif">Generic Serif</option>
+                                <option value="monospace">Generic Monospace</option>
+                                <option value="cursive">Generic Cursive</option>
+                                <option value="fantasy">Generic Fantasy</option>
                             </select>
                         </div>
                         <div class="detail-section">
