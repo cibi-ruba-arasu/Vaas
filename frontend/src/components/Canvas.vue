@@ -2121,45 +2121,112 @@ const drawComponents = () => {
 
 // Updated renderComponent to handle Animation Overrides (like Typewriter text truncation)
 const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
-    // ... [Keep Image/Video/Text sections exactly the same] ...
+    // --- IMAGE COMPONENT ---
     if (comp.type === 'image') {
         if (comp.imgObject) {
             ctx.drawImage(comp.imgObject, screenPos.x - (comp.width / 2), screenPos.y - (comp.height / 2), comp.width, comp.height)
         } else {
             const img = new Image(); img.src = comp.url; comp.imgObject = img;
         }
-    } else if (comp.type === 'video') {
+    } 
+    // --- VIDEO COMPONENT ---
+    else if (comp.type === 'video') {
          if (comp.videoElement) {
              ctx.drawImage(comp.videoElement, screenPos.x - (comp.width / 2), screenPos.y - (comp.height / 2), comp.width, comp.height)
          }
-    } else if (comp.type === 'text') {
-        // ... [Keep Text Logic Same] ...
+    } 
+    // --- TEXT COMPONENT (UPDATED FOR WRAPPING) ---
+    else if (comp.type === 'text') {
         ctx.translate(screenPos.x, screenPos.y) 
+        
+        // 1. Draw Background
         if (comp.backgroundColor && comp.backgroundColor !== 'transparent') {
             ctx.fillStyle = comp.backgroundColor
             if (comp.borderRadius > 0) { drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius); ctx.fill() } 
             else { ctx.fillRect(-(comp.width/2), -(comp.height/2), comp.width, comp.height) }
         }
+        
+        // 2. Draw Border
         if (comp.borderWidth > 0 && comp.borderColor !== 'transparent') {
             ctx.strokeStyle = comp.borderColor; ctx.lineWidth = comp.borderWidth
             if (comp.borderRadius > 0) { drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius); ctx.stroke() } 
             else { ctx.strokeRect(-(comp.width/2), -(comp.height/2), comp.width, comp.height) }
         }
-        const fontWeight = comp.fontWeight || 'normal'; const fontStyle = comp.fontStyle || 'normal'; const fontFamily = comp.fontFamily || 'sans-serif'
-        ctx.font = `${fontStyle} ${fontWeight} ${comp.fontSize}px ${fontFamily}`; ctx.fillStyle = comp.color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-        let contentToDraw = comp.content
+
+        // 3. Setup Font
+        const fontWeight = comp.fontWeight || 'normal'; 
+        const fontStyle = comp.fontStyle || 'normal'; 
+        const fontFamily = comp.fontFamily || 'sans-serif';
+        const fontSize = comp.fontSize || 24;
+        
+        ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`; 
+        ctx.fillStyle = comp.color; 
+        ctx.textAlign = 'center'; 
+        ctx.textBaseline = 'middle';
+
+        // 4. Handle Content & Animation
+        let contentToDraw = comp.content || "";
         if (animationOverride && animationOverride.type === 'typewriter') {
-            const progress = animationOverride.progress; const length = Math.floor(comp.content.length * progress); contentToDraw = comp.content.substring(0, length)
+            const progress = animationOverride.progress; 
+            const length = Math.floor(comp.content.length * progress); 
+            contentToDraw = comp.content.substring(0, length);
         }
-        ctx.fillText(contentToDraw, 0, 0)
-        if (comp.textDecoration === 'underline' || comp.textDecoration === 'line-through') {
-             const metrics = ctx.measureText(contentToDraw); const width = metrics.width
-             ctx.beginPath(); ctx.strokeStyle = comp.textDecorationColor || comp.color; ctx.lineWidth = comp.fontSize / 15
-             const yOffset = comp.textDecoration === 'underline' ? comp.fontSize/2 : 0; ctx.moveTo(-width/2, yOffset); ctx.lineTo(width/2, yOffset); ctx.stroke()
-        }
+
+        // 5. Text Wrapping Logic
+        const maxWidth = Math.max(10, comp.width - 20); // 10px padding on sides
+        const lineHeight = fontSize * 1.2;
+        const paragraphs = contentToDraw.split('\n');
+        let lines = [];
+        
+        paragraphs.forEach(paragraph => {
+             const words = paragraph.split(' ');
+             let currentLine = words[0] || '';
+             
+             for (let i = 1; i < words.length; i++) {
+                const word = words[i];
+                const width = ctx.measureText(currentLine + " " + word).width;
+                if (width < maxWidth) {
+                    currentLine += " " + word;
+                } else {
+                    lines.push(currentLine);
+                    currentLine = word;
+                }
+             }
+             lines.push(currentLine);
+        });
+
+        // 6. Draw Lines Centered Vertically
+        const totalTextHeight = lines.length * lineHeight;
+        let currentY = -(totalTextHeight / 2) + (lineHeight / 2);
+
+        lines.forEach(line => {
+            ctx.fillText(line, 0, currentY);
+
+            // Handle Text Decoration (Underline/Strikethrough) per line
+            if (comp.textDecoration === 'underline' || comp.textDecoration === 'line-through') {
+                 const metrics = ctx.measureText(line); 
+                 const lineWidth = metrics.width;
+                 
+                 ctx.beginPath(); 
+                 ctx.strokeStyle = comp.textDecorationColor || comp.color; 
+                 ctx.lineWidth = fontSize / 15;
+                 
+                 let decorY = currentY;
+                 if (comp.textDecoration === 'underline') {
+                     decorY += fontSize * 0.4; 
+                 } 
+                 
+                 ctx.moveTo(-lineWidth/2, decorY); 
+                 ctx.lineTo(lineWidth/2, decorY); 
+                 ctx.stroke();
+            }
+            
+            currentY += lineHeight;
+        });
+
         ctx.translate(-screenPos.x, -screenPos.y)
     } 
-    // --- UPDATED VARIABLE SECTION ---
+    // --- VARIABLE COMPONENT ---
     else if (comp.type === 'variable') {
         ctx.translate(screenPos.x, screenPos.y) 
         if (comp.backgroundColor && comp.backgroundColor !== 'transparent') {
@@ -2190,9 +2257,8 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         }
         ctx.translate(-screenPos.x, -screenPos.y)
     }
-    // ... [Rest of function (Input, Options) stays the same] ...
+    // --- INPUT COMPONENT ---
     else if (comp.type === 'input') {
-        // ... [Input Rendering Code] ...
         ctx.translate(screenPos.x, screenPos.y)
         if (comp.backgroundColor && comp.backgroundColor !== 'transparent') {
             ctx.fillStyle = comp.backgroundColor
@@ -2223,10 +2289,8 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         ctx.fillText(comp.buttonText, btnX + btnWidth/2, 0);
         ctx.translate(-screenPos.x, -screenPos.y)
     }
+    // --- OPTIONS COMPONENT ---
     else if (comp.type === 'options') {
-        // ... [Options Rendering Code] ...
-        // (Copy the Options logic from your existing file, no changes needed for this specific bug)
-        // Just ensuring the structure is maintained.
         ctx.translate(screenPos.x, screenPos.y) 
         
         // Setup Exit Animation Variables
