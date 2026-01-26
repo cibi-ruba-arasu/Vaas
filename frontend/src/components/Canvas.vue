@@ -19,7 +19,6 @@ const newVarValue = ref("")
 const newVarType = ref("string") 
 
 
-
 watch(globalVariables, (newVars) => {
     Canvas_Status.value.globalVariables = newVars
 }, { deep: true })
@@ -116,48 +115,6 @@ watch(setVarId, (newId) => {
 // --- Project Settings State ---
 const showProjectSettings = ref(false)
 const rootNodeId = ref(null)
-
-// --- NEW: Language Settings State ---
-const projectLanguage = ref("en-US") // Default to American English
-const supportedLanguages = [
-    { code: "ar", name: "Arabic" },
-    { code: "bg", name: "Bulgarian" },
-    { code: "zh-Hans", name: "Chinese (Simplified)" },
-    { code: "zh-Hant", name: "Chinese (Traditional)" },
-    { code: "cs", name: "Czech" },
-    { code: "da", name: "Danish" },
-    { code: "nl", name: "Dutch" },
-    { code: "en-GB", name: "English (British)" },
-    { code: "en-US", name: "English (American)" },
-    { code: "et", name: "Estonian" },
-    { code: "fi", name: "Finnish" },
-    { code: "fr", name: "French" },
-    { code: "de", name: "German" },
-    { code: "el", name: "Greek" },
-    { code: "he", name: "Hebrew" },
-    { code: "hu", name: "Hungarian" },
-    { code: "id", name: "Indonesian" },
-    { code: "it", name: "Italian" },
-    { code: "ja", name: "Japanese" },
-    { code: "ko", name: "Korean" },
-    { code: "lv", name: "Latvian" },
-    { code: "lt", name: "Lithuanian" },
-    { code: "nb", name: "Norwegian Bokmål" },
-    { code: "pl", name: "Polish" },
-    { code: "pt-BR", name: "Portuguese (Brazilian)" },
-    { code: "pt-PT", name: "Portuguese (European)" },
-    { code: "ro", name: "Romanian" },
-    { code: "ru", name: "Russian" },
-    { code: "sk", name: "Slovak" },
-    { code: "sl", name: "Slovenian" },
-    { code: "es", name: "Spanish (European)" },
-    { code: "es-419", name: "Spanish (Latin American)" },
-    { code: "sv", name: "Swedish" },
-    { code: "th", name: "Thai" },
-    { code: "tr", name: "Turkish" },
-    { code: "uk", name: "Ukrainian" },
-    { code: "vi", name: "Vietnamese" }
-]
 
 /* ================= LOGIC ENGINE ================= */
 const processLogicNode = (nodeStatus) => {
@@ -884,6 +841,19 @@ const removeOptionFromComponent = (index) => {
     drawComponents();
 }
 
+// --- PASTE THE NEW FUNCTION HERE ---
+const getConnectedNodeName = (optionId) => {
+    if (!popupNode.value) return "Not connected yet";
+    const status = Canvas_Status.value.find(s => s.index === popupNode.value.id);
+    if (!status || !status.options) return "Not connected yet";
+    
+    const optStatus = status.options.find(o => o.id === optionId);
+    if (optStatus && optStatus.next) {
+        const target = Canvas_Status.value.find(s => s.index === optStatus.next);
+        return target ? (target.Node_name || `Node ${target.index}`) : "Unknown Node";
+    }
+    return "Not connected yet";
+}
 watch(() => activeComponent.value?.optionsList, (newVal) => {
     if (activeComponent.value && activeComponent.value.type === 'options') {
         drawComponents() 
@@ -1157,168 +1127,160 @@ const updateSceneContentDisplay = () => {
   nextTick(() => {
     const contentBody = document.querySelector('.scene-content-body')
     if (contentBody) {
-        if (sceneComponents.value.length > 0) {
         contentBody.innerHTML = ''
         
-        sceneComponents.value.forEach((comp, index) => {
-            const imageContainer = document.createElement('div')
-            imageContainer.className = 'image-container'
-            imageContainer.dataset.index = index
-            
-            if (comp.type !== 'options') {
-                imageContainer.draggable = true 
-            }
-            
-            const indicator = document.createElement('div')
-            indicator.className = 'type-indicator'
-            if (comp.type === 'image') indicator.classList.add('bg-green')
-            else if (comp.type === 'text') indicator.classList.add('bg-blue')
-            else if (comp.type === 'video') indicator.classList.add('bg-yellow')
-            else if (comp.type === 'input') indicator.classList.add('bg-purple') 
-            else if (comp.type === 'variable') indicator.classList.add('bg-orange') // NEW
-            else if (comp.type === 'options') indicator.classList.add('bg-red') 
-            
-            if (comp.type !== 'options') {
-                const dragHandle = document.createElement('div')
-                dragHandle.className = 'image-drag-handle'
-                dragHandle.innerHTML = '⋮⋮⋮⋮' 
-                dragHandle.title = 'Drag to reorder'
+        if (sceneComponents.value.length > 0) {
+            sceneComponents.value.forEach((comp, index) => {
+                const imageContainer = document.createElement('div')
+                imageContainer.className = 'image-container'
+                imageContainer.dataset.index = index
                 
-                dragHandle.addEventListener('mousedown', () => { isHandleActive = true })
-                dragHandle.addEventListener('mouseup', () => { isHandleActive = false })
+                // Add Double Click Listener explicitly
+                imageContainer.addEventListener('dblclick', (e) => {
+                    e.stopPropagation(); // Prevent bubbling issues
+                    openComponentEditor(comp);
+                })
                 
-                imageContainer.appendChild(dragHandle) 
-            }
-            
-            const imgIconDiv = document.createElement('div')
-            imgIconDiv.className = 'image-list-icon'
-            
-            if (comp.type === 'image') {
-                const imgElement = document.createElement('img')
-                imgElement.src = comp.url
-                imgElement.alt = comp.name
-                imgIconDiv.appendChild(imgElement)
-            } else if (comp.type === 'text') {
-                imgIconDiv.textContent = 'T'
-                imgIconDiv.style.color = '#fff'
-                imgIconDiv.style.fontSize = '20px'
-                imgIconDiv.style.fontWeight = 'bold'
-            } else if (comp.type === 'video') {
-                imgIconDiv.textContent = '▶' 
-                imgIconDiv.style.color = '#fff'
-                imgIconDiv.style.fontSize = '18px'
-                imgIconDiv.style.display = 'flex'
-                imgIconDiv.style.alignItems = 'center'
-                imgIconDiv.style.justifyContent = 'center'
-            } else if (comp.type === 'input') {
-                imgIconDiv.textContent = 'I' 
-                imgIconDiv.style.color = '#fff'
-                imgIconDiv.style.fontSize = '20px'
-                imgIconDiv.style.fontWeight = 'bold'
-            } else if (comp.type === 'variable') {
-                imgIconDiv.textContent = '{ }' 
-                imgIconDiv.style.color = '#fff'
-                imgIconDiv.style.fontSize = '16px'
-                imgIconDiv.style.fontWeight = 'bold'
-            } else if (comp.type === 'options') {
-                imgIconDiv.textContent = '❖' 
-                imgIconDiv.style.color = '#fff'
-                imgIconDiv.style.fontSize = '18px'
-                imgIconDiv.style.display = 'flex'
-                imgIconDiv.style.alignItems = 'center'
-                imgIconDiv.style.justifyContent = 'center'
-            }
-            
-            const imageName = document.createElement('div')
-            imageName.className = 'image-name'
-            imageName.title = comp.name 
-            imageName.textContent = comp.name
-            
-            const removeBtn = document.createElement('button')
-            removeBtn.className = 'remove-image-btn'
-            removeBtn.title = 'Delete'
-            removeBtn.innerHTML = '🗑️'
-            removeBtn.addEventListener('click', (e) => {
-            e.stopPropagation()
-            confirmRemoveComponent(index)
-            })
-            
-            imageContainer.appendChild(indicator)
-            imageContainer.appendChild(imgIconDiv) 
-            imageContainer.appendChild(imageName)  
-            imageContainer.appendChild(removeBtn)  
-            
-            imageContainer.addEventListener('click', () => {
-            document.querySelectorAll('.image-container').forEach(container => {
-                container.classList.remove('selected')
-            })
-            imageContainer.classList.add('selected')
-            })
-
-            imageContainer.addEventListener('dblclick', () => {
-                openComponentEditor(comp)
-            })
-
-            if (comp.type !== 'options') {
-                imageContainer.addEventListener('dragstart', (e) => {
-                    if (!isHandleActive) {
-                        e.preventDefault()
-                        return
-                    }
-                    dragSourceIndex = index
-                    e.dataTransfer.effectAllowed = 'move'
-                    imageContainer.classList.add('dragging')
-                })
-
-                imageContainer.addEventListener('dragover', (e) => {
-                    e.preventDefault() 
-                    e.dataTransfer.dropEffect = 'move'
-                    imageContainer.classList.add('over')
-                    return false
-                })
-
-                imageContainer.addEventListener('dragenter', () => {
-                    imageContainer.classList.add('over')
-                })
-
-                imageContainer.addEventListener('dragleave', () => {
-                    imageContainer.classList.remove('over')
-                })
-
-                imageContainer.addEventListener('drop', (e) => {
-                    e.stopPropagation()
-                    e.preventDefault()
-                    
-                    if (dragSourceIndex !== null && dragSourceIndex !== index) {
-                        const item = sceneComponents.value.splice(dragSourceIndex, 1)[0]
-                        sceneComponents.value.splice(index, 0, item)
-                        
-                        const optIdx = sceneComponents.value.findIndex(c => c.type === 'options');
-                        if (optIdx !== -1 && optIdx !== sceneComponents.value.length - 1) {
-                             const opt = sceneComponents.value.splice(optIdx, 1)[0];
-                             sceneComponents.value.push(opt);
-                        }
-                        
-                        updateSceneContentDisplay()
-                        drawComponents()
-                    }
-                    return false
-                })
-
-                imageContainer.addEventListener('dragend', () => {
-                    isHandleActive = false
-                    dragSourceIndex = null
-                    document.querySelectorAll('.image-container').forEach(el => {
-                        el.classList.remove('over')
-                        el.classList.remove('dragging')
+                imageContainer.addEventListener('click', () => {
+                    document.querySelectorAll('.image-container').forEach(container => {
+                        container.classList.remove('selected')
                     })
+                    imageContainer.classList.add('selected')
                 })
-            }
-            
-            contentBody.appendChild(imageContainer)
-        })
+
+                if (comp.type !== 'options') {
+                    imageContainer.draggable = true 
+                }
+                
+                const indicator = document.createElement('div')
+                indicator.className = 'type-indicator'
+                if (comp.type === 'image') indicator.classList.add('bg-green')
+                else if (comp.type === 'text') indicator.classList.add('bg-blue')
+                else if (comp.type === 'video') indicator.classList.add('bg-yellow')
+                else if (comp.type === 'options') indicator.classList.add('bg-red') 
+                
+                // Drag Handle (Only for non-options)
+                if (comp.type !== 'options') {
+                    const dragHandle = document.createElement('div')
+                    dragHandle.className = 'image-drag-handle'
+                    dragHandle.innerHTML = '⋮⋮⋮⋮' 
+                    dragHandle.title = 'Drag to reorder'
+                    dragHandle.addEventListener('mousedown', () => { isHandleActive = true })
+                    dragHandle.addEventListener('mouseup', () => { isHandleActive = false })
+                    imageContainer.appendChild(dragHandle) 
+                }
+                
+                const imgIconDiv = document.createElement('div')
+                imgIconDiv.className = 'image-list-icon'
+                
+                if (comp.type === 'image') {
+                    const imgElement = document.createElement('img')
+                    imgElement.src = comp.url
+                    imgElement.alt = comp.name
+                    imgIconDiv.appendChild(imgElement)
+                } else if (comp.type === 'text') {
+                    imgIconDiv.textContent = 'T'
+                    imgIconDiv.style.color = '#fff'
+                    imgIconDiv.style.fontSize = '20px'
+                    imgIconDiv.style.fontWeight = 'bold'
+                } else if (comp.type === 'video') {
+                    imgIconDiv.textContent = '▶' 
+                    imgIconDiv.style.color = '#fff'
+                    imgIconDiv.style.fontSize = '18px'
+                    imgIconDiv.style.display = 'flex'
+                    imgIconDiv.style.alignItems = 'center'
+                    imgIconDiv.style.justifyContent = 'center'
+                } else if (comp.type === 'options') {
+                    imgIconDiv.textContent = '❖' 
+                    imgIconDiv.style.color = '#fff'
+                    imgIconDiv.style.fontSize = '18px'
+                    imgIconDiv.style.display = 'flex'
+                    imgIconDiv.style.alignItems = 'center'
+                    imgIconDiv.style.justifyContent = 'center'
+                }
+                
+                const imageName = document.createElement('div')
+                imageName.className = 'image-name'
+                imageName.title = comp.name 
+                imageName.textContent = comp.name
+                
+                const removeBtn = document.createElement('button')
+                removeBtn.className = 'remove-image-btn'
+                removeBtn.title = 'Delete'
+                removeBtn.innerHTML = '🗑️'
+                removeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation() // Vital: Stop click from triggering selection
+                    confirmRemoveComponent(index)
+                })
+                
+                imageContainer.appendChild(indicator)
+                imageContainer.appendChild(imgIconDiv) 
+                imageContainer.appendChild(imageName)  
+                imageContainer.appendChild(removeBtn)  
+
+                /* --- DRAG AND DROP EVENTS --- */
+                if (comp.type !== 'options') {
+                    imageContainer.addEventListener('dragstart', (e) => {
+                        if (!isHandleActive) {
+                            e.preventDefault()
+                            return
+                        }
+                        dragSourceIndex = index
+                        e.dataTransfer.effectAllowed = 'move'
+                        imageContainer.classList.add('dragging')
+                    })
+
+                    imageContainer.addEventListener('dragover', (e) => {
+                        e.preventDefault() 
+                        e.dataTransfer.dropEffect = 'move'
+                        imageContainer.classList.add('over')
+                        return false
+                    })
+
+                    imageContainer.addEventListener('dragenter', () => {
+                        imageContainer.classList.add('over')
+                    })
+
+                    imageContainer.addEventListener('dragleave', () => {
+                        imageContainer.classList.remove('over')
+                    })
+
+                    imageContainer.addEventListener('drop', (e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                        
+                        if (dragSourceIndex !== null && dragSourceIndex !== index) {
+                            // Reorder Components
+                            const item = sceneComponents.value.splice(dragSourceIndex, 1)[0]
+                            sceneComponents.value.splice(index, 0, item)
+                            
+                            // Enforce Options at end logic
+                            const optIdx = sceneComponents.value.findIndex(c => c.type === 'options');
+                            if (optIdx !== -1 && optIdx !== sceneComponents.value.length - 1) {
+                                 const opt = sceneComponents.value.splice(optIdx, 1)[0];
+                                 sceneComponents.value.push(opt);
+                            }
+                            
+                            updateSceneContentDisplay()
+                            drawComponents()
+                        }
+                        return false
+                    })
+
+                    imageContainer.addEventListener('dragend', () => {
+                        isHandleActive = false
+                        dragSourceIndex = null
+                        document.querySelectorAll('.image-container').forEach(el => {
+                            el.classList.remove('over')
+                            el.classList.remove('dragging')
+                        })
+                    })
+                }
+                
+                contentBody.appendChild(imageContainer)
+            })
         } else {
-        contentBody.innerHTML = '<div class="empty-content">No content added yet. Click "+ Add" to add content.</div>'
+            contentBody.innerHTML = '<div class="empty-content">No content added yet. Click "+ Add" to add content.</div>'
         }
     }
   })
@@ -1442,12 +1404,33 @@ const onGraphMouseUp = () => {
 
 /* ================= COMPONENT EDITOR LOGIC ================= */
 const openComponentEditor = (comp) => {
+    console.log("Attempting to open editor for:", comp.type, comp.id);
+    
+    // Safety check for Options component to prevent template render crash
+    if (comp.type === 'options') {
+        if (!comp.styles) {
+             console.warn("Options component detected with missing styles. repairing...");
+             const defaultBtnStyle = {
+                backgroundColor: '#374151',
+                color: '#ffffff',
+                borderColor: '#9ca3af',
+                borderWidth: 1,
+                borderRadius: 4,
+                fontSize: 16,
+                fontFamily: 'sans-serif'
+            };
+            comp.styles = {
+                normal: { ...defaultBtnStyle },
+                hovered: { ...defaultBtnStyle, backgroundColor: '#4b5563', borderColor: '#00ff88' },
+                clicked: { ...defaultBtnStyle, backgroundColor: '#1f2937', borderColor: '#00ff88', borderWidth: 2 }
+            };
+        }
+        activeStyleState.value = 'normal';
+    }
+
     activeComponent.value = comp
     viewMode.value = 'componentEditor'
     textSelection.value = { start: 0, end: 0, text: '' } 
-    if (comp.type === 'options') {
-        activeStyleState.value = 'normal';
-    }
     drawComponents() 
 }
 
@@ -3827,15 +3810,6 @@ const onPreviewWheel = (e) => {
                     </option>
                 </select>
             </div>
-            <div class="setting-item">
-                <label class="setting-label">Story Language:</label>
-                <div class="setting-desc">Select the primary language for your story content.</div>
-                <select v-model="projectLanguage" class="setting-select">
-                    <option v-for="lang in supportedLanguages" :key="lang.code" :value="lang.code">
-                        {{ lang.name }}
-                    </option>
-                </select>
-            </div>
 
             <div class="setting-item" style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
                  <p style="color: #6b7280; font-size: 0.9rem; font-style: italic;">
@@ -4151,21 +4125,11 @@ const onPreviewWheel = (e) => {
                             <div class="detail-section">
                                 <label class="detail-label">Font Family:</label>
                                 <select v-model="activeComponent.fontFamily" class="detail-input" @change="drawComponents">
-                                    <option value="sans-serif">Default (Sans Serif)</option>
-                                    <option value="Arial, sans-serif">Arial</option>
-                                    <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica</option>
-                                    <option value="'Times New Roman', Times, serif">Times New Roman</option>
-                                    <option value="Georgia, serif">Georgia</option>
-                                    <option value="'Courier New', Courier, monospace">Courier New</option>
-                                    <option value="Verdana, sans-serif">Verdana</option>
-                                    <option value="Tahoma, sans-serif">Tahoma</option>
-                                    <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
-                                    <option value="Impact, sans-serif">Impact</option>
-                                    <option value="'Brush Script MT', cursive">Brush Script</option>
-                                    <option value="serif">Generic Serif</option>
-                                    <option value="monospace">Generic Monospace</option>
-                                    <option value="cursive">Generic Cursive</option>
-                                    <option value="fantasy">Generic Fantasy</option>
+                                    <option value="sans-serif">Sans Serif</option>
+                                    <option value="serif">Serif</option>
+                                    <option value="monospace">Monospace</option>
+                                    <option value="cursive">Cursive</option>
+                                    <option value="fantasy">Fantasy</option>
                                 </select>
                             </div>
                             <div class="detail-section">
@@ -4215,25 +4179,17 @@ const onPreviewWheel = (e) => {
                             <div class="separator"></div>
                             
                             <div class="detail-section">
-                                    <label class="detail-label">Font Family:</label>
-                                    <select v-model="activeComponent.fontFamily" class="detail-input" @change="drawComponents">
-                                        <option value="sans-serif">Default (Sans Serif)</option>
-                                        <option value="Arial, sans-serif">Arial</option>
-                                        <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica</option>
-                                        <option value="'Times New Roman', Times, serif">Times New Roman</option>
-                                        <option value="Georgia, serif">Georgia</option>
-                                        <option value="'Courier New', Courier, monospace">Courier New</option>
-                                        <option value="Verdana, sans-serif">Verdana</option>
-                                        <option value="Tahoma, sans-serif">Tahoma</option>
-                                        <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
-                                        <option value="Impact, sans-serif">Impact</option>
-                                        <option value="'Brush Script MT', cursive">Brush Script</option>
-                                        <option value="serif">Generic Serif</option>
-                                        <option value="monospace">Generic Monospace</option>
-                                        <option value="cursive">Generic Cursive</option>
-                                        <option value="fantasy">Generic Fantasy</option>
-                                    </select>
+                                <label class="detail-label" style="color: #a855f7;">Variable Assignment</label>
+                                <select v-model="activeComponent.targetVariableId" class="detail-input">
+                                    <option value="" disabled>Select Target Variable</option>
+                                    <option v-for="v in globalVariables" :key="v.id" :value="v.id">
+                                        {{ v.name }} ({{ v.type }})
+                                    </option>
+                                </select>
+                                <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px;">
+                                    User input will be validated against variable type.
                                 </div>
+                            </div>
 
                             <div class="detail-section">
                                 <label class="detail-label" style="color: #a855f7;">Text Settings</label>
@@ -4636,21 +4592,11 @@ const onPreviewWheel = (e) => {
                         <div class="detail-section">
                             <label class="detail-label">Font Family:</label>
                             <select v-model="activeComponent.fontFamily" class="detail-input" @change="updateActiveComponentPosition">
-                                <option value="sans-serif">Default (Sans Serif)</option>
-                                <option value="Arial, sans-serif">Arial</option>
-                                <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica</option>
-                                <option value="'Times New Roman', Times, serif">Times New Roman</option>
-                                <option value="Georgia, serif">Georgia</option>
-                                <option value="'Courier New', Courier, monospace">Courier New</option>
-                                <option value="Verdana, sans-serif">Verdana</option>
-                                <option value="Tahoma, sans-serif">Tahoma</option>
-                                <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
-                                <option value="Impact, sans-serif">Impact</option>
-                                <option value="'Brush Script MT', cursive">Brush Script</option>
-                                <option value="serif">Generic Serif</option>
-                                <option value="monospace">Generic Monospace</option>
-                                <option value="cursive">Generic Cursive</option>
-                                <option value="fantasy">Generic Fantasy</option>
+                            <option value="sans-serif">Sans Serif</option>
+                            <option value="serif">Serif</option>
+                            <option value="monospace">Monospace</option>
+                            <option value="cursive">Cursive</option>
+                            <option value="fantasy">Fantasy</option>
                             </select>
                         </div>
                         <div class="detail-section">
