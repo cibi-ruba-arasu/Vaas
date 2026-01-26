@@ -9,7 +9,7 @@ import jwt from "jsonwebtoken"
 import UserPreference from "./schema/UserPreference.js"
 import authMiddleware from "./middleware/auth.js"
 import Project from "./schema/Project.js"
-import CanvasState from "./schema/CanvasState.js"
+
 
 dotenv.config()
 
@@ -389,88 +389,8 @@ app.get("/projects/:id", authMiddleware, async (req, res) => {
   res.json(project)
 })
 
-app.post("/project/save", authMiddleware, async (req, res) => {
-  const { projectId, canvasData, globalVariables } = req.body
-  const { mongoId } = req.user
 
-  try {
-    // 1. Verify the project exists for this user
-    const userBucket = await Project.findOne({ userId: mongoId })
-    if (!userBucket) {
-        return res.status(404).json({ message: "User projects not found" })
-    }
-    
-    // Check if the specific project ID exists in the user's bucket
-    const projectExists = userBucket.projects.id(projectId)
-    if (!projectExists) {
-        return res.status(404).json({ message: "Project not found" })
-    }
 
-    // 2. Find existing state or create new
-    let state = await CanvasState.findOne({ projectId })
-
-    if (state) {
-      state.canvasData = canvasData
-      state.globalVariables = globalVariables
-      state.updatedAt = new Date()
-      await state.save()
-    } else {
-      state = new CanvasState({
-        projectId,
-        userId: mongoId,
-        canvasData,
-        globalVariables
-      })
-      await state.save()
-    }
-
-    res.json({ success: true, message: "Project saved successfully" })
-
-  } catch (err) {
-    console.error("Save Error:", err)
-    res.status(500).json({ message: "Failed to save project" })
-  }
-})
-
-/* ===== LOAD CANVAS STATE ===== */
-/* ===== LOAD CANVAS STATE ===== */
-app.get("/project/load/:projectId", authMiddleware, async (req, res) => {
-  const { projectId } = req.params
-  const { mongoId } = req.user
-
-  try {
-    // 1. Check if project belongs to user (Security)
-    const userBucket = await Project.findOne({ userId: mongoId })
-    // Capture the specific sub-project to get its name
-    const specificProject = userBucket ? userBucket.projects.id(projectId) : null;
-
-    if (!userBucket || !specificProject) {
-      return res.status(404).json({ message: "Project not found" })
-    }
-
-    // 2. Fetch the canvas state
-    const state = await CanvasState.findOne({ projectId })
-
-    // Default response structure
-    const responseData = {
-      projectName: specificProject.name, // <--- Send Project Name
-      username: userBucket.username,     // <--- Send Username
-      canvasData: [],
-      globalVariables: []
-    }
-
-    if (state) {
-      responseData.canvasData = state.canvasData
-      responseData.globalVariables = state.globalVariables
-    }
-
-    res.json(responseData)
-
-  } catch (err) {
-    console.error("Load Error:", err)
-    res.status(500).json({ message: "Failed to load project" })
-  }
-})
 app.listen(PORT, () =>
   console.log(`🚀 Backend running on http://localhost:${PORT}`)
 )

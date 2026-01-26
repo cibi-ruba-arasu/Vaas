@@ -800,6 +800,11 @@ const addOptionsComponent = () => {
         borderWidth: 0,           
         borderRadius: 8,          
         
+        hasTimeLimit: false,
+        timeLimitDuration: 5.0, // Seconds (Max 10)
+        timeoutAction: 'random', // 'random' or 'manual'
+        timeoutTargetId: null,   // The Option ID to select if manual
+
         optionsList: [
             { id: 1, text: 'Option 1' },
             { id: 2, text: 'Option 2' }
@@ -811,6 +816,7 @@ const addOptionsComponent = () => {
         },
         _hoveredOptionIndex: -1,
         _clickedOptionIndex: -1,
+        _timerTriggered: false,
         renderWhileClicked: true,
         autoRender: false,
         scrollY: 0, 
@@ -1636,11 +1642,9 @@ const openPopup = node => {
 
 // Animation Loop
 const startRenderLoop = () => {
-  // FIX 1: Prevent duplicate loops
   if (animationFrameId) return; 
 
   const loop = () => {
-    // Stop loop if neither Editor nor Preview is active
     if (!showPopup.value && !isPreviewMode.value) {
         if (animationFrameId) {
             cancelAnimationFrame(animationFrameId)
@@ -1654,7 +1658,8 @@ const startRenderLoop = () => {
     }
     if (isPreviewMode.value) {
         drawPreview()
-        checkAudioDucking() 
+        checkAudioDucking()
+        checkOptionsTimeout() // <--- ADD THIS LINE
     }
     animationFrameId = requestAnimationFrame(loop)
   }
@@ -2077,15 +2082,15 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
     }
 
     // --- UPDATED OPTIONS LOGIC ---
+    // --- UPDATED OPTIONS LOGIC ---
     else if (comp.type === 'options') {
         ctx.translate(screenPos.x, screenPos.y) 
         
         // 1. Calculate Dynamic Layout
         const layout = calculateOptionsLayout(comp, ctx);
-        
-        // 2. Draw Box Background & Border (Use new properties)
         const radius = comp.borderRadius !== undefined ? comp.borderRadius : 8;
         
+        // ... (Background and Border drawing code remains the same) ...
         // Background
         if (comp.boxColor && comp.boxOpacity !== undefined && comp.boxOpacity > 0) {
             ctx.fillStyle = hexToRgba(comp.boxColor, comp.boxOpacity);
@@ -2097,11 +2102,11 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         if (comp.borderWidth > 0 && comp.borderColor) {
             ctx.strokeStyle = comp.borderColor;
             ctx.lineWidth = comp.borderWidth;
-            ctx.setLineDash([]); // Ensure solid line
+            ctx.setLineDash([]); 
             drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, radius);
             ctx.stroke();
         } else if (!isPreviewMode.value) {
-            // Editor Helper: If invisible, draw faint dashed line
+            // Editor Helper
             if (!comp.boxOpacity || comp.boxOpacity === 0) {
                 ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
                 ctx.lineWidth = 1;
@@ -2112,7 +2117,45 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
             }
         }
 
-        // 3. Clip Content to Box
+        // --- NEW: PROGRESS BAR RENDERING ---
+        if (comp.hasTimeLimit) {
+            let progress = 1.0;
+
+            if (isPreviewMode.value) {
+                // Calculate progress based on time elapsed
+                const now = Date.now();
+                // componentStartTime is set when the component becomes active
+                const elapsed = (now - componentStartTime.value) / 1000; 
+                const duration = comp.timeLimitDuration || 5;
+                
+                progress = 1.0 - (elapsed / duration);
+                if (progress < 0) progress = 0;
+            }
+
+            if (progress > 0) {
+                const barHeight = 6;
+                const totalW = comp.width;
+                const currentW = totalW * progress;
+                
+                const barX = -(comp.width / 2);
+                const barY = -(comp.height / 2) - barHeight - 4; // 4px padding above box
+
+                // Draw Bar Background
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                ctx.fillRect(barX, barY, totalW, barHeight);
+
+                // Draw Active Progress
+                // Color transition from Green -> Yellow -> Red
+                if (progress > 0.5) ctx.fillStyle = '#00ff88'; // Green
+                else if (progress > 0.2) ctx.fillStyle = '#eab308'; // Yellow
+                else ctx.fillStyle = '#ef4444'; // Red
+
+                ctx.fillRect(barX, barY, currentW, barHeight);
+            }
+        }
+        // -----------------------------------
+
+        // 3. Clip Content to Box (Existing Code continues...)
         ctx.save();
         drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, radius);
         ctx.clip();
@@ -2179,6 +2222,58 @@ const drawRoundedRectPaths = (ctx, x, y, w, h, r) => {
     ctx.lineTo(x, y + r)
     ctx.quadraticCurveTo(x, y, x + r, y)
     ctx.closePath()
+}
+
+const checkOptionsTimeout = () => {
+    if (!isPreviewMode.value || !nodeScenes.value) return;
+
+    const scene = nodeScenes.value[currentPreviewSceneIndex.value];
+    if (!scene || !scene.components) return;
+
+    // Check if current component is Options
+    if (currentPreviewComponentIndex.value >= 0 && currentPreviewComponentIndex.value < scene.components.length) {
+        const comp = scene.components[currentPreviewComponentIndex.value];
+        
+        if (comp.type === 'options' && comp.hasTimeLimit) {
+
+            // FIX: Check runtime flag instead of modifying permanent setting
+            if (comp._timerTriggered) return;
+
+            const now = Date.now();
+            const elapsed = (now - componentStartTime.value) / 1000;
+            const duration = comp.timeLimitDuration || 5;
+
+            // Trigger Timeout
+            if (elapsed >= duration) {
+                console.log("Time limit reached for options!");
+                
+                // FIX: Set runtime flag to prevent loop
+                comp._timerTriggered = true; 
+                
+                let targetOptionId = null;
+
+                if (comp.timeoutAction === 'random') {
+                    if (comp.optionsList.length > 0) {
+                        const randomIndex = Math.floor(Math.random() * comp.optionsList.length);
+                        targetOptionId = comp.optionsList[randomIndex].id;
+                    }
+                } else if (comp.timeoutAction === 'manual') {
+                    if (comp.timeoutTargetId) {
+                        targetOptionId = comp.timeoutTargetId;
+                    } else {
+                        // Fallback if manual ID is invalid/deleted: pick first
+                        if (comp.optionsList.length > 0) targetOptionId = comp.optionsList[0].id;
+                    }
+                }
+
+                if (targetOptionId) {
+                    handleOptionNavigation(comp.id, targetOptionId);
+                } else {
+                    exitPreview(); // Fail safe
+                }
+            }
+        }
+    }
 }
 
 const drawFocusRing = (ctx, comp, index, screenPos) => {
@@ -3025,6 +3120,7 @@ const resetComponentsRuntimeState = (scenes) => {
                 if (comp.type === 'options') {
                     comp._hoveredOptionIndex = -1;
                     comp._clickedOptionIndex = -1;
+                    comp._timerTriggered = false;
                 }
                 // Reset Video Component
                 if (comp.type === 'video' && comp.videoElement) {
@@ -3140,7 +3236,6 @@ const stopAllVideos = () => {
 const advancePreview = () => {
     const currentScene = nodeScenes.value[currentPreviewSceneIndex.value]
     const components = currentScene.components || []
-
     // Block advance if Options or UN-SUBMITTED INPUT component is visible
     if (currentPreviewComponentIndex.value >= 0 && currentPreviewComponentIndex.value < components.length) {
          const currentComp = components[currentPreviewComponentIndex.value];
@@ -4536,7 +4631,51 @@ const onPreviewWheel = (e) => {
                             </div>
                         </div>
                         </div>
+                        <div class="detail-section" style="background: rgba(234, 179, 8, 0.1); padding: 10px; border-radius: 6px; border: 1px solid rgba(234, 179, 8, 0.3); margin-bottom: 16px;">
+    <div class="checkbox-row">
+        <label class="detail-label" style="color: #eab308; margin-bottom:0; flex:1;">⏱ Enable Time Limit</label>
+        <input type="checkbox" v-model="activeComponent.hasTimeLimit" @change="drawComponents" />
+    </div>
 
+    <div v-if="activeComponent.hasTimeLimit" style="margin-top: 12px;">
+        <div class="detail-section">
+            <label class="detail-label">Duration (Seconds):</label>
+            <div class="input-row">
+                <input type="range" v-model.number="activeComponent.timeLimitDuration" min="1" max="10" step="0.5" class="range-input" />
+                <span class="audio-val-text">{{ activeComponent.timeLimitDuration }}s</span>
+            </div>
+        </div>
+
+        <div class="detail-section">
+            <label class="detail-label">On Timeout:</label>
+            <div class="toggle-buttons" style="width: 100%; margin-bottom: 8px;">
+                <button 
+                    :class="{ active: activeComponent.timeoutAction === 'random' }" 
+                    @click="activeComponent.timeoutAction = 'random'"
+                    style="flex: 1;"
+                >
+                    🎲 Random
+                </button>
+                <button 
+                    :class="{ active: activeComponent.timeoutAction === 'manual' }" 
+                    @click="activeComponent.timeoutAction = 'manual'"
+                    style="flex: 1;"
+                >
+                    🎯 Specific
+                </button>
+            </div>
+            
+            <div v-if="activeComponent.timeoutAction === 'manual'">
+                 <select v-model="activeComponent.timeoutTargetId" class="detail-input">
+                    <option :value="null" disabled>Select Option to Choose</option>
+                    <option v-for="opt in activeComponent.optionsList" :key="opt.id" :value="opt.id">
+                        {{ opt.text }}
+                    </option>
+                 </select>
+            </div>
+        </div>
+    </div>
+</div>
                         <div v-if="activeComponent.type === 'video'">
                         <div class="detail-section">
                             <div class="checkbox-row">
