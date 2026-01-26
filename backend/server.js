@@ -9,7 +9,7 @@ import jwt from "jsonwebtoken"
 import UserPreference from "./schema/UserPreference.js"
 import authMiddleware from "./middleware/auth.js"
 import Project from "./schema/Project.js"
-
+import CanvasState from "./schema/CanvasState.js"
 
 dotenv.config()
 
@@ -386,10 +386,58 @@ app.get("/projects/:id", authMiddleware, async (req, res) => {
     return res.status(404).json({ message: "Project not found" })
   }
 
-  res.json(project)
+  // - We combine the project data with the username from the parent bucket
+  const projectData = {
+    ...project.toObject(),
+    authorName: bucket.username 
+  }
+
+  res.json(projectData)
 })
 
+app.post("/canvas/save", authMiddleware, async (req, res) => {
+  const { projectId, nodes, globalVariables } = req.body;
 
+  if (!projectId) return res.status(400).json({ message: "Project ID required" });
+
+  try {
+    // Upsert: Update if exists, Insert if not
+    const savedState = await CanvasState.findOneAndUpdate(
+      { projectId },
+      { 
+        projectId, 
+        nodes, 
+        globalVariables,
+        lastSaved: new Date()
+      },
+      { new: true, upsert: true } // <--- Key magic for "update or create"
+    );
+
+    res.json({ success: true, message: "Project saved successfully", savedAt: savedState.lastSaved });
+  } catch (err) {
+    console.error("Save error:", err);
+    res.status(500).json({ message: "Failed to save project" });
+  }
+});
+
+/* ===== LOAD CANVAS STATE ===== */
+app.get("/canvas/load/:projectId", authMiddleware, async (req, res) => {
+  const { projectId } = req.params;
+
+  try {
+    const state = await CanvasState.findOne({ projectId });
+
+    if (!state) {
+      // Return empty structure if new project
+      return res.json({ nodes: [], globalVariables: [] }); 
+    }
+
+    res.json(state);
+  } catch (err) {
+    console.error("Load error:", err);
+    res.status(500).json({ message: "Failed to load project" });
+  }
+});
 
 app.listen(PORT, () =>
   console.log(`🚀 Backend running on http://localhost:${PORT}`)

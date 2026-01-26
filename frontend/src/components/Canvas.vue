@@ -18,6 +18,27 @@ const newVarName = ref("")
 const newVarValue = ref("")
 const newVarType = ref("string") 
 
+const projectName = ref("Loading...")
+const projectOwner = ref("")
+
+const fetchProjectDetails = async () => {
+  try {
+    const res = await fetch(`http://localhost:5000/projects/${projectId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    
+    if (res.ok) {
+      const data = await res.json()
+      projectName.value = data.name
+      projectOwner.value = data.authorName
+      // If you are loading nodes from the DB, you might handle that here too, 
+      // but strictly for the header, this is what we need.
+    }
+  } catch (err) {
+    console.error("Failed to fetch project details:", err)
+    projectName.value = "Untitled Project"
+  }
+}
 
 watch(globalVariables, (newVars) => {
     Canvas_Status.value.globalVariables = newVars
@@ -29,6 +50,90 @@ const toggleAddVariable = () => {
   newVarValue.value = ""
   newVarType.value = "string"
 }
+
+const saveProjectData = async () => {
+  try {
+    const payload = {
+      projectId: projectId, // from route.params
+      nodes: Canvas_Status.value,
+      globalVariables: globalVariables.value
+    };
+
+    const res = await fetch("http://localhost:5000/canvas/save", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      alert("Project Saved Successfully!");
+    } else {
+      alert("Save Failed: " + data.message);
+    }
+  } catch (err) {
+    console.error(err);
+    alert("Error connecting to server");
+  }
+};
+
+const loadProjectData = async () => {
+  try {
+    const res = await fetch(`http://localhost:5000/canvas/load/${projectId}`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+
+      if (data.globalVariables) {
+        globalVariables.value = data.globalVariables;
+      }
+
+      if (data.nodes && data.nodes.length > 0) {
+        Canvas_Status.value = data.nodes;
+
+        // Reconstruct visual Nodes array for the graph
+        nodes.value = data.nodes.map(n => ({
+            id: n.index,
+            x: n.x,
+            y: n.y
+        }));
+
+        // IMPORTANT: Rehydrate HTML Elements (Image/Video objects)
+        // The JSON only has the URL string, we need to create new Image()/Video() objects
+        Canvas_Status.value.forEach(node => {
+            if(node.scenes) {
+                node.scenes.forEach(scene => {
+                    if(scene.components) {
+                        scene.components.forEach(comp => {
+                            if(comp.type === 'image' && comp.url) {
+                                const img = new Image();
+                                img.src = comp.url;
+                                comp.imgObject = img;
+                            } else if (comp.type === 'video' && comp.url) {
+                                const vid = document.createElement('video');
+                                vid.src = comp.url;
+                                vid.loop = comp.isLoop !== false;
+                                vid.muted = comp.isMuted === true;
+                                comp.videoElement = vid;
+                            }
+                        });
+                    }
+                });
+            }
+        });
+
+        draw(); // Redraw canvas
+      }
+    }
+  } catch (err) {
+    console.error("Failed to load project:", err);
+  }
+};
 
 /* ================= IF-ELSE EDITOR STATE ================= */
 const ifElseVarId = ref("")
@@ -120,13 +225,15 @@ const rootNodeId = ref(null)
 const processLogicNode = (nodeStatus) => {
    // 1. SET VARIABLE LOGIC
    if (nodeStatus.node_type === 'Set Variables') {
-       const targetVar = globalVariables.value.find(v => v.id === nodeStatus.varId);
+       // FIX: Use loose equality (==)
+       const targetVar = globalVariables.value.find(v => v.id == nodeStatus.varId);
        
        if (targetVar) {
            if (targetVar.type === 'integer') {
                let operand = nodeStatus.varValue;
                if (nodeStatus.varValueType === 'variable') {
-                   const sourceVar = globalVariables.value.find(v => v.id === nodeStatus.varValue);
+                   // FIX: Use loose equality (==)
+                   const sourceVar = globalVariables.value.find(v => v.id == nodeStatus.varValue);
                    operand = sourceVar ? sourceVar.value : 0;
                }
                operand = Number(operand);
@@ -146,7 +253,8 @@ const processLogicNode = (nodeStatus) => {
                if (nodeStatus.varOperator === '=') {
                    let newVal = nodeStatus.varValue;
                    if (nodeStatus.varValueType === 'variable') {
-                        const sourceVar = globalVariables.value.find(v => v.id === nodeStatus.varValue);
+                        // FIX: Use loose equality (==)
+                        const sourceVar = globalVariables.value.find(v => v.id == nodeStatus.varValue);
                         newVal = sourceVar ? sourceVar.value : "";
                    }
                    targetVar.value = String(newVal);
@@ -164,17 +272,19 @@ const processLogicNode = (nodeStatus) => {
    
    // 2. IF-ELSE LOGIC
    else if (nodeStatus.node_type === 'If-Else') {
-       const variable = globalVariables.value.find(v => v.id === nodeStatus.varId);
-       if (!variable) return nodeStatus.NextFalse; // Default to false if error
+       // FIX: Use loose equality (==)
+       const variable = globalVariables.value.find(v => v.id == nodeStatus.varId);
+       if (!variable) return nodeStatus.NextFalse; 
 
        let leftVal = variable.value;
        let rightVal = nodeStatus.compareValue;
 
        if (nodeStatus.compareValueType === 'variable') {
-           const rightVar = globalVariables.value.find(v => v.id === nodeStatus.compareValue);
+           // FIX: Use loose equality (==)
+           const rightVar = globalVariables.value.find(v => v.id == nodeStatus.compareValue);
            rightVal = rightVar ? rightVar.value : 0;
        }
-
+       // ... [Rest of function matches existing] ...
        if (variable.type === 'integer') {
            leftVal = Number(leftVal);
            rightVal = Number(rightVal);
@@ -539,6 +649,11 @@ const updateNodeOptionsInStatus = () => {
     const scenes = nodeScenes.value || []
     if (scenes.length === 0) {
         status.options = []
+        // Reset timeout properties if no scenes
+        status.hasTimeLimit = false
+        status.timeLimitDuration = 5
+        status.timeoutAction = 'random'
+        status.timeoutTargetId = null
         return
     }
 
@@ -561,8 +676,17 @@ const updateNodeOptionsInStatus = () => {
                 next: existing ? existing.next : null 
             }
         })
+
+        // --- NEW: SAVE TIMEOUT PROPERTIES TO CANVAS STATUS ---
+        status.hasTimeLimit = optionsComp.hasTimeLimit || false
+        status.timeLimitDuration = optionsComp.timeLimitDuration || 5
+        status.timeoutAction = optionsComp.timeoutAction || 'random'
+        status.timeoutTargetId = optionsComp.timeoutTargetId || null
+        // -----------------------------------------------------
+
     } else {
         status.options = []
+        status.hasTimeLimit = false
     }
     
     draw() 
@@ -747,14 +871,13 @@ const addInputComponent = () => {
 const handleInputSubmit = (comp) => {
     if (comp.isSubmitted) return;
     
-    // Validate Variable
-    const targetVar = globalVariables.value.find(v => v.id === comp.targetVariableId);
+    // FIX: Use loose equality (==) to match String IDs from DB with Number IDs in state
+    const targetVar = globalVariables.value.find(v => v.id == comp.targetVariableId);
     let val = comp.currentValue;
 
     // Type Check
     if (targetVar) {
         if (targetVar.type === 'integer') {
-            // FIX: Check if value is valid without using .trim() on a potential number
             if (val === '' || val === null || val === undefined || isNaN(Number(val))) {
                 alert("Please enter a valid number.");
                 return;
@@ -764,7 +887,6 @@ const handleInputSubmit = (comp) => {
         // Assign to Global State
         targetVar.value = val;
         
-        // Console Log
         console.log(`Variable '${targetVar.name}' assigned value:`, val);
     } else {
         console.log("Input submitted but no variable assigned. Value:", val);
@@ -1970,7 +2092,7 @@ const drawComponents = () => {
 
 // Updated renderComponent to handle Animation Overrides (like Typewriter text truncation)
 const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
-    // ... [Keep Image/Video/Text/Input/Variable sections exactly the same as before] ...
+    // ... [Keep Image/Video/Text sections exactly the same] ...
     if (comp.type === 'image') {
         if (comp.imgObject) {
             ctx.drawImage(comp.imgObject, screenPos.x - (comp.width / 2), screenPos.y - (comp.height / 2), comp.width, comp.height)
@@ -1982,6 +2104,7 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
              ctx.drawImage(comp.videoElement, screenPos.x - (comp.width / 2), screenPos.y - (comp.height / 2), comp.width, comp.height)
          }
     } else if (comp.type === 'text') {
+        // ... [Keep Text Logic Same] ...
         ctx.translate(screenPos.x, screenPos.y) 
         if (comp.backgroundColor && comp.backgroundColor !== 'transparent') {
             ctx.fillStyle = comp.backgroundColor
@@ -2007,6 +2130,7 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         }
         ctx.translate(-screenPos.x, -screenPos.y)
     } 
+    // --- UPDATED VARIABLE SECTION ---
     else if (comp.type === 'variable') {
         ctx.translate(screenPos.x, screenPos.y) 
         if (comp.backgroundColor && comp.backgroundColor !== 'transparent') {
@@ -2021,7 +2145,10 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         }
         const fontWeight = comp.fontWeight || 'normal'; const fontStyle = comp.fontStyle || 'normal'; const fontFamily = comp.fontFamily || 'sans-serif'
         ctx.font = `${fontStyle} ${fontWeight} ${comp.fontSize}px ${fontFamily}`; ctx.fillStyle = comp.color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-        const targetVar = globalVariables.value.find(v => v.id === comp.variableId);
+        
+        // FIX: Use loose equality (==) here
+        const targetVar = globalVariables.value.find(v => v.id == comp.variableId);
+        
         let contentToDraw = targetVar ? String(targetVar.value) : (isPreviewMode.value ? "" : "{Variable}");
         if (animationOverride && animationOverride.type === 'typewriter') {
             const progress = animationOverride.progress; const length = Math.floor(contentToDraw.length * progress); contentToDraw = contentToDraw.substring(0, length)
@@ -2034,7 +2161,9 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         }
         ctx.translate(-screenPos.x, -screenPos.y)
     }
+    // ... [Rest of function (Input, Options) stays the same] ...
     else if (comp.type === 'input') {
+        // ... [Input Rendering Code] ...
         ctx.translate(screenPos.x, screenPos.y)
         if (comp.backgroundColor && comp.backgroundColor !== 'transparent') {
             ctx.fillStyle = comp.backgroundColor
@@ -2065,16 +2194,17 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         ctx.fillText(comp.buttonText, btnX + btnWidth/2, 0);
         ctx.translate(-screenPos.x, -screenPos.y)
     }
-
-    // --- UPDATED OPTIONS LOGIC FOR EXIT ANIMATIONS ---
     else if (comp.type === 'options') {
+        // ... [Options Rendering Code] ...
+        // (Copy the Options logic from your existing file, no changes needed for this specific bug)
+        // Just ensuring the structure is maintained.
         ctx.translate(screenPos.x, screenPos.y) 
         
         // Setup Exit Animation Variables
         const isExiting = animationOverride?.isExiting || false;
         const exitProgress = animationOverride?.exitProgress || 0;
         
-        // Box Opacity: Fades out normally (Case 2: Background fades out)
+        // Box Opacity
         const boxBaseOpacity = (comp.boxOpacity !== undefined) ? comp.boxOpacity : 0.8;
         const currentBoxOpacity = isExiting ? (boxBaseOpacity * (1 - exitProgress)) : boxBaseOpacity;
 
@@ -2088,15 +2218,15 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
             ctx.fill();
         }
         
-        // Border (Fades out with box)
+        // Border
         if (comp.borderWidth > 0 && comp.borderColor) {
-            ctx.globalAlpha = isExiting ? (1 - exitProgress) : 1; // Fade border
+            ctx.globalAlpha = isExiting ? (1 - exitProgress) : 1; 
             ctx.strokeStyle = comp.borderColor;
             ctx.lineWidth = comp.borderWidth;
             ctx.setLineDash([]); 
             drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, radius);
             ctx.stroke();
-            ctx.globalAlpha = 1; // Reset
+            ctx.globalAlpha = 1; 
         } else if (!isPreviewMode.value) {
             if (!comp.boxOpacity || comp.boxOpacity === 0) {
                 ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
@@ -2108,7 +2238,7 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
             }
         }
 
-        // Time Limit Bar (Fades out quickly on exit)
+        // Time Limit Bar
         if (comp.hasTimeLimit && !isExiting) {
             let progress = 1.0;
             if (isPreviewMode.value) {
@@ -2137,37 +2267,23 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, radius);
         ctx.clip();
 
-        // 4. Draw Buttons with Exit Logic
         if (layout.buttons.length > 0) {
             layout.buttons.forEach((btn, index) => {
                 const drawY = btn.y - (comp.scrollY || 0);
-                
-                // Determine Style
                 let style = comp.styles.normal;
-                
-                // Keep 'Clicked' style if this was the selected one during exit
-                // comp._clickedOptionIndex holds the one clicked via mouse
-                // For timeouts, we might not have _clickedOptionIndex set purely, 
-                // but checking _clickedOptionIndex covers the Mouse Click Case 2.
                 const isSelected = (comp._clickedOptionIndex === index);
 
                 if (isSelected) style = comp.styles.clicked;
                 else if (comp._hoveredOptionIndex === index && !isExiting) style = comp.styles.hovered;
                 
-                // --- CASE 2 LOGIC: SLOWER EXIT FOR SELECTED ---
-                // If exiting:
-                //   - Non-selected buttons fade out fast: (1 - exitProgress * 1.5)
-                //   - Selected button fades out slow/late: (1 - (exitProgress - 0.3) * 1.5)
                 let buttonAlpha = 1.0;
                 
                 if (isExiting) {
                     if (isSelected) {
-                        // Starts fading after 30% of time passed
                          let delayedProgress = (exitProgress - 0.3) / 0.7;
                          if (delayedProgress < 0) delayedProgress = 0;
                          buttonAlpha = 1.0 - delayedProgress;
                     } else {
-                        // Fades immediately
                         buttonAlpha = 1.0 - (exitProgress * 1.5);
                     }
                     if (buttonAlpha < 0) buttonAlpha = 0;
@@ -2175,7 +2291,6 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
                 
                 ctx.globalAlpha = buttonAlpha;
 
-                // Draw Button Rect
                 if (style.backgroundColor && style.backgroundColor !== 'transparent') {
                     ctx.fillStyle = style.backgroundColor;
                     drawRoundedRectPaths(ctx, btn.x, drawY, btn.w, btn.h, style.borderRadius);
@@ -2189,18 +2304,16 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
                     ctx.stroke();
                 }
                 
-                // Draw Text
                 ctx.fillStyle = style.color;
                 ctx.font = `${style.fontSize}px ${style.fontFamily || 'sans-serif'}`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText(btn.text, btn.x + (btn.w/2), drawY + (btn.h/2));
                 
-                ctx.globalAlpha = 1.0; // Reset
+                ctx.globalAlpha = 1.0; 
             });
         }
         
-        // Scrollbar
         if (layout.totalContentHeight > comp.height && !isExiting) {
             const scrollBarW = 4;
             const scrollRatio = comp.height / layout.totalContentHeight;
@@ -3063,6 +3176,8 @@ const resize = () => {
 let statusLogInterval = null;
 
 onMounted(() => {
+fetchProjectDetails()
+loadProjectData();
   ctx = canvasRef.value.getContext("2d")
   resize()
   window.addEventListener("resize", resize)
@@ -3510,8 +3625,8 @@ const exitPreview = () => {
 
 const getInputType = (comp) => {
     if (comp.type !== 'input') return 'text';
-    const targetVar = globalVariables.value.find(v => v.id === comp.targetVariableId);
-    // If mapped to an integer variable, force number input to prevent letters
+    // FIX: Use loose equality
+    const targetVar = globalVariables.value.find(v => v.id == comp.targetVariableId);
     if (targetVar && targetVar.type === 'integer') {
         return 'number';
     }
@@ -3870,9 +3985,17 @@ const onPreviewWheel = (e) => {
     <header class="header">
       <button class="hamburger" @click="toggleMenu">☰</button>
       <div class="center">
-        <div class="title">Weaver Project</div>
+        <div class="project-header-info">
+            <div class="title">{{ projectName }}</div>
+            <div class="subtitle">
+                <span class="by-text">by </span> 
+                <span class="author-name">{{ projectOwner }}</span>
+            </div>
+        </div>
       </div>
-      
+      <button class="save-btn" @click="saveProjectData" title="Save Project">
+            💾 Save
+      </button>
       <button class="play-project-btn" @click="playProjectFromRoot" title="Play Project from Start">
         ▶
       </button>
@@ -4773,9 +4896,9 @@ const onPreviewWheel = (e) => {
                             </div>
                         </div>
                         </div>
-                        <div class="detail-section" style="background: rgba(234, 179, 8, 0.1); padding: 10px; border-radius: 6px; border: 1px solid rgba(234, 179, 8, 0.3); margin-bottom: 16px;">
+                        <div class="detail-section" v-if="activeComponent.type === 'options'" style="background: rgba(234, 179, 8, 0.1); padding: 10px; border-radius: 6px; border: 1px solid rgba(234, 179, 8, 0.3); margin-bottom: 16px;">
     <div class="checkbox-row">
-        <label class="detail-label" style="color: #eab308; margin-bottom:0; flex:1;">⏱ Enable Time Limit</label>
+        <label class="detail-label"  style="color: #eab308; margin-bottom:0; flex:1;">⏱ Enable Time Limit</label>
         <input type="checkbox" v-model="activeComponent.hasTimeLimit" @change="drawComponents" />
     </div>
 
@@ -7028,5 +7151,56 @@ const onPreviewWheel = (e) => {
     font-family: monospace;
     font-size: 0.9rem;
     font-weight: bold;
+}
+
+.center { 
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  line-height: 1.2;
+}
+
+.title { 
+  font-size: 1.4rem; 
+  color: #00ff88; /* Keep the green accent for the project name */
+  font-weight: 700;
+  text-shadow: 0 0 10px rgba(0, 255, 136, 0.2);
+  letter-spacing: 0.5px;
+}
+
+.subtitle {
+  font-size: 0.85rem;
+  color: #94a3b8; /* Muted gray for the 'by' text */
+  margin-top: 2px;
+  font-weight: 400;
+}
+
+.author-name {
+  color: #e2e8f0; /* Lighter/White for the username */
+  font-weight: 600;
+}
+
+.save-btn {
+  position: absolute;
+  right: 148px; /* Adjusted to sit left of Play button */
+  font-size: 16px;
+  background: rgba(59, 130, 246, 0.2);
+  border: 1px solid rgba(59, 130, 246, 0.5);
+  color: #60a5fa;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  z-index: 11;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.save-btn:hover {
+  background: rgba(59, 130, 246, 0.4);
+  color: #fff;
+  transform: translateY(-1px);
 }
 </style>
