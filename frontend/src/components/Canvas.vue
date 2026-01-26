@@ -51,12 +51,32 @@ const toggleAddVariable = () => {
   newVarType.value = "string"
 }
 
+const projectOptionsStats = computed(() => {
+  let total = 0;
+  let disconnected = 0;
+  
+  Canvas_Status.value.forEach(node => {
+    // Check if node has options
+    if (node.options && node.options.length > 0) {
+      total += node.options.length;
+      // Count how many don't have a 'next' connection
+      const loose = node.options.filter(opt => !opt.next).length;
+      disconnected += loose;
+    }
+  });
+
+  return { total, disconnected };
+});
+
 const saveProjectData = async () => {
   try {
     const payload = {
       projectId: projectId, // from route.params
       nodes: Canvas_Status.value,
-      globalVariables: globalVariables.value
+      globalVariables: globalVariables.value,
+      rootNodeId: rootNodeId.value,
+      totalOptionsCount: projectOptionsStats.value.total,
+      disconnectedOptionsCount: projectOptionsStats.value.disconnected
     };
 
     const res = await fetch("http://localhost:5000/canvas/save", {
@@ -102,7 +122,9 @@ const loadProjectData = async () => {
             x: n.x,
             y: n.y
         }));
-
+        if (data.rootNodeId !== undefined && data.rootNodeId !== null) {
+          rootNodeId.value = data.rootNodeId;
+      }
         // IMPORTANT: Rehydrate HTML Elements (Image/Video objects)
         // The JSON only has the URL string, we need to create new Image()/Video() objects
         Canvas_Status.value.forEach(node => {
@@ -1692,48 +1714,53 @@ const updateNodeName = () => {
 const openPopup = node => {
   popupNode.value = node
   
+  // 1. Reset Editor State Defaults
   setVarId.value = ""
   setVarOperator.value = "="
   setVarValueType.value = "constant"
   setVarValue.value = ""
+  setVarStringPrefix.value = ""
+  setVarStringSuffix.value = ""
+
+  ifElseVarId.value = ""
+  ifElseOperator.value = "=="
+  ifElseValueType.value = "constant"
+  ifElseValue.value = ""
   
+  // 2. Reset Scene State
   selectedScene.value = null
   sceneComponents.value = [] 
   sceneSettings.value.backgroundColor = '#000000' 
   activeComponent.value = null 
   
   const nodeStatus = Canvas_Status.value.find(s => s.index === node.id)
-  if (nodeStatus.node_type === 'Set Variables') {
-         viewMode.value = 'setVariables'
-         setVarId.value = nodeStatus.varId || ""
-         setVarOperator.value = nodeStatus.varOperator || "="
-         setVarValueType.value = nodeStatus.varValueType || "constant"
-         setVarValue.value = nodeStatus.varValue || ""
-         // Load new fields
-         setVarStringPrefix.value = nodeStatus.stringPrefix || ""
-         setVarStringSuffix.value = nodeStatus.stringSuffix || ""
-    }
+
   if (nodeStatus) {
+    // Ensure Name exists
     if (!nodeStatus.Node_name) {
       nodeStatus.Node_name = `Node ${node.id}`
     }
     editingNodeName.value = nodeStatus.Node_name
 
+    // --- LOGIC: SET VARIABLES ---
     if (nodeStatus.node_type === 'Set Variables') {
          viewMode.value = 'setVariables'
          setVarId.value = nodeStatus.varId || ""
          setVarOperator.value = nodeStatus.varOperator || "="
          setVarValueType.value = nodeStatus.varValueType || "constant"
          setVarValue.value = nodeStatus.varValue || ""
-    } else if (nodeStatus.node_type === 'If-Else') {
-         viewMode.value = 'ifElse' 
-    }else if (nodeStatus.node_type === 'If-Else') {
+         setVarStringPrefix.value = nodeStatus.stringPrefix || ""
+         setVarStringSuffix.value = nodeStatus.stringSuffix || ""
+    } 
+    // --- LOGIC: IF-ELSE (FIXED) ---
+    else if (nodeStatus.node_type === 'If-Else') {
          viewMode.value = 'ifElse'
          ifElseVarId.value = nodeStatus.varId || ""
          ifElseOperator.value = nodeStatus.operator || "=="
          ifElseValueType.value = nodeStatus.compareValueType || "constant"
          ifElseValue.value = nodeStatus.compareValue || ""
     } 
+    // --- GENERAL SCENES ---
     else {
          viewMode.value = 'scenes'
          if (nodeStatus.scenes) {
@@ -1751,6 +1778,7 @@ const openPopup = node => {
          }
     }
 
+    // Load Audio
     if (nodeStatus.audio) {
         sequenceAudio.value = { ...nodeStatus.audio }
     } else {
@@ -1758,6 +1786,7 @@ const openPopup = node => {
     }
 
   } else {
+    // New/Empty Node
     editingNodeName.value = `Node ${node.id}`
     nodeScenes.value = []
     sequenceAudio.value = null
@@ -4122,7 +4151,38 @@ const onPreviewWheel = (e) => {
                     </option>
                 </select>
             </div>
+            <div class="setting-item" style="margin-top: 24px;">
+                <label class="setting-label">Project Statistics</label>
+                
+                <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                        <span style="color: #cbd5e1;">Total Options:</span>
+                        <span style="color: #fff; font-weight: bold; font-family: monospace;">{{ projectOptionsStats.total }}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: #cbd5e1;">Disconnected Options:</span>
+                        <span 
+                            style="font-weight: bold; font-family: monospace;"
+                            :style="{ color: projectOptionsStats.disconnected > 0 ? '#ef4444' : '#00ff88' }"
+                        >
+                            {{ projectOptionsStats.disconnected }}
+                        </span>
+                    </div>
+                </div>
 
+                <div v-if="projectOptionsStats.disconnected > 0" style="margin-top: 12px; display: flex; gap: 10px; background: rgba(239, 68, 68, 0.1); padding: 10px; border-radius: 6px; border: 1px solid rgba(239, 68, 68, 0.3);">
+                    <div style="font-size: 1.2rem;">⚠️</div>
+                    <div style="font-size: 0.85rem; color: #fca5a5; line-height: 1.4;">
+                        <strong>Heads up!</strong> You cannot post/publish this project while there are 
+                        <u>{{ projectOptionsStats.disconnected }} disconnected options</u>. 
+                        <br>Please ensure every option leads to a node! 🧐
+                    </div>
+                </div>
+                
+                <div v-else-if="projectOptionsStats.total > 0" style="margin-top: 12px; text-align: center; font-size: 0.85rem; color: #00ff88; font-style: italic;">
+                    All systems go! Everything is connected. 🚀
+                </div>
+            </div>
             <div class="setting-item" style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
                  <p style="color: #6b7280; font-size: 0.9rem; font-style: italic;">
                     Global variables defined in the side menu will be initialized when the project starts.

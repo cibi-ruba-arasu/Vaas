@@ -396,21 +396,30 @@ app.get("/projects/:id", authMiddleware, async (req, res) => {
 })
 
 app.post("/canvas/save", authMiddleware, async (req, res) => {
-  const { projectId, nodes, globalVariables } = req.body;
+  const { 
+    projectId, 
+    nodes, 
+    globalVariables, 
+    rootNodeId, 
+    totalOptionsCount, 
+    disconnectedOptionsCount 
+  } = req.body;
 
   if (!projectId) return res.status(400).json({ message: "Project ID required" });
 
   try {
-    // Upsert: Update if exists, Insert if not
     const savedState = await CanvasState.findOneAndUpdate(
       { projectId },
       { 
         projectId, 
         nodes, 
         globalVariables,
+        rootNodeId,               // <--- Saving Root Node
+        totalOptionsCount,        // <--- Saving Stats
+        disconnectedOptionsCount, // <--- Saving Stats
         lastSaved: new Date()
       },
-      { new: true, upsert: true } // <--- Key magic for "update or create"
+      { new: true, upsert: true }
     );
 
     res.json({ success: true, message: "Project saved successfully", savedAt: savedState.lastSaved });

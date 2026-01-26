@@ -134,6 +134,9 @@ const CanvasStateSchema = new mongoose.Schema({
   },
   nodes: [NodeSchema], // This stores your Canvas_Status
   globalVariables: [GlobalVarSchema],
+  rootNodeId: { type: Number, default: null },
+  totalOptionsCount: { type: Number, default: 0 },
+  disconnectedOptionsCount: { type: Number, default: 0 },
   lastSaved: { type: Date, default: Date.now }
 });
 
