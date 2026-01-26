@@ -301,6 +301,11 @@ const previewScale = ref(1)
 // ANIMATION STATE
 const componentStartTime = ref(0) 
 
+// --- NEW: EXIT ANIMATION STATE ---
+const isSceneExiting = ref(false)
+const sceneExitStartTime = ref(0)
+const pendingNavigationTargetId = ref(null)
+
 /* ================= GRAPH SETTINGS ================= */
 const graphCanvasRef = ref(null)
 let graphCtx
@@ -801,9 +806,9 @@ const addOptionsComponent = () => {
         borderRadius: 8,          
         
         hasTimeLimit: false,
-        timeLimitDuration: 5.0, // Seconds (Max 10)
-        timeoutAction: 'random', // 'random' or 'manual'
-        timeoutTargetId: null,   // The Option ID to select if manual
+        timeLimitDuration: 5.0,
+        timeoutAction: 'random',
+        timeoutTargetId: null,
 
         optionsList: [
             { id: 1, text: 'Option 1' },
@@ -821,7 +826,10 @@ const addOptionsComponent = () => {
         autoRender: false,
         scrollY: 0, 
         animationType: 'fade', 
-        animationDuration: 1.0 
+        animationDuration: 1.0,
+        // --- NEW EXIT DEFAULTS ---
+        exitAnimationType: 'fade',
+        exitAnimationDuration: 0.5 
     }
     sceneComponents.value.push(newOption)
     updateSceneContentDisplay()
@@ -895,7 +903,10 @@ const addTextComponent = () => {
     renderWhileClicked: true,
     autoRender: false,
     animationType: 'fade', 
-    animationDuration: 1.0 
+    animationDuration: 1.0,
+    // --- NEW EXIT DEFAULTS ---
+    exitAnimationType: 'fade', 
+    exitAnimationDuration: 0.5 
   }
    
   const optionsIndex = sceneComponents.value.findIndex(c => c.type === 'options');
@@ -1959,7 +1970,7 @@ const drawComponents = () => {
 
 // Updated renderComponent to handle Animation Overrides (like Typewriter text truncation)
 const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
-    // ... (Keep existing Image/Video/Text logic unchanged) ...
+    // ... [Keep Image/Video/Text/Input/Variable sections exactly the same as before] ...
     if (comp.type === 'image') {
         if (comp.imgObject) {
             ctx.drawImage(comp.imgObject, screenPos.x - (comp.width / 2), screenPos.y - (comp.height / 2), comp.width, comp.height)
@@ -1996,38 +2007,26 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         }
         ctx.translate(-screenPos.x, -screenPos.y)
     } 
-
-    // --- NEW: VARIABLE COMPONENT RENDER ---
     else if (comp.type === 'variable') {
         ctx.translate(screenPos.x, screenPos.y) 
-        
-        // Background
         if (comp.backgroundColor && comp.backgroundColor !== 'transparent') {
             ctx.fillStyle = comp.backgroundColor
             if (comp.borderRadius > 0) { drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius); ctx.fill() } 
             else { ctx.fillRect(-(comp.width/2), -(comp.height/2), comp.width, comp.height) }
         }
-        // Border
         if (comp.borderWidth > 0 && comp.borderColor !== 'transparent') {
             ctx.strokeStyle = comp.borderColor; ctx.lineWidth = comp.borderWidth
             if (comp.borderRadius > 0) { drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius); ctx.stroke() } 
             else { ctx.strokeRect(-(comp.width/2), -(comp.height/2), comp.width, comp.height) }
         }
-        
-        // Content
         const fontWeight = comp.fontWeight || 'normal'; const fontStyle = comp.fontStyle || 'normal'; const fontFamily = comp.fontFamily || 'sans-serif'
         ctx.font = `${fontStyle} ${fontWeight} ${comp.fontSize}px ${fontFamily}`; ctx.fillStyle = comp.color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-        
-        // Lookup Variable Value
         const targetVar = globalVariables.value.find(v => v.id === comp.variableId);
-        // Default text if no var or if var has no value
         let contentToDraw = targetVar ? String(targetVar.value) : (isPreviewMode.value ? "" : "{Variable}");
-        
         if (animationOverride && animationOverride.type === 'typewriter') {
             const progress = animationOverride.progress; const length = Math.floor(contentToDraw.length * progress); contentToDraw = contentToDraw.substring(0, length)
         }
         ctx.fillText(contentToDraw, 0, 0)
-        
         if (comp.textDecoration === 'underline' || comp.textDecoration === 'line-through') {
              const metrics = ctx.measureText(contentToDraw); const width = metrics.width
              ctx.beginPath(); ctx.strokeStyle = comp.textDecorationColor || comp.color; ctx.lineWidth = comp.fontSize / 15
@@ -2035,13 +2034,8 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         }
         ctx.translate(-screenPos.x, -screenPos.y)
     }
-
-    
-    // --- INPUT COMPONENT RENDER (Placeholder for Editor) ---
     else if (comp.type === 'input') {
         ctx.translate(screenPos.x, screenPos.y)
-        
-        // Draw Input Box (Simulation for editor)
         if (comp.backgroundColor && comp.backgroundColor !== 'transparent') {
             ctx.fillStyle = comp.backgroundColor
             drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius);
@@ -2054,59 +2048,56 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
             drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius);
             ctx.stroke();
         }
-        
-        // Placeholder Text
         ctx.font = `${comp.fontStyle} ${comp.fontWeight} ${comp.fontSize}px ${comp.fontFamily}`;
         ctx.fillStyle = '#ccc';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         ctx.fillText(comp.placeholderText || "Type here...", -(comp.width/2) + 10, 0);
-        
-        // Calculate Button Width Dynamically based on text
         ctx.font = `bold 14px sans-serif`;
         const btnTextWidth = ctx.measureText(comp.buttonText).width;
-        const btnWidth = Math.max(60, btnTextWidth + 30); // 30px padding
-        
+        const btnWidth = Math.max(60, btnTextWidth + 30); 
         const btnX = (comp.width/2) - btnWidth;
         const btnY = -(comp.height/2);
-        
         ctx.fillStyle = comp.buttonNormalColor;
-        // Simple rect for button in canvas editor preview
         ctx.fillRect(btnX, btnY, btnWidth, comp.height);
-        
         ctx.fillStyle = comp.buttonTextColor;
         ctx.textAlign = 'center';
         ctx.fillText(comp.buttonText, btnX + btnWidth/2, 0);
-
         ctx.translate(-screenPos.x, -screenPos.y)
     }
 
-    // --- UPDATED OPTIONS LOGIC ---
-    // --- UPDATED OPTIONS LOGIC ---
+    // --- UPDATED OPTIONS LOGIC FOR EXIT ANIMATIONS ---
     else if (comp.type === 'options') {
         ctx.translate(screenPos.x, screenPos.y) 
         
-        // 1. Calculate Dynamic Layout
+        // Setup Exit Animation Variables
+        const isExiting = animationOverride?.isExiting || false;
+        const exitProgress = animationOverride?.exitProgress || 0;
+        
+        // Box Opacity: Fades out normally (Case 2: Background fades out)
+        const boxBaseOpacity = (comp.boxOpacity !== undefined) ? comp.boxOpacity : 0.8;
+        const currentBoxOpacity = isExiting ? (boxBaseOpacity * (1 - exitProgress)) : boxBaseOpacity;
+
         const layout = calculateOptionsLayout(comp, ctx);
         const radius = comp.borderRadius !== undefined ? comp.borderRadius : 8;
         
-        // ... (Background and Border drawing code remains the same) ...
         // Background
-        if (comp.boxColor && comp.boxOpacity !== undefined && comp.boxOpacity > 0) {
-            ctx.fillStyle = hexToRgba(comp.boxColor, comp.boxOpacity);
+        if (comp.boxColor && currentBoxOpacity > 0) {
+            ctx.fillStyle = hexToRgba(comp.boxColor, currentBoxOpacity);
             drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, radius);
             ctx.fill();
         }
         
-        // Border
+        // Border (Fades out with box)
         if (comp.borderWidth > 0 && comp.borderColor) {
+            ctx.globalAlpha = isExiting ? (1 - exitProgress) : 1; // Fade border
             ctx.strokeStyle = comp.borderColor;
             ctx.lineWidth = comp.borderWidth;
             ctx.setLineDash([]); 
             drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, radius);
             ctx.stroke();
+            ctx.globalAlpha = 1; // Reset
         } else if (!isPreviewMode.value) {
-            // Editor Helper
             if (!comp.boxOpacity || comp.boxOpacity === 0) {
                 ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
                 ctx.lineWidth = 1;
@@ -2117,59 +2108,73 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
             }
         }
 
-        // --- NEW: PROGRESS BAR RENDERING ---
-        if (comp.hasTimeLimit) {
+        // Time Limit Bar (Fades out quickly on exit)
+        if (comp.hasTimeLimit && !isExiting) {
             let progress = 1.0;
-
             if (isPreviewMode.value) {
-                // Calculate progress based on time elapsed
                 const now = Date.now();
-                // componentStartTime is set when the component becomes active
                 const elapsed = (now - componentStartTime.value) / 1000; 
                 const duration = comp.timeLimitDuration || 5;
-                
                 progress = 1.0 - (elapsed / duration);
                 if (progress < 0) progress = 0;
             }
-
             if (progress > 0) {
                 const barHeight = 6;
                 const totalW = comp.width;
                 const currentW = totalW * progress;
-                
                 const barX = -(comp.width / 2);
-                const barY = -(comp.height / 2) - barHeight - 4; // 4px padding above box
-
-                // Draw Bar Background
+                const barY = -(comp.height / 2) - barHeight - 4; 
                 ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
                 ctx.fillRect(barX, barY, totalW, barHeight);
-
-                // Draw Active Progress
-                // Color transition from Green -> Yellow -> Red
-                if (progress > 0.5) ctx.fillStyle = '#00ff88'; // Green
-                else if (progress > 0.2) ctx.fillStyle = '#eab308'; // Yellow
-                else ctx.fillStyle = '#ef4444'; // Red
-
+                if (progress > 0.5) ctx.fillStyle = '#00ff88'; 
+                else if (progress > 0.2) ctx.fillStyle = '#eab308'; 
+                else ctx.fillStyle = '#ef4444'; 
                 ctx.fillRect(barX, barY, currentW, barHeight);
             }
         }
-        // -----------------------------------
 
-        // 3. Clip Content to Box (Existing Code continues...)
         ctx.save();
         drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, radius);
         ctx.clip();
 
-        // 4. Draw Buttons
+        // 4. Draw Buttons with Exit Logic
         if (layout.buttons.length > 0) {
             layout.buttons.forEach((btn, index) => {
                 const drawY = btn.y - (comp.scrollY || 0);
                 
                 // Determine Style
                 let style = comp.styles.normal;
-                if (comp._clickedOptionIndex === index) style = comp.styles.clicked;
-                else if (comp._hoveredOptionIndex === index) style = comp.styles.hovered;
                 
+                // Keep 'Clicked' style if this was the selected one during exit
+                // comp._clickedOptionIndex holds the one clicked via mouse
+                // For timeouts, we might not have _clickedOptionIndex set purely, 
+                // but checking _clickedOptionIndex covers the Mouse Click Case 2.
+                const isSelected = (comp._clickedOptionIndex === index);
+
+                if (isSelected) style = comp.styles.clicked;
+                else if (comp._hoveredOptionIndex === index && !isExiting) style = comp.styles.hovered;
+                
+                // --- CASE 2 LOGIC: SLOWER EXIT FOR SELECTED ---
+                // If exiting:
+                //   - Non-selected buttons fade out fast: (1 - exitProgress * 1.5)
+                //   - Selected button fades out slow/late: (1 - (exitProgress - 0.3) * 1.5)
+                let buttonAlpha = 1.0;
+                
+                if (isExiting) {
+                    if (isSelected) {
+                        // Starts fading after 30% of time passed
+                         let delayedProgress = (exitProgress - 0.3) / 0.7;
+                         if (delayedProgress < 0) delayedProgress = 0;
+                         buttonAlpha = 1.0 - delayedProgress;
+                    } else {
+                        // Fades immediately
+                        buttonAlpha = 1.0 - (exitProgress * 1.5);
+                    }
+                    if (buttonAlpha < 0) buttonAlpha = 0;
+                }
+                
+                ctx.globalAlpha = buttonAlpha;
+
                 // Draw Button Rect
                 if (style.backgroundColor && style.backgroundColor !== 'transparent') {
                     ctx.fillStyle = style.backgroundColor;
@@ -2189,23 +2194,23 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
                 ctx.font = `${style.fontSize}px ${style.fontFamily || 'sans-serif'}`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                // Center text in button: btn.x + w/2, drawY + h/2
                 ctx.fillText(btn.text, btn.x + (btn.w/2), drawY + (btn.h/2));
+                
+                ctx.globalAlpha = 1.0; // Reset
             });
         }
         
-        // 5. Draw Scrollbar if needed
-        if (layout.totalContentHeight > comp.height) {
+        // Scrollbar
+        if (layout.totalContentHeight > comp.height && !isExiting) {
             const scrollBarW = 4;
             const scrollRatio = comp.height / layout.totalContentHeight;
             const thumbH = Math.max(20, comp.height * scrollRatio);
             const thumbY = -comp.height/2 + ((comp.scrollY || 0) / layout.totalContentHeight) * comp.height;
-            
             ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
             ctx.fillRect(comp.width/2 - 6, thumbY, scrollBarW, thumbH);
         }
 
-        ctx.restore(); // Remove clip
+        ctx.restore(); 
         ctx.translate(-screenPos.x, -screenPos.y)
     }
 }
@@ -3234,8 +3239,12 @@ const stopAllVideos = () => {
 }
 
 const advancePreview = () => {
+    // 1. If we are currently in an exit animation, do nothing until it finishes
+    if (isSceneExiting.value) return;
+
     const currentScene = nodeScenes.value[currentPreviewSceneIndex.value]
     const components = currentScene.components || []
+    
     // Block advance if Options or UN-SUBMITTED INPUT component is visible
     if (currentPreviewComponentIndex.value >= 0 && currentPreviewComponentIndex.value < components.length) {
          const currentComp = components[currentPreviewComponentIndex.value];
@@ -3243,7 +3252,7 @@ const advancePreview = () => {
          if (currentComp.type === 'input' && !currentComp.isSubmitted) return;
     }
 
-    // Animation Skip Check
+    // Animation Skip Check (Entrance Animation)
     if (currentPreviewComponentIndex.value >= 0 && currentPreviewComponentIndex.value < components.length) {
         const currentComp = components[currentPreviewComponentIndex.value]
         const now = Date.now()
@@ -3257,6 +3266,7 @@ const advancePreview = () => {
     }
 
     if (currentPreviewComponentIndex.value < components.length - 1) {
+        // --- NEXT COMPONENT IN SAME SCENE ---
         currentPreviewComponentIndex.value++
         componentStartTime.value = Date.now()
         
@@ -3281,17 +3291,40 @@ const advancePreview = () => {
         }
 
     } else {
+        // --- END OF SCENE ---
         if (currentPreviewSceneIndex.value < nodeScenes.value.length - 1) {
-            stopVideosInScene(currentScene);
-            currentPreviewSceneIndex.value++
-            currentPreviewComponentIndex.value = -1 
             
-            const nextScene = nodeScenes.value[currentPreviewSceneIndex.value]
-            if (nextScene.components && nextScene.components.length > 0) {
-                 if (nextScene.components[0].autoRender) {
-                     setTimeout(() => advancePreview(), 50)
-                 }
-            }
+            // CASE 1: SCENE TRANSITION ANIMATION
+            // Determine max exit duration to wait
+            let maxExitDuration = 0;
+            components.forEach(c => {
+                if (c.exitAnimationDuration && c.exitAnimationDuration > maxExitDuration) {
+                    maxExitDuration = c.exitAnimationDuration;
+                }
+            });
+            if (maxExitDuration === 0) maxExitDuration = 0.5; // default safety
+
+            // Trigger Exit State
+            isSceneExiting.value = true;
+            sceneExitStartTime.value = Date.now();
+
+            // Wait for exit, then swap scenes
+            setTimeout(() => {
+                stopVideosInScene(currentScene);
+                currentPreviewSceneIndex.value++
+                currentPreviewComponentIndex.value = -1 
+                
+                // Reset Exit State
+                isSceneExiting.value = false;
+                sceneExitStartTime.value = 0;
+                
+                const nextScene = nodeScenes.value[currentPreviewSceneIndex.value]
+                if (nextScene.components && nextScene.components.length > 0) {
+                     if (nextScene.components[0].autoRender) {
+                         setTimeout(() => advancePreview(), 50)
+                     }
+                }
+            }, maxExitDuration * 1000);
 
         } else {
             // End of sequence
@@ -3383,41 +3416,63 @@ const drawPreview = () => {
             const screenPos = { x: screenX, y: screenY }
 
             // --- ANIMATION CALCULATION ---
-            let progress = 1
+            let entranceProgress = 1
+            let exitProgress = 0
             
-            if (i === currentPreviewComponentIndex.value) {
+            // 1. Entrance Logic
+            if (i === currentPreviewComponentIndex.value && !isSceneExiting.value) {
                 const duration = (comp.animationDuration || 1) * 1000
                 if (duration > 0) {
-                    progress = (now - componentStartTime.value) / duration
-                    if (progress > 1) progress = 1
-                    if (progress < 0) progress = 0
+                    entranceProgress = (now - componentStartTime.value) / duration
+                    if (entranceProgress > 1) entranceProgress = 1
+                    if (entranceProgress < 0) entranceProgress = 0
                 }
+            }
+
+            // 2. Exit Logic (Case 1 & Case 2)
+            if (isSceneExiting.value) {
+                const exitDur = (comp.exitAnimationDuration || 0.5) * 1000;
+                exitProgress = (now - sceneExitStartTime.value) / exitDur;
+                if (exitProgress > 1) exitProgress = 1;
+                if (exitProgress < 0) exitProgress = 0;
             }
 
             const animType = comp.animationType || 'none'
             
             ctx.save()
 
-            if (animType === 'fade') {
-                ctx.globalAlpha = progress
-            } else if (animType === 'scale') {
-                ctx.translate(screenPos.x, screenPos.y)
-                ctx.scale(progress, progress)
-                ctx.translate(-screenPos.x, -screenPos.y)
-            } else if (animType === 'slide') {
-                const offset = 200 * (1 - progress)
-                ctx.translate(-offset, 0)
-                ctx.globalAlpha = Math.max(0, progress) 
+            // APPLY ENTRANCE
+            if (!isSceneExiting.value) {
+                if (animType === 'fade') {
+                    ctx.globalAlpha = entranceProgress
+                } else if (animType === 'scale') {
+                    ctx.translate(screenPos.x, screenPos.y)
+                    ctx.scale(entranceProgress, entranceProgress)
+                    ctx.translate(-screenPos.x, -screenPos.y)
+                } else if (animType === 'slide') {
+                    const offset = 200 * (1 - entranceProgress)
+                    ctx.translate(-offset, 0)
+                    ctx.globalAlpha = Math.max(0, entranceProgress) 
+                }
+            } 
+            // APPLY EXIT (Standard Components)
+            else if (comp.type !== 'options') {
+                 // Standard Exit: Fade out based on progress
+                 // You can expand this with 'exitAnimationType' later
+                 ctx.globalAlpha = 1 - exitProgress;
             }
-            
+
             ctx.translate(screenPos.x, screenPos.y)
             ctx.rotate((comp.rotation || 0) * Math.PI / 180)
             ctx.translate(-screenPos.x, -screenPos.y)
             
-            // Pass progress specifically for Typewriter effect inside renderComponent
+            // Pass animation states to renderComponent
             const animationOverride = {
                 type: animType,
-                progress: progress
+                progress: entranceProgress,
+                // New Exit Props
+                isExiting: isSceneExiting.value,
+                exitProgress: exitProgress
             }
             
             renderComponent(ctx, comp, screenPos, animationOverride)
@@ -3425,7 +3480,6 @@ const drawPreview = () => {
             ctx.restore()
         }
     }
-    
     ctx.restore(); 
 }
 
@@ -3439,13 +3493,19 @@ const exitPreview = () => {
     }
     stopAllVideos();
     
-    // --- NEW: Reset Global Variables to Default ---
+    // Reset Global Variables to Default
     globalVariables.value.forEach(v => {
         v.value = v.defaultValue
     })
     
+    // --- NEW: Reset Exit State ---
+    isSceneExiting.value = false
+    sceneExitStartTime.value = 0
+    pendingNavigationTargetId.value = null
+    // ----------------------------
+
     isPreviewMode.value = false
-    isSceneExiting.value = false;
+    // isSceneExiting.value = false; // Removed duplicate
 }
 
 const getInputType = (comp) => {
@@ -3594,6 +3654,9 @@ const handleOptionNavigation = (compId, optionId) => {
         return;
     }
 
+    // 1. Check if we are already exiting to prevent double clicks
+    if (isSceneExiting.value) return;
+
     const currentStatus = Canvas_Status.value.find(s => s.index === popupNode.value.id);
     if (!currentStatus || !currentStatus.options) {
         exitPreview();
@@ -3602,11 +3665,42 @@ const handleOptionNavigation = (compId, optionId) => {
 
     const optStatus = currentStatus.options.find(o => o.id === optionId);
     
-    if (!optStatus || optStatus.next == null) {
-        exitPreview();
-    } else {
-        loadNodeForPreview(optStatus.next);
+    // 2. Identify Target Node
+    const nextNodeId = (optStatus && optStatus.next != null) ? optStatus.next : null;
+    
+    if (!nextNodeId) {
+        exitPreview(); // End if no link
+        return;
     }
+
+    // CASE 2: OPTIONS EXIT ANIMATION
+    // Determine wait time (Exit duration + a little buffer for the "Slower" effect)
+    const scene = nodeScenes.value[currentPreviewSceneIndex.value];
+    const components = scene.components || [];
+    let maxExitDuration = 0;
+    
+    components.forEach(c => {
+        // Find options component to ensure we include its duration
+        const duration = c.exitAnimationDuration || 0.5;
+        if (duration > maxExitDuration) maxExitDuration = duration;
+    });
+
+    // Store where we are going
+    pendingNavigationTargetId.value = nextNodeId;
+    
+    // Trigger Exit State
+    isSceneExiting.value = true;
+    sceneExitStartTime.value = Date.now();
+
+    // 3. Wait, then Load Node
+    setTimeout(() => {
+        isSceneExiting.value = false;
+        sceneExitStartTime.value = 0;
+        const target = pendingNavigationTargetId.value;
+        pendingNavigationTargetId.value = null;
+        
+        loadNodeForPreview(target);
+    }, maxExitDuration * 1000);
 }
 
 const loadNodeForPreview = (targetNodeId) => {
@@ -4431,7 +4525,55 @@ const onPreviewWheel = (e) => {
                         </div>
 
                         <div class="separator"></div>
+                        <div class="detail-section" v-if="activeComponent.animationType && activeComponent.animationType !== 'none'">
+                            <label class="detail-label">Animation Duration (sec):</label>
+                            <div class="input-row">
+                                <input 
+                                type="range" 
+                                v-model.number="activeComponent.animationDuration" 
+                                min="0.1" max="10" step="0.1"
+                                class="range-input" 
+                                />
+                                <input 
+                                type="number" 
+                                v-model.number="activeComponent.animationDuration" 
+                                class="number-input" 
+                                min="0.1" max="10" step="0.1"
+                                />
+                            </div>
+                            </div>
 
+                            <div class="separator"></div>
+
+                            <div class="detail-section">
+                                <label class="detail-label">Exit Animation:</label>
+                                <select v-model="activeComponent.exitAnimationType" class="detail-input">
+                                    <option value="fade">Fade Out</option>
+                                    <option value="none">None</option>
+                                </select>
+                            </div>
+
+                            <div class="detail-section" v-if="activeComponent.exitAnimationType && activeComponent.exitAnimationType !== 'none'">
+                            <label class="detail-label">Exit Duration (sec):</label>
+                            <div class="input-row">
+                                <input 
+                                type="range" 
+                                v-model.number="activeComponent.exitAnimationDuration" 
+                                min="0.1" max="5" step="0.1"
+                                class="range-input" 
+                                />
+                                <input 
+                                type="number" 
+                                v-model.number="activeComponent.exitAnimationDuration" 
+                                class="number-input" 
+                                min="0.1" max="5" step="0.1"
+                                />
+                            </div>
+                            <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; font-style: italic;">
+                                Plays when scene ends or option selected.
+                            </div>
+                            </div>
+                            <div class="separator"></div>
                         <div class="detail-section">
                         <div class="checkbox-row" style="margin-bottom: 8px;">
                             <label class="detail-label" style="margin-bottom:0; flex: 1;">Render on click:</label>
