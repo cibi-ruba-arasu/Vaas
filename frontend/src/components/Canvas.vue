@@ -28,6 +28,19 @@ const autoSaveTimer = ref(autoSaveDuration);
 const hasUnsavedChanges = ref(false);
 let autoSaveInterval = null;
 
+
+/* ================= SAVE & LOADING STATE ================= */
+const isSaving = ref(false) // <--- NEW STATE
+const currentTip = ref("")  // <--- NEW STATE
+
+const tips = [
+    "⚠️ Important: For the best experience, please create and edit your project on a single device to avoid sync conflicts.",
+    "💡 Pro Tip: Use the 'Preview' mode often to test your logic flows before publishing.",
+    "🎨 You can customize individual component animations in the editor panel.",
+    "🔌 Check your disconnected options in Project Settings before finishing!",
+    "💾 Weaving your digital tapestry..."
+]
+
 const notification = ref({
     show: false,
     message: "",
@@ -60,6 +73,38 @@ const triggerNotification = (msg, type = 'success') => {
         notification.value.show = false;
     }, 3000);
 }
+
+/* ================= MEDIA LOADING TRACKER ================= */
+const mediaRegistry = ref(new Map()); // Stores file status: { id, name, type, status: 'loading'|'loaded'|'error' }
+const showMediaStatus = ref(false);
+
+const isMediaLoading = computed(() => {
+    for (const item of mediaRegistry.value.values()) {
+        if (item.status === 'loading') return true;
+    }
+    return false;
+});
+
+const mediaLoadingCount = computed(() => {
+    let loaded = 0, total = 0;
+    mediaRegistry.value.forEach(item => {
+        total++;
+        if (item.status === 'loaded') loaded++;
+    });
+    return { loaded, total };
+});
+
+const registerMedia = (id, name, type) => {
+    mediaRegistry.value.set(id, { id, name, type, status: 'loading' });
+    return (status) => {
+        const item = mediaRegistry.value.get(id);
+        if (item) {
+            item.status = status;
+            // Force reactivity update for Map
+            mediaRegistry.value = new Map(mediaRegistry.value); 
+        }
+    };
+};
 
 const fetchProjectDetails = async () => {
   try {
@@ -111,12 +156,22 @@ if (!Canvas_Status.value) return { total: 0, disconnected: 0 };
 });
 
 const saveProjectData = async (isAutoSave = false) => {
+  // Prevent multiple clicks
+  if (isSaving.value && !isAutoSave) return;
+
   try {
-    if (!isAutoSave) document.body.style.cursor = 'wait';
+    // 1. ACTIVATE LOADING SCREEN (Only for manual saves)
+    if (!isAutoSave) {
+        isSaving.value = true;
+        // Pick a random tip
+        currentTip.value = tips[Math.floor(Math.random() * tips.length)];
+    } else {
+        document.body.style.cursor = 'wait'; // Minimal feedback for autosave
+    }
 
     const payload = {
       projectId: projectId, 
-      nodes: Canvas_Status.value, // Currently contains Base64 images
+      nodes: Canvas_Status.value, 
       globalVariables: globalVariables.value,
       rootNodeId: rootNodeId.value,
       totalOptionsCount: projectOptionsStats.value.total,
@@ -133,51 +188,62 @@ const saveProjectData = async (isAutoSave = false) => {
     });
 
     const data = await res.json();
-    document.body.style.cursor = 'default';
 
     if (res.ok) {
-
-        hasUnsavedChanges.value = false;       // Stop the timer loop
+        hasUnsavedChanges.value = false;
         autoSaveTimer.value = autoSaveDuration;
+        
         triggerNotification(
           isAutoSave ? "Auto-saved successfully! 💾" : "Project saved successfully! 💾", 
           "success"
         );
-      Canvas_Status.value = data.updatedNodes;
-          nodes.value = data.updatedNodes.map(n => ({
+
+        Canvas_Status.value = data.updatedNodes;
+        nodes.value = data.updatedNodes.map(n => ({
             id: n.index,
             x: n.x,
             y: n.y
-          }));
+        }));
           
-          if (selectedScene.value) {
-              const currentSceneNode = Canvas_Status.value.find(n => 
-                  n.scenes.some(s => s.id === selectedScene.value.id)
-              );
-              if (currentSceneNode) {
-                  const updatedScene = currentSceneNode.scenes.find(s => s.id === selectedScene.value.id);
-                  if (updatedScene) {
-                      sceneComponents.value = updatedScene.components;
-                      nextTick(() => {
-                          updateSceneContentDisplay();
-                          drawComponents();
-                      });
-                  }
-              }
-      }
-
+        // Refresh scene if open
+        if (selectedScene.value) {
+            const currentSceneNode = Canvas_Status.value.find(n => 
+                n.scenes.some(s => s.id === selectedScene.value.id)
+            );
+            if (currentSceneNode) {
+                const updatedScene = currentSceneNode.scenes.find(s => s.id === selectedScene.value.id);
+                if (updatedScene) {
+                    sceneComponents.value = updatedScene.components;
+                    nextTick(() => {
+                        updateSceneContentDisplay();
+                        drawComponents();
+                    });
+                }
+            }
+        }
     } else {
-      triggerNotification("Save Failed: " + data.message, "error");
+        triggerNotification("Save Failed: " + data.message, "error");
     }
   } catch (err) {
     console.error(err);
-    document.body.style.cursor = 'default';
     triggerNotification("Error connecting to server", "error");
+  } finally {
+    // 2. DISABLE LOADING SCREEN (Delay slightly for smooth UX)
+    if (!isAutoSave) {
+        setTimeout(() => {
+            isSaving.value = false;
+        }, 800); // 0.8s minimum view time for the cool animation
+    } else {
+        document.body.style.cursor = 'default';
+    }
   }
 };
 
 const loadProjectData = async () => {
   try {
+    // Clear previous registry on reload
+    mediaRegistry.value.clear(); 
+    
     const res = await fetch(`http://localhost:5000/canvas/load/${projectId}`, {
       headers: { "Authorization": `Bearer ${token}` }
     });
@@ -202,32 +268,60 @@ const loadProjectData = async () => {
           rootNodeId.value = data.rootNodeId;
         }
 
-        // --- REHYDRATION LOGIC (UPDATED) ---
+        // --- REHYDRATION WITH LOADING TRACKING ---
         Canvas_Status.value.forEach(node => {
+            // 1. Register Node Audio
+            if (node.audio && node.audio.url) {
+                const audioId = `audio-${node.index}`;
+                const markComplete = registerMedia(audioId, node.audio.name || 'Background Audio', 'audio');
+                
+                // Preload check
+                const tempAudio = new Audio();
+                tempAudio.oncanplaythrough = () => markComplete('loaded');
+                tempAudio.onerror = () => markComplete('error');
+                tempAudio.src = node.audio.url;
+            }
+
             if(node.scenes) {
                 node.scenes.forEach(scene => {
                     if(scene.components) {
                         scene.components.forEach(comp => {
+                            // 2. Register Images
                             if(comp.type === 'image' && comp.url) {
-                                const img = new Image();
-                                img.crossOrigin = "Anonymous"; // Vital for GCS
+                                const markComplete = registerMedia(comp.id, comp.name || 'Image', 'image');
                                 
-                                // FIX: Redraw when image actually loads
+                                const img = new Image();
+                                img.crossOrigin = "Anonymous";
+                                
                                 img.onload = () => {
-                                    draw(); // Update graph
-                                    if(selectedScene.value) drawComponents(); // Update scene if open
+                                    markComplete('loaded');
+                                    draw(); 
+                                    if(selectedScene.value) drawComponents(); 
                                 };
                                 
-                                // FIX: Debug errors
                                 img.onerror = (e) => {
-                                    console.error("Failed to load image:", comp.url, e);
+                                    console.error("Failed to load image:", comp.url);
+                                    markComplete('error');
                                 };
 
                                 img.src = comp.url;
                                 comp.imgObject = img;
-                            } else if (comp.type === 'video' && comp.url) {
+                            } 
+                            // 3. Register Videos
+                            else if (comp.type === 'video' && comp.url) {
+                                const markComplete = registerMedia(comp.id, comp.name || 'Video', 'video');
+
                                 const vid = document.createElement('video');
                                 vid.crossOrigin = "Anonymous"; 
+                                vid.preload = "metadata"; // Load enough to know it works
+                                
+                                vid.onloadeddata = () => {
+                                    markComplete('loaded');
+                                };
+                                vid.onerror = () => {
+                                    markComplete('error');
+                                };
+
                                 vid.src = comp.url;
                                 vid.loop = comp.isLoop !== false;
                                 vid.muted = comp.isMuted === true;
@@ -237,14 +331,13 @@ const loadProjectData = async () => {
                     }
                 });
             }
-            // IMPORTANT: Reset the 'Unsaved Changes' flag after loading is done
-        // so the timer doesn't start immediately upon opening the project.
-        nextTick(() => {
-            hasUnsavedChanges.value = false;
-        });
         });
 
-        draw(); 
+        // Final cleanup
+        nextTick(() => {
+            hasUnsavedChanges.value = false;
+            draw(); 
+        });
       }
     }
   } catch (err) {
@@ -576,14 +669,29 @@ const handleAudioUpload = (event) => {
   const file = event.target.files[0]
   if (!file) return
 
-  sequenceAudio.value = {
-    name: file.name,
-    url: URL.createObjectURL(file),
-    volume: 1.0, 
-    loop: true   
+  // Optional: Check type
+  if (!file.type.startsWith('audio/')) {
+      alert("Please select a valid audio file.")
+      return
   }
 
-  updateNodeAudioInStatus()
+  // USE FILE READER TO CONVERT TO BASE64
+  const reader = new FileReader()
+
+  reader.onload = (e) => {
+      const audioUrl = e.target.result // This is now a "data:audio/..." string
+
+      sequenceAudio.value = {
+        name: file.name,
+        url: audioUrl, // Success! The backend will now recognize this.
+        volume: 1.0, 
+        loop: true   
+      }
+
+      updateNodeAudioInStatus()
+  }
+
+  reader.readAsDataURL(file) // Triggers the conversion
   event.target.value = ''
 }
 
@@ -4219,6 +4327,24 @@ const onPreviewWheel = (e) => {
 
 <template>
   <div class="wrapper">
+    <transition name="fade">
+        <div v-if="isSaving" class="saving-overlay">
+            <div class="loom-container">
+                <div class="loom-ring outer"></div>
+                <div class="loom-ring middle"></div>
+                <div class="loom-ring inner"></div>
+                <div class="loom-core"></div>
+                <div class="loom-particles">
+                    <span></span><span></span><span></span><span></span>
+                </div>
+            </div>
+            
+            <div class="saving-text-wrapper">
+                <div class="saving-title">SAVING PROJECT</div>
+                <div class="saving-tip">{{ currentTip }}</div>
+            </div>
+        </div>
+    </transition>
     <canvas 
       ref="canvasRef" 
       class="canvas" 
@@ -4259,13 +4385,56 @@ const onPreviewWheel = (e) => {
       </div>
 
       <div class="header-actions">
+            <div class="media-status-wrapper">
+                <button 
+                    class="media-status-btn" 
+                    :class="{ 'loading': isMediaLoading, 'active': showMediaStatus }"
+                    @click="showMediaStatus = !showMediaStatus"
+                    :title="isMediaLoading ? 'Files Loading...' : 'All Files Loaded'"
+                >
+                    <span v-if="isMediaLoading" class="loader-icon">↻</span>
+                    <span v-else>☁️</span>
+                    
+                    <span v-if="isMediaLoading" class="count-badge">
+                        {{ mediaLoadingCount.loaded }}/{{ mediaLoadingCount.total }}
+                    </span>
+                </button>
+
+                <div v-if="showMediaStatus" class="media-status-dropdown">
+                    <div class="media-header">
+                        <span>Media Files</span>
+                        <button @click="showMediaStatus = false">✕</button>
+                    </div>
+                    <div class="media-list">
+                        <div v-for="item in mediaRegistry.values()" :key="item.id" class="media-item">
+                            <span class="media-icon">
+                                {{ item.type === 'image' ? '🖼️' : item.type === 'video' ? '🎬' : '🎵' }}
+                            </span>
+                            <span class="media-name">{{ item.name }}</span>
+                            <span class="media-state" :class="item.status">
+                                {{ item.status === 'loading' ? '...' : item.status === 'loaded' ? '✓' : '⚠️' }}
+                            </span>
+                        </div>
+                        <div v-if="mediaRegistry.size === 0" class="empty-media">
+                            No media files in project.
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div class="autosave-timer" :class="{ 'active': hasUnsavedChanges }">
                 <span v-if="hasUnsavedChanges" class="pulse-dot">●</span>
                 {{ formattedAutoSaveTime }}
             </div>
 
-            <button class="save-btn" @click="saveProjectData(false)" title="Save Project">
-                💾 Save
+            <button 
+                class="save-btn" 
+                :class="{ 'disabled': isSaving }"
+                @click="saveProjectData(false)" 
+                :disabled="isSaving"
+                title="Save Project"
+            >
+                <span v-if="isSaving">⏳ Saving...</span>
+                <span v-else>💾 Save</span>
             </button>
 
             <button class="play-project-btn" @click="playProjectFromRoot" title="Play Project from Start">
@@ -5581,11 +5750,17 @@ const onPreviewWheel = (e) => {
                                 :style="{ 
                                     backgroundColor: comp.backgroundColor, 
                                     borderColor: comp.borderColor, 
-                                    borderRadius: comp.borderRadius + 'px',
-                                    borderWidth: comp.borderWidth + 'px',
+                                    
+                                    /* --- DYNAMIC SCALING FIXES --- */
+                                    borderRadius: (comp.borderRadius * previewScale) + 'px',
+                                    borderWidth: (comp.borderWidth * previewScale) + 'px',
+                                    fontSize: (comp.fontSize * previewScale) + 'px',
+                                    paddingLeft: (10 * previewScale) + 'px',
+                                    paddingRight: (10 * previewScale) + 'px',
+                                    /* ----------------------------- */
+
                                     color: comp.textColor,
                                     fontFamily: comp.fontFamily,
-                                    fontSize: comp.fontSize + 'px',
                                     fontWeight: comp.fontWeight,
                                     fontStyle: comp.fontStyle
                                 }"
@@ -5597,7 +5772,15 @@ const onPreviewWheel = (e) => {
                                 :disabled="comp.isSubmitted"
                                 :style="{
                                     backgroundColor: comp.isSubmitted ? '#10b981' : comp.buttonNormalColor,
-                                    color: comp.buttonTextColor
+                                    color: comp.buttonTextColor,
+                                    
+                                    /* --- DYNAMIC SCALING FIXES --- */
+                                    fontSize: (14 * previewScale) + 'px', /* Base btn font is usually 14 */
+                                    paddingLeft: (20 * previewScale) + 'px',
+                                    paddingRight: (20 * previewScale) + 'px',
+                                    borderTopRightRadius: (comp.borderRadius * previewScale) + 'px',
+                                    borderBottomRightRadius: (comp.borderRadius * previewScale) + 'px'
+                                    /* ----------------------------- */
                                 }"
                                 @click.stop="handleInputSubmit(comp)"
                                 @mousedown.stop="(e) => !comp.isSubmitted && (e.target.style.backgroundColor = comp.buttonClickColor)"
@@ -7583,5 +7766,286 @@ const onPreviewWheel = (e) => {
     padding: 6px 12px;
     border-radius: 6px;
     gap: 6px;
+}
+.media-status-wrapper {
+    position: relative;
+    z-index: 50;
+}
+
+.media-status-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #cbd5e1;
+    height: 36px;
+    padding: 0 10px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: all 0.2s ease;
+}
+
+.media-status-btn:hover, .media-status-btn.active {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.4);
+}
+
+.media-status-btn.loading {
+    border-color: #eab308;
+    color: #eab308;
+    background: rgba(234, 179, 8, 0.1);
+}
+
+.loader-icon {
+    display: inline-block;
+    animation: spin 1s linear infinite;
+    font-weight: bold;
+}
+
+.count-badge {
+    font-size: 0.75rem;
+    font-family: monospace;
+    background: rgba(0,0,0,0.3);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+/* --- DROPDOWN --- */
+.media-status-dropdown {
+    position: absolute;
+    top: 45px;
+    right: 0;
+    width: 250px;
+    background: #1f2937;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.media-header {
+    background: rgba(0,0,0,0.2);
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: #e2e8f0;
+}
+
+.media-header button {
+    background: none;
+    border: none;
+    color: #9ca3af;
+    cursor: pointer;
+}
+
+.media-list {
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 4px;
+}
+
+.media-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    color: #cbd5e1;
+}
+
+.media-item:hover {
+    background: rgba(255,255,255,0.05);
+}
+
+.media-name {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.media-state {
+    font-weight: bold;
+}
+.media-state.loading { color: #eab308; }
+.media-state.loaded { color: #00ff88; }
+.media-state.error { color: #ef4444; }
+
+.empty-media {
+    padding: 12px;
+    text-align: center;
+    color: #6b7280;
+    font-style: italic;
+    font-size: 0.8rem;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+.saving-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 10, 15, 0.95); /* Deep dark background */
+    backdrop-filter: blur(10px);
+    z-index: 99999; /* Highest priority */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+}
+
+/* Text Styling */
+.saving-text-wrapper {
+    margin-top: 40px;
+    text-align: center;
+    max-width: 600px;
+    padding: 0 20px;
+    animation: fadeUp 0.5s ease-out;
+}
+
+.saving-title {
+    font-family: 'Courier New', monospace;
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #00ff88;
+    letter-spacing: 4px;
+    margin-bottom: 16px;
+    text-shadow: 0 0 15px rgba(0, 255, 136, 0.5);
+    animation: pulseText 1.5s infinite;
+}
+
+.saving-tip {
+    font-size: 1rem;
+    color: #9ca3af;
+    font-style: italic;
+    line-height: 1.5;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 12px 20px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* === LOOM ANIMATION === */
+.loom-container {
+    position: relative;
+    width: 120px;
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.loom-ring {
+    position: absolute;
+    border-radius: 50%;
+    border: 2px solid transparent;
+}
+
+/* Outer Ring */
+.outer {
+    width: 100%;
+    height: 100%;
+    border-top-color: #00ff88;
+    border-bottom-color: #00ff88;
+    animation: spin 2s linear infinite;
+    box-shadow: 0 0 20px rgba(0, 255, 136, 0.1);
+}
+
+/* Middle Ring */
+.middle {
+    width: 70%;
+    height: 70%;
+    border-left-color: #3b82f6;
+    border-right-color: #3b82f6;
+    animation: spinReverse 1.5s linear infinite;
+    opacity: 0.8;
+}
+
+/* Inner Ring */
+.inner {
+    width: 40%;
+    height: 40%;
+    border-top-color: #eab308;
+    border-right-color: #eab308;
+    animation: spin 1s linear infinite;
+}
+
+/* Core */
+.loom-core {
+    width: 15%;
+    height: 15%;
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: 0 0 15px #fff, 0 0 30px #00ff88;
+    animation: breathe 1s ease-in-out infinite alternate;
+}
+
+/* Particles/Data Bits */
+.loom-particles span {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 4px;
+    height: 4px;
+    background: #fff;
+    border-radius: 50%;
+    opacity: 0;
+}
+
+.loom-particles span:nth-child(1) { animation: shoot 1.5s infinite 0s; transform: rotate(0deg); }
+.loom-particles span:nth-child(2) { animation: shoot 1.5s infinite 0.4s; transform: rotate(90deg); }
+.loom-particles span:nth-child(3) { animation: shoot 1.5s infinite 0.8s; transform: rotate(180deg); }
+.loom-particles span:nth-child(4) { animation: shoot 1.5s infinite 1.2s; transform: rotate(270deg); }
+
+/* Keyframes */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes spinReverse {
+    0% { transform: rotate(360deg); }
+    100% { transform: rotate(0deg); }
+}
+
+@keyframes breathe {
+    0% { transform: scale(0.8); opacity: 0.5; }
+    100% { transform: scale(1.2); opacity: 1; }
+}
+
+@keyframes pulseText {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+@keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shoot {
+    0% { transform: rotate(var(--r)) translateX(0); opacity: 1; }
+    100% { transform: rotate(var(--r)) translateX(60px); opacity: 0; }
+}
+
+/* Save Button Disabled State */
+.save-btn.disabled {
+    opacity: 0.6;
+    cursor: not-allowed !important;
+    background: rgba(59, 130, 246, 0.1);
+    border-color: rgba(59, 130, 246, 0.2);
+    color: #94a3b8;
 }
 </style>

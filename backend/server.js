@@ -31,105 +31,131 @@ const storage = new Storage({
 });
 const bucketName = "loomart-media-storage"; // REPLACE THIS (e.g. loomart-media-storage)
 const bucket = storage.bucket(bucketName);
+
+
+const getExtension = (mimeType) => {
+  const map = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'audio/mpeg': 'mp3',
+    'audio/mp3': 'mp3',
+    'audio/wav': 'wav',
+    'audio/x-wav': 'wav',
+    'audio/ogg': 'ogg'
+  };
+  return map[mimeType] || 'bin'; // Default to bin if unknown
+};
+
 /* ===== HELPER: UPLOAD BASE64 TO GCS ===== */
-const uploadToGCS = async (base64Data, filePath) => {
+const uploadToGCS = async (base64Data, folderPath, fileNamePrefix) => {
   try {
-    // 1. Check if file already exists
-    const file = bucket.file(filePath);
-    const [exists] = await file.exists();
-
-    if (exists) {
-      console.log(`[GCS] File exists, skipping upload: ${filePath}`);
-      return `https://storage.googleapis.com/${bucketName}/${filePath}`;
-    }
-
-    // 2. Parse Base64 WITHOUT Regex (More robust for large video files)
-    // Find the end of the header "data:video/mp4;base64,"
+    // 1. Validate Base64
     const splitIndex = base64Data.indexOf(';base64,');
-    
     if (splitIndex === -1) {
-      console.error("[GCS] Invalid Base64 format (no comma found)");
+      console.error("[GCS] Invalid Base64 format");
       return null;
     }
 
-    // Extract Content Type (e.g., "video/mp4")
-    const contentType = base64Data.substring(5, splitIndex); 
-    
-    // Extract Raw Data
+    // 2. Extract Info
+    const contentType = base64Data.substring(5, splitIndex);
+    const ext = getExtension(contentType);
     const rawBase64 = base64Data.substring(splitIndex + 8);
     const buffer = Buffer.from(rawBase64, "base64");
 
-    console.log(`[GCS] Uploading new file: ${filePath} (${contentType})`);
+    // 3. Generate Hash & Path
+    const hash = crypto.createHash("md5").update(rawBase64).digest("hex");
+    const fullFileName = `${fileNamePrefix}_${hash}.${ext}`;
+    const fullPath = `${folderPath}/${fullFileName}`;
 
-    // 3. Upload
+    // 4. Check if exists
+    const file = bucket.file(fullPath);
+    const [exists] = await file.exists();
+
+    if (exists) {
+      console.log(`[GCS] File exists (Skipping): ${fullFileName}`);
+      return { 
+          url: `https://storage.googleapis.com/${bucketName}/${fullPath}`, 
+          path: fullPath 
+      };
+    }
+
+    // 5. Upload
+    console.log(`[GCS] Uploading: ${fullFileName} (${contentType})`);
     await file.save(buffer, {
       metadata: { contentType },
       validation: "md5",
-      resumable: false // constant memory usage for uploads
+      resumable: false
     });
 
-    console.log(`[GCS] Upload success: ${filePath}`);
-    return `https://storage.googleapis.com/${bucketName}/${filePath}`;
+    return { 
+        url: `https://storage.googleapis.com/${bucketName}/${fullPath}`, 
+        path: fullPath 
+    };
+
   } catch (error) {
-    console.error(`[GCS] Upload FAILED for ${filePath}:`, error);
+    console.error(`[GCS] Upload FAILED:`, error);
     return null;
   }
 };
 /* ===== HELPER: RECURSIVE MEDIA PROCESSOR ===== */
 const processProjectAssets = async (nodes, userId, projectId) => {
-  const usedFilePaths = new Set(); // Track files we are using to delete orphans later
+  const usedFilePaths = new Set();
+  const projectFolder = `users/${userId}/projects/${projectId}`;
 
-  // Helper to process a single component
-  const processComponent = async (comp) => {
-    // Check if it's a media type and has Base64 data (starts with data:)
-    if (
-      (comp.type === "image" || comp.type === "video") &&
-      comp.url &&
-      comp.url.startsWith("data:")
-    ) {
-      // Create a unique filename based on content hash (prevents duplicates)
-      const hash = crypto.createHash("md5").update(comp.url).digest("hex");
-      const ext = comp.type === "video" ? "mp4" : "png"; // Simplification
-      const fileName = `${comp.name.replace(/\s+/g, "_")}_${hash}.${ext}`;
-      
-      // Format: userid -> projectid -> media files
-      const filePath = `users/${userId}/projects/${projectId}/${fileName}`;
-      
-      try {
-        const publicUrl = await uploadToGCS(comp.url, filePath);
-        comp.url = publicUrl; // REPLACE Base64 with URL in the object
-        usedFilePaths.add(filePath);
-      } catch (err) {
-        console.error("GCS Upload Error:", err);
-      }
-    } else if (comp.url && comp.url.includes(`storage.googleapis.com/${bucketName}`)) {
-      // If it's already a GCS URL, extract the path to mark it as "used"
-      const urlParts = comp.url.split(`${bucketName}/`);
+  // Helper to process a single component/asset
+  const processAsset = async (dataUrl, namePrefix) => {
+    if (!dataUrl || !dataUrl.startsWith("data:")) return null;
+    
+    const result = await uploadToGCS(dataUrl, projectFolder, namePrefix);
+    if (result) {
+      usedFilePaths.add(result.path);
+      return result.url;
+    }
+    return null; // Keep original if upload fails
+  };
+
+  // Helper to track existing GCS URLs
+  const trackExistingUrl = (url) => {
+    if (url && url.includes(bucketName)) {
+      const urlParts = url.split(`${bucketName}/`);
       if (urlParts[1]) usedFilePaths.add(urlParts[1]);
     }
   };
 
   // 1. Iterate Nodes
   for (const node of nodes) {
-    // Process Node Audio
+    
+    // --- A. Process Node Audio ---
     if (node.audio && node.audio.url) {
       if (node.audio.url.startsWith("data:")) {
-        const hash = crypto.createHash("md5").update(node.audio.url).digest("hex");
-        const filePath = `users/${userId}/projects/${projectId}/audio_${hash}.mp3`;
-        node.audio.url = await uploadToGCS(node.audio.url, filePath);
-        usedFilePaths.add(filePath);
-      } else if (node.audio.url.includes(bucketName)) {
-        const urlParts = node.audio.url.split(`${bucketName}/`);
-        if (urlParts[1]) usedFilePaths.add(urlParts[1]);
+        console.log(`[Audio] Found new audio for Node ${node.index}`);
+        const newUrl = await processAsset(node.audio.url, "audio");
+        if (newUrl) node.audio.url = newUrl; // Only update on success
+      } else {
+        trackExistingUrl(node.audio.url);
       }
     }
 
-    // Process Scenes
+    // --- B. Process Scenes & Components ---
     if (node.scenes) {
       for (const scene of node.scenes) {
         if (scene.components) {
           for (const comp of scene.components) {
-            await processComponent(comp);
+            
+            if (comp.type === "image" || comp.type === "video") {
+              if (comp.url && comp.url.startsWith("data:")) {
+                const safeName = comp.name ? comp.name.replace(/[^a-z0-9]/gi, '_') : 'asset';
+                const newUrl = await processAsset(comp.url, safeName);
+                if (newUrl) comp.url = newUrl;
+              } else {
+                trackExistingUrl(comp.url);
+              }
+            }
+            
           }
         }
       }
@@ -138,7 +164,6 @@ const processProjectAssets = async (nodes, userId, projectId) => {
 
   return { updatedNodes: nodes, usedFilePaths };
 };
-
 /* ===== HELPER: CLEANUP ORPHANED FILES ===== */
 const cleanupOrphanedFiles = async (userId, projectId, usedFilePaths) => {
   const prefix = `users/${userId}/projects/${projectId}/`;
