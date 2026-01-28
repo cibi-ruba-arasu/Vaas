@@ -84,6 +84,9 @@ const NodeSchema = new mongoose.Schema({
   node_type: String,
   Node_name: String,
   
+  referenceWidth: Number,  // The width of the editor when designed
+  referenceHeight: Number, // The height of the editor when designed
+
   // Connections
   Next: Number,
   NextTrue: Number,

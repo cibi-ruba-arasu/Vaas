@@ -10,6 +10,9 @@ import UserPreference from "./schema/UserPreference.js"
 import authMiddleware from "./middleware/auth.js"
 import Project from "./schema/Project.js"
 import CanvasState from "./schema/CanvasState.js"
+import { Storage } from "@google-cloud/storage"; // Import GCS
+import path from "path";
+import crypto from "crypto"
 
 dotenv.config()
 
@@ -17,13 +20,145 @@ const app = express()
 const PORT = 5000
 
 app.use(cors())
-app.use(express.json())
+app.use(express.json({ limit: '200mb' })); 
+app.use(express.urlencoded({ limit: '200mb', extended: true }));
+
+
+/* ===== GOOGLE CLOUD STORAGE SETUP ===== */
+const storage = new Storage({
+  keyFilename: "gcs-key.json", // Ensure this file is in your backend root
+  projectId: "weaver-storage-bucket-1", // REPLACE THIS
+});
+const bucketName = "loomart-media-storage"; // REPLACE THIS (e.g. loomart-media-storage)
+const bucket = storage.bucket(bucketName);
+/* ===== HELPER: UPLOAD BASE64 TO GCS ===== */
+const uploadToGCS = async (base64Data, filePath) => {
+  try {
+    // 1. Check if file already exists
+    const file = bucket.file(filePath);
+    const [exists] = await file.exists();
+
+    if (exists) {
+      console.log(`[GCS] File exists, skipping upload: ${filePath}`);
+      return `https://storage.googleapis.com/${bucketName}/${filePath}`;
+    }
+
+    // 2. Parse Base64 WITHOUT Regex (More robust for large video files)
+    // Find the end of the header "data:video/mp4;base64,"
+    const splitIndex = base64Data.indexOf(';base64,');
+    
+    if (splitIndex === -1) {
+      console.error("[GCS] Invalid Base64 format (no comma found)");
+      return null;
+    }
+
+    // Extract Content Type (e.g., "video/mp4")
+    const contentType = base64Data.substring(5, splitIndex); 
+    
+    // Extract Raw Data
+    const rawBase64 = base64Data.substring(splitIndex + 8);
+    const buffer = Buffer.from(rawBase64, "base64");
+
+    console.log(`[GCS] Uploading new file: ${filePath} (${contentType})`);
+
+    // 3. Upload
+    await file.save(buffer, {
+      metadata: { contentType },
+      validation: "md5",
+      resumable: false // constant memory usage for uploads
+    });
+
+    console.log(`[GCS] Upload success: ${filePath}`);
+    return `https://storage.googleapis.com/${bucketName}/${filePath}`;
+  } catch (error) {
+    console.error(`[GCS] Upload FAILED for ${filePath}:`, error);
+    return null;
+  }
+};
+/* ===== HELPER: RECURSIVE MEDIA PROCESSOR ===== */
+const processProjectAssets = async (nodes, userId, projectId) => {
+  const usedFilePaths = new Set(); // Track files we are using to delete orphans later
+
+  // Helper to process a single component
+  const processComponent = async (comp) => {
+    // Check if it's a media type and has Base64 data (starts with data:)
+    if (
+      (comp.type === "image" || comp.type === "video") &&
+      comp.url &&
+      comp.url.startsWith("data:")
+    ) {
+      // Create a unique filename based on content hash (prevents duplicates)
+      const hash = crypto.createHash("md5").update(comp.url).digest("hex");
+      const ext = comp.type === "video" ? "mp4" : "png"; // Simplification
+      const fileName = `${comp.name.replace(/\s+/g, "_")}_${hash}.${ext}`;
+      
+      // Format: userid -> projectid -> media files
+      const filePath = `users/${userId}/projects/${projectId}/${fileName}`;
+      
+      try {
+        const publicUrl = await uploadToGCS(comp.url, filePath);
+        comp.url = publicUrl; // REPLACE Base64 with URL in the object
+        usedFilePaths.add(filePath);
+      } catch (err) {
+        console.error("GCS Upload Error:", err);
+      }
+    } else if (comp.url && comp.url.includes(`storage.googleapis.com/${bucketName}`)) {
+      // If it's already a GCS URL, extract the path to mark it as "used"
+      const urlParts = comp.url.split(`${bucketName}/`);
+      if (urlParts[1]) usedFilePaths.add(urlParts[1]);
+    }
+  };
+
+  // 1. Iterate Nodes
+  for (const node of nodes) {
+    // Process Node Audio
+    if (node.audio && node.audio.url) {
+      if (node.audio.url.startsWith("data:")) {
+        const hash = crypto.createHash("md5").update(node.audio.url).digest("hex");
+        const filePath = `users/${userId}/projects/${projectId}/audio_${hash}.mp3`;
+        node.audio.url = await uploadToGCS(node.audio.url, filePath);
+        usedFilePaths.add(filePath);
+      } else if (node.audio.url.includes(bucketName)) {
+        const urlParts = node.audio.url.split(`${bucketName}/`);
+        if (urlParts[1]) usedFilePaths.add(urlParts[1]);
+      }
+    }
+
+    // Process Scenes
+    if (node.scenes) {
+      for (const scene of node.scenes) {
+        if (scene.components) {
+          for (const comp of scene.components) {
+            await processComponent(comp);
+          }
+        }
+      }
+    }
+  }
+
+  return { updatedNodes: nodes, usedFilePaths };
+};
+
+/* ===== HELPER: CLEANUP ORPHANED FILES ===== */
+const cleanupOrphanedFiles = async (userId, projectId, usedFilePaths) => {
+  const prefix = `users/${userId}/projects/${projectId}/`;
+  
+  // List all files in this project folder
+  const [files] = await bucket.getFiles({ prefix });
+
+  const deletePromises = files.map(file => {
+    // If the file in storage is NOT in our "used" set, delete it
+    if (!usedFilePaths.has(file.name)) {
+      console.log(`🗑️ Deleting orphan file: ${file.name}`);
+      return file.delete();
+    }
+  });
+
+  await Promise.all(deletePromises);
+};
+
 
 /* ===== MONGO ===== */
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log("🟢 MongoDB connected"))
-  .catch(err => console.error("❌ Mongo error:", err))
 
 /* ===== OTP STORE ===== */
 const otpStore = new Map()
@@ -405,24 +540,50 @@ app.post("/canvas/save", authMiddleware, async (req, res) => {
     disconnectedOptionsCount 
   } = req.body;
 
+  const { mongoId } = req.user; // Get User ID from Token
+
   if (!projectId) return res.status(400).json({ message: "Project ID required" });
 
   try {
+    console.log("💾 Starting Save Process...");
+
+    // 1. Process Assets: Upload new, get URLs, identify used files
+    // We pass 'nodes' by reference, so it gets modified directly
+    const { updatedNodes, usedFilePaths } = await processProjectAssets(
+      nodes, 
+      mongoId, 
+      projectId
+    );
+
+    // 2. Cleanup: Delete files in GCS that are no longer in 'usedFilePaths'
+    await cleanupOrphanedFiles(mongoId, projectId, usedFilePaths);
+
+    // 3. Save to MongoDB (Now with lightweight URLs)
     const savedState = await CanvasState.findOneAndUpdate(
       { projectId },
       { 
         projectId, 
-        nodes, 
+        nodes: updatedNodes, // Save the nodes with GCS URLs
         globalVariables,
-        rootNodeId,               // <--- Saving Root Node
-        totalOptionsCount,        // <--- Saving Stats
-        disconnectedOptionsCount, // <--- Saving Stats
+        rootNodeId,               
+        totalOptionsCount,        
+        disconnectedOptionsCount, 
         lastSaved: new Date()
       },
       { new: true, upsert: true }
     );
 
-    res.json({ success: true, message: "Project saved successfully", savedAt: savedState.lastSaved });
+    console.log("✅ Project saved successfully with GCS Sync.");
+
+    // Return the updated nodes so frontend can update its state 
+    // (swapping Base64 for URLs locally)
+    res.json({ 
+        success: true, 
+        message: "Project saved successfully", 
+        savedAt: savedState.lastSaved,
+        updatedNodes: savedState.nodes // Frontend needs this!
+    });
+
   } catch (err) {
     console.error("Save error:", err);
     res.status(500).json({ message: "Failed to save project" });
@@ -448,6 +609,13 @@ app.get("/canvas/load/:projectId", authMiddleware, async (req, res) => {
   }
 });
 
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => console.log("🟢 MongoDB connected"))
+  .catch(err => console.error("❌ Mongo error:", err))
+
+
 app.listen(PORT, () =>
+  
   console.log(`🚀 Backend running on http://localhost:${PORT}`)
 )

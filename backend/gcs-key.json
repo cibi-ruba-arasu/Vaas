@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "weaver-storage-bucket-1",
+  "private_key_id": "d1617fc1d784b77ee913ecc03474b90ac6ad3342",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDSPcyVTELpk4q1\n9N2OKeBQVNdPWy1BdHZOX04yriQhRhHeYK+fX0NgbNzcFhhESK6dl+cIn/CV3h0a\nD6j7X6yOVOxaVOlFxQSx4pMn78Of0rVTMPO6/VLN6Kk1qZoAcHFmdehH8s0ekMsM\nYjmtsHlXWc8Hd246RFEhcXMyZJ6RVpJCJe16oEuVmSWh9xIfEFXf5F7Q0DAGr6Bm\n0eOUl/qeMH3IohXT2tLdnfcTQTs8s71K7x+2BlCSYJF/Z4aDkZuTsWpU89APH5yc\nKXEqud4/z/Pp1MxvGBG83/zkajvV8AsG2nUlsXIx7k63n0VYbTK5zvITHiIvYarV\nKWU7xd9NAgMBAAECggEASL2vEhzfrdcpkAkXuv9MKB8im8dNIi98W2NoN+q+f3Cx\n8AH94aNhOXSQ+ej/HmkTWV1cR0SnRgMiiIjQi6CvoFNLr3lfeI9RL4bYKWIwihSq\nPg1a1uCdDLcqDHIQ4YQGCFBVPMeKJsAsMK2vjSPY59sf4VJ2JdzLQUnydIYRwvDS\nz0XOT7bYSdNeUV7B8e1rd+LnGkVMMmWjcFGJWvxgIANDQVIz1vJhRAwuXup08sTP\nXVXHKLOykIrYpUYXowa1OD1mlTgk69n1tN2Drjeqf2fUFqfWlU13BSwibOlByMCd\nngMMCksrr0BIB4X8letdP9deRLjOPwJNhD5SDYdz1QKBgQD+rxZzjjovr6tuZt+d\nfsiLbVMrl9gjhxjn3X9RMDMbA+/ZwApDL659FZOUeruPE1P3ZQf5gO+iy/w7OCCM\nmNl/tJZ3tBfXHy5YVdR+idJOYc5/8finAE4ofPOcH16t4cTvw/wqrFRU8+Ii6Jsk\nTgNwbNF3tEW8wCCEGvE+rh+iIwKBgQDTU+uFvPfLcDNfi2s8H5T8tP5AADWys5HS\npo1z5F5s9bgtB92Gd1l7M+wlWLxc1fSM+9ORHjG0OAVUb9KOG45BEpG4YFzeTeYe\nAPPWK2fru5zdd6yrUaMxtnpAlNz22UhPOMpI1UupAeUdr+aaxSk5P+AiV3MUlteb\nUvOscVb3zwKBgQDMkZSGEwr3vLIFhso89lZdb93rWRc6SkyeCZM3gnC6VWo1zIQx\nvT35qPgWvpKi9NJwGA3UwlU5vYGHi6jRZgDmDAcEdXrkx13xhFefoFJ1tSgqKxEg\nCyW8bck7cRMatgr6z8BgAnXmmtLcWVwsSCGJD08dSIbvep9jnUSDpVcxYwKBgBIM\nP7gLPGpeabTGNmFLHTE7z97tZaieV1zTJo94OGw7y//khRG/zZ+M/qTt4CBZkWoc\n86OYHYyToDjm1+eVCOAb0uAZMrU1l+qGEE0BJf3m5u2vE8sJzNMpD2XGkNxwEBHb\n+sKfnLeRVtzjMeGT5wJhpyWnrEdc3osAWZknkNLXAoGBAL5x0g04S7MrDDGCuF6/\nZ4l6kyK0ngZw5gWpJT340WD+pDab6FqjXWlzEeNIAZx4itGL1zpolE2473w/qmzu\nUciG4/vHjgkkO648g3Q6Ujwfj8CSw0u9tx87uuv9SnJWwkR+T3gVBkaFD8K4kpsW\ntyX7cZlpIybYBW4Zk8RrUvsJ\n-----END PRIVATE KEY-----\n",
+  "client_email": "cibi-weaver-bucket-service-acc@weaver-storage-bucket-1.iam.gserviceaccount.com",
+  "client_id": "106725511025561819942",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/cibi-weaver-bucket-service-acc%40weaver-storage-bucket-1.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

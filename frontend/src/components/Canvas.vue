@@ -7,6 +7,8 @@ const route = useRoute()
 const projectId = route.params.projectId
 const token = localStorage.getItem("token")
 
+const cursorStyle = ref('default') // Needed for the template :style="{ cursor: cursorStyle }"
+
 /* ================= UI ================= */
 const menuOpen = ref(false)
 const toggleMenu = () => (menuOpen.value = !menuOpen.value)
@@ -20,6 +22,44 @@ const newVarType = ref("string")
 
 const projectName = ref("Loading...")
 const projectOwner = ref("")
+
+const autoSaveDuration = 300; // 5 minutes
+const autoSaveTimer = ref(autoSaveDuration);
+const hasUnsavedChanges = ref(false);
+let autoSaveInterval = null;
+
+const notification = ref({
+    show: false,
+    message: "",
+    type: "success" // 'success' or 'error'
+});
+
+const formattedAutoSaveTime = computed(() => {
+    const m = Math.floor(autoSaveTimer.value / 60).toString().padStart(2, '0');
+    const s = (autoSaveTimer.value % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+});
+
+
+
+const Canvas_Status = ref([]) 
+
+
+
+// Watch for changes to activate timer
+watch(Canvas_Status, () => {
+    if (!hasUnsavedChanges.value) {
+        hasUnsavedChanges.value = true;
+    }
+}, { deep: true });
+
+// Notification Helper
+const triggerNotification = (msg, type = 'success') => {
+    notification.value = { show: true, message: msg, type };
+    setTimeout(() => {
+        notification.value.show = false;
+    }, 3000);
+}
 
 const fetchProjectDetails = async () => {
   try {
@@ -55,6 +95,8 @@ const projectOptionsStats = computed(() => {
   let total = 0;
   let disconnected = 0;
   
+if (!Canvas_Status.value) return { total: 0, disconnected: 0 };
+
   Canvas_Status.value.forEach(node => {
     // Check if node has options
     if (node.options && node.options.length > 0) {
@@ -68,11 +110,13 @@ const projectOptionsStats = computed(() => {
   return { total, disconnected };
 });
 
-const saveProjectData = async () => {
+const saveProjectData = async (isAutoSave = false) => {
   try {
+    if (!isAutoSave) document.body.style.cursor = 'wait';
+
     const payload = {
-      projectId: projectId, // from route.params
-      nodes: Canvas_Status.value,
+      projectId: projectId, 
+      nodes: Canvas_Status.value, // Currently contains Base64 images
       globalVariables: globalVariables.value,
       rootNodeId: rootNodeId.value,
       totalOptionsCount: projectOptionsStats.value.total,
@@ -89,14 +133,46 @@ const saveProjectData = async () => {
     });
 
     const data = await res.json();
+    document.body.style.cursor = 'default';
+
     if (res.ok) {
-      alert("Project Saved Successfully!");
+
+        hasUnsavedChanges.value = false;       // Stop the timer loop
+        autoSaveTimer.value = autoSaveDuration;
+        triggerNotification(
+          isAutoSave ? "Auto-saved successfully! 💾" : "Project saved successfully! 💾", 
+          "success"
+        );
+      Canvas_Status.value = data.updatedNodes;
+          nodes.value = data.updatedNodes.map(n => ({
+            id: n.index,
+            x: n.x,
+            y: n.y
+          }));
+          
+          if (selectedScene.value) {
+              const currentSceneNode = Canvas_Status.value.find(n => 
+                  n.scenes.some(s => s.id === selectedScene.value.id)
+              );
+              if (currentSceneNode) {
+                  const updatedScene = currentSceneNode.scenes.find(s => s.id === selectedScene.value.id);
+                  if (updatedScene) {
+                      sceneComponents.value = updatedScene.components;
+                      nextTick(() => {
+                          updateSceneContentDisplay();
+                          drawComponents();
+                      });
+                  }
+              }
+      }
+
     } else {
-      alert("Save Failed: " + data.message);
+      triggerNotification("Save Failed: " + data.message, "error");
     }
   } catch (err) {
     console.error(err);
-    alert("Error connecting to server");
+    document.body.style.cursor = 'default';
+    triggerNotification("Error connecting to server", "error");
   }
 };
 
@@ -116,17 +192,17 @@ const loadProjectData = async () => {
       if (data.nodes && data.nodes.length > 0) {
         Canvas_Status.value = data.nodes;
 
-        // Reconstruct visual Nodes array for the graph
         nodes.value = data.nodes.map(n => ({
             id: n.index,
             x: n.x,
             y: n.y
         }));
+        
         if (data.rootNodeId !== undefined && data.rootNodeId !== null) {
           rootNodeId.value = data.rootNodeId;
-      }
-        // IMPORTANT: Rehydrate HTML Elements (Image/Video objects)
-        // The JSON only has the URL string, we need to create new Image()/Video() objects
+        }
+
+        // --- REHYDRATION LOGIC (UPDATED) ---
         Canvas_Status.value.forEach(node => {
             if(node.scenes) {
                 node.scenes.forEach(scene => {
@@ -134,10 +210,24 @@ const loadProjectData = async () => {
                         scene.components.forEach(comp => {
                             if(comp.type === 'image' && comp.url) {
                                 const img = new Image();
+                                img.crossOrigin = "Anonymous"; // Vital for GCS
+                                
+                                // FIX: Redraw when image actually loads
+                                img.onload = () => {
+                                    draw(); // Update graph
+                                    if(selectedScene.value) drawComponents(); // Update scene if open
+                                };
+                                
+                                // FIX: Debug errors
+                                img.onerror = (e) => {
+                                    console.error("Failed to load image:", comp.url, e);
+                                };
+
                                 img.src = comp.url;
                                 comp.imgObject = img;
                             } else if (comp.type === 'video' && comp.url) {
                                 const vid = document.createElement('video');
+                                vid.crossOrigin = "Anonymous"; 
                                 vid.src = comp.url;
                                 vid.loop = comp.isLoop !== false;
                                 vid.muted = comp.isMuted === true;
@@ -147,9 +237,14 @@ const loadProjectData = async () => {
                     }
                 });
             }
+            // IMPORTANT: Reset the 'Unsaved Changes' flag after loading is done
+        // so the timer doesn't start immediately upon opening the project.
+        nextTick(() => {
+            hasUnsavedChanges.value = false;
+        });
         });
 
-        draw(); // Redraw canvas
+        draw(); 
       }
     }
   } catch (err) {
@@ -332,7 +427,7 @@ const processLogicNode = (nodeStatus) => {
 }
 
 const toggleProjectSettings = () => {
-  showProjectSettings.value = !showProjectSettings.value
+    showProjectSettings.value = !showProjectSettings.value
 }
 
 const availableRootNodes = computed(() => {
@@ -393,7 +488,6 @@ let mouseWorld = { x: 0, y: 0 }
 /* ================= NODES ================= */
 const nodes = ref([])
 const selectedNodeId = ref(null)
-const Canvas_Status = ref([]) 
 const editingNodeName = ref("") 
 const showContextMenu = ref(false)
 const contextMenuPos = ref({ x: 0, y: 0 })
@@ -2123,12 +2217,19 @@ const drawComponents = () => {
 const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
     // --- IMAGE COMPONENT ---
     if (comp.type === 'image') {
-        if (comp.imgObject) {
+        // Check if image exists AND is loaded
+        if (comp.imgObject && comp.imgObject.complete && comp.imgObject.naturalWidth > 0) {
             ctx.drawImage(comp.imgObject, screenPos.x - (comp.width / 2), screenPos.y - (comp.height / 2), comp.width, comp.height)
-        } else {
-            const img = new Image(); img.src = comp.url; comp.imgObject = img;
+        } 
+        else if (!comp.imgObject) {
+            // FALLBACK: If imgObject is missing, create it WITH CORS
+            const img = new Image(); 
+            img.crossOrigin = "Anonymous"; // <--- ADD THIS
+            img.src = comp.url; 
+            img.onload = () => { if(selectedScene.value) drawComponents(); } // Force redraw
+            comp.imgObject = img;
         }
-    } 
+    }
     // --- VIDEO COMPONENT ---
     else if (comp.type === 'video') {
          if (comp.videoElement) {
@@ -3301,6 +3402,17 @@ loadProjectData();
           console.log(log);
       });
   }, 20000);
+
+  autoSaveInterval = setInterval(() => {
+        if (hasUnsavedChanges.value) {
+            if (autoSaveTimer.value > 0) {
+                autoSaveTimer.value--;
+            } else {
+                // Timer reached 0, Trigger Auto-Save
+                saveProjectData(true);
+            }
+        }
+    }, 1000);
 })
 
 onBeforeUnmount(() => {
@@ -3308,9 +3420,12 @@ onBeforeUnmount(() => {
   window.removeEventListener("mousemove", onMouseMove)
   window.removeEventListener("mouseup", onMouseUp)
   document.removeEventListener('fullscreenchange', handleFullscreenChange)
-  
+  window.removeEventListener('resize', resize);
+  window.removeEventListener('keydown', handleKeyDown);
+  if (autoSaveInterval) clearInterval(autoSaveInterval);
   if (statusLogInterval) clearInterval(statusLogInterval);
 })
+
 
 watch(showPopup, (newVal) => {
   if (newVal) {
@@ -3338,6 +3453,7 @@ const resetComponentsRuntimeState = (scenes) => {
                 // Reset Video Component
                 if (comp.type === 'video' && comp.videoElement) {
                     comp.videoElement.currentTime = 0;
+                    comp._hasPlayedFull = false; // <--- NEW: Reset played status
                 }
             })
         }
@@ -3482,15 +3598,58 @@ const advancePreview = () => {
         
         if (comp.type === 'video' && comp.videoElement) {
              comp.videoElement.currentTime = 0;
-             comp.videoElement.play().catch(e => console.error("Auto-play prevented", e));
-             const subsequentComp = components[currentPreviewComponentIndex.value + 1];
-             if (subsequentComp && subsequentComp.autoRender) {
-                 comp.videoElement.onended = () => { advancePreview(); };
+             comp._hasPlayedFull = false; 
+             
+             // Reset listeners
+             comp.videoElement.onended = null;
+             comp.videoElement.ontimeupdate = null;
+             
+             // Flag to ensure auto-advance only triggers once per playback session
+             let autoAdvanceTriggered = false;
+
+             if (comp.isLoop) {
+                 // --- LOOPING VIDEO LOGIC ---
+                 // Detect loop by checking if time resets
+                 let lastTime = 0;
+                 comp.videoElement.ontimeupdate = () => {
+                     const t = comp.videoElement.currentTime;
+                     if (t < lastTime) { 
+                         // Loop Detected (Video finished playing once)
+                         comp._hasPlayedFull = true;
+                         
+                         // Requirement: "render it automatically once the video finishes playing once"
+                         if (!autoAdvanceTriggered) {
+                             autoAdvanceTriggered = true;
+                             advancePreview();
+                         }
+                     }
+                     lastTime = t;
+                 };
              } else {
-                 comp.videoElement.onended = null;
+                 // --- NON-LOOPING VIDEO LOGIC ---
+                 comp.videoElement.onended = () => { 
+                     comp._hasPlayedFull = true; 
+                     
+                     // 1. If it's the LAST component -> Exit Scene Automatically
+                     const isLastComp = currentPreviewComponentIndex.value >= components.length - 1;
+                     
+                     // 2. If it's NOT last -> Check if next component is Auto Render
+                     const nextComp = !isLastComp ? components[currentPreviewComponentIndex.value + 1] : null;
+
+                     if (isLastComp) {
+                         advancePreview(); // Triggers End of Scene logic
+                     } else if (nextComp && nextComp.autoRender) {
+                         advancePreview(); // Triggers Next Component
+                     }
+                     // If neither (Middle component, manual render), we wait for user click.
+                     // The click is enabled now because _hasPlayedFull is true.
+                 };
              }
+
+             comp.videoElement.play().catch(e => console.error("Auto-play prevented", e));
         } 
         else {
+             // Standard Non-Video Component Logic
              const subsequentComp = components[currentPreviewComponentIndex.value + 1];
              if (subsequentComp && subsequentComp.autoRender) {
                  const animDuration = (comp.animationDuration || 1) * 1000
@@ -3840,6 +3999,12 @@ const onPreviewMouseUp = (e) => {
     if (currentPreviewComponentIndex.value >= 0) {
         const activeComp = scene.components[currentPreviewComponentIndex.value];
 
+        // --- NEW CHECK: Block click if video hasn't played fully ---
+        if (activeComp && activeComp.type === 'video' && !activeComp._hasPlayedFull) {
+            return; 
+        }
+        // -----------------------------------------------------------
+
         if (activeComp && activeComp.type === 'options') {
             const clickedIdx = activeComp._clickedOptionIndex;
             activeComp._clickedOptionIndex = -1;
@@ -4077,6 +4242,12 @@ const onPreviewWheel = (e) => {
 
     <header class="header">
       <button class="hamburger" @click="toggleMenu">☰</button>
+      <div class="canvas-container" :style="{ cursor: cursorStyle }">
+    
+        <div class="notification-popup" :class="[notification.type, { 'show': notification.show }]">
+            {{ notification.message }}
+        </div>
+      
       <div class="center">
         <div class="project-header-info">
             <div class="title">{{ projectName }}</div>
@@ -4086,21 +4257,31 @@ const onPreviewWheel = (e) => {
             </div>
         </div>
       </div>
-      <button class="save-btn" @click="saveProjectData" title="Save Project">
-            💾 Save
-      </button>
-      <button class="play-project-btn" @click="playProjectFromRoot" title="Play Project from Start">
-        ▶
-      </button>
 
-      <button class="settings-btn" @click="toggleProjectSettings" title="Project Settings">
-        ⚙️
-      </button>
+      <div class="header-actions">
+            <div class="autosave-timer" :class="{ 'active': hasUnsavedChanges }">
+                <span v-if="hasUnsavedChanges" class="pulse-dot">●</span>
+                {{ formattedAutoSaveTime }}
+            </div>
 
-      <button class="fullscreen-btn" @click="toggleFullscreen" title="Toggle Fullscreen">
-        <span v-if="!isFullscreen">⤢</span>
-        <span v-else>⤡</span>
-      </button>
+            <button class="save-btn" @click="saveProjectData(false)" title="Save Project">
+                💾 Save
+            </button>
+
+            <button class="play-project-btn" @click="playProjectFromRoot" title="Play Project from Start">
+                ▶
+            </button>
+
+            <button class="settings-btn" @click="toggleProjectSettings" title="Project Settings">
+                ⚙️
+            </button>
+
+            <button class="fullscreen-btn" @click="toggleFullscreen" title="Toggle Fullscreen">
+                <span v-if="!isFullscreen">⤢</span>
+                <span v-else>⤡</span>
+            </button>
+        </div>
+    </div>
     </header>
 
     <aside class="side-menu" :class="{ open: menuOpen }">
@@ -5503,51 +5684,10 @@ const onPreviewWheel = (e) => {
     cursor: pointer;
   }
 
-  /* Fullscreen button styles */
-  .fullscreen-btn {
-    position: absolute;
-    right: 16px;
-    font-size: 22px;
-    background: none;
-    border: none;
-    color: #00ff88;
-    cursor: pointer;
-    z-index: 11;
-  }
 
-  /* Settings Button Styles */
-  .settings-btn {
-    position: absolute;
-    right: 60px; /* Left of fullscreen (16px) + gap */
-    font-size: 22px;
-    background: none;
-    border: none;
-    cursor: pointer;
-    z-index: 11;
-    transition: transform 0.2s;
-  }
 
-  .settings-btn:hover {
-    transform: rotate(30deg);
-  }
 
-  /* Play Project Button Styles */
-  .play-project-btn {
-    position: absolute;
-    right: 104px; /* Left of settings (60px) + gap */
-    font-size: 20px;
-    background: none;
-    border: none;
-    cursor: pointer;
-    z-index: 11;
-    color: #00ff88;
-    transition: transform 0.2s;
-  }
-
-  .play-project-btn:hover {
-    transform: scale(1.2);
-    text-shadow: 0 0 8px rgba(0, 255, 136, 0.5);
-  }
+ 
 
   .center { text-align: center }
 
@@ -7305,26 +7445,143 @@ const onPreviewWheel = (e) => {
   font-weight: 600;
 }
 
-.save-btn {
-  position: absolute;
-  right: 148px; /* Adjusted to sit left of Play button */
-  font-size: 16px;
-  background: rgba(59, 130, 246, 0.2);
-  border: 1px solid rgba(59, 130, 246, 0.5);
-  color: #60a5fa;
-  padding: 6px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  z-index: 11;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+
+.notification-popup {
+    position: fixed;
+    top: -60px; /* Hidden above screen */
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 12px 24px;
+    border-radius: 0 0 12px 12px; /* Rounded bottom corners */
+    color: white;
+    font-weight: 600;
+    font-size: 0.95rem;
+    z-index: 9999;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    transition: top 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); /* Bouncy effect */
+    pointer-events: none;
 }
 
+.notification-popup.show {
+    top: 0; /* Slide down */
+}
+
+.notification-popup.success {
+    background: #10b981; /* Green */
+    border: 1px solid #059669;
+}
+
+.notification-popup.error {
+    background: #ef4444; /* Red */
+    border: 1px solid #b91c1c;
+}
+
+/* --- AUTOSAVE TIMER --- */
+.autosave-timer {
+    font-family: 'Courier New', monospace;
+    font-size: 1rem;
+    color: #64748b;
+    background: rgba(15, 23, 42, 0.6);
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.3s ease;
+}
+
+.autosave-timer.active {
+    color: #cbd5e1;
+    border-color: rgba(255, 255, 255, 0.3);
+    background: rgba(15, 23, 42, 0.9);
+}
+
+.pulse-dot {
+    color: #eab308; /* Yellow dot implies pending changes */
+    font-size: 0.8rem;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.4; }
+    100% { opacity: 1; }
+}
+
+
+.header-actions {
+    position: absolute;
+    right: 20px;
+    top: 50%; /* Push top edge to center */
+    transform: translateY(-50%); /* Pull back up by half height to center perfectly */
+    display: flex;
+    align-items: center;
+    gap: 15px; /* Space between buttons */
+    z-index: 20;
+}
+.save-btn,
+.play-project-btn,
+.settings-btn,
+.fullscreen-btn {
+    position: relative !important; /* Force flexbox behavior */
+    right: auto !important;        /* Reset any absolute positioning */
+    top: auto !important;
+    transform: none !important;    /* Reset any transforms */
+    margin: 0 !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    z-index: 1;
+}
 .save-btn:hover {
-  background: rgba(59, 130, 246, 0.4);
-  color: #fff;
-  transform: translateY(-1px);
+    background: rgba(59, 130, 246, 0.4);
+    color: #fff;
+}
+
+/* Play Button */
+.play-project-btn {
+    font-size: 20px;
+    background: none;
+    border: none;
+    color: #00ff88;
+    width: 36px;
+    height: 36px;
+}
+.play-project-btn:hover {
+    transform: scale(1.2) !important; /* Re-apply hover scale */
+    text-shadow: 0 0 8px rgba(0, 255, 136, 0.5);
+}
+
+/* Settings & Fullscreen Buttons */
+.settings-btn,
+.fullscreen-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #cbd5e1;
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    font-size: 1.1rem;
+}
+.settings-btn:hover,
+.fullscreen-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.4);
+}
+.settings-btn:hover {
+    transform: rotate(30deg) !important;
+}
+.save-btn {
+    font-size: 16px;
+    background: rgba(59, 130, 246, 0.2);
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    color: #60a5fa;
+    padding: 6px 12px;
+    border-radius: 6px;
+    gap: 6px;
 }
 </style>
