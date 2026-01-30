@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, nextTick, watch, computed } from "vue"
-import { useRoute } from "vue-router"
+import { useRoute, useRouter } from "vue-router"
 
 /* ================= ROUTE ================= */
 const route = useRoute()
@@ -2035,6 +2035,7 @@ const closePopup = () => {
     updateSceneDetails()
   }
   
+  // Commit changes to Canvas_Status before closing
   if (popupNode.value) {
       const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
       if (status && status.node_type === 'Set Variables') {
@@ -2042,27 +2043,9 @@ const closePopup = () => {
           status.varOperator = setVarOperator.value
           status.varValueType = setVarValueType.value
           status.varValue = setVarValue.value
-      }
-  }
-  if (popupNode.value) {
-      const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
-      if (status && status.node_type === 'Set Variables') {
-          status.varId = setVarId.value
-          status.varOperator = setVarOperator.value
-          status.varValueType = setVarValueType.value
-          status.varValue = setVarValue.value
-          // Save new fields
           status.stringPrefix = setVarStringPrefix.value
           status.stringSuffix = setVarStringSuffix.value
-      }
-    }
-    if (popupNode.value) {
-      const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
-      
-      if (status && status.node_type === 'Set Variables') {
-          // ... (existing Set Var save logic)
-      } 
-      else if (status && status.node_type === 'If-Else') {
+      } else if (status && status.node_type === 'If-Else') {
           status.varId = ifElseVarId.value
           status.operator = ifElseOperator.value
           status.compareValueType = ifElseValueType.value
@@ -2083,6 +2066,7 @@ const closePopup = () => {
     animationFrameId = null
   }
   
+  // Wait for animation to finish, then reset state and CHECK AUTOSAVE
   setTimeout(() => {
     showPopup.value = false
     popupNode.value = null
@@ -2093,6 +2077,14 @@ const closePopup = () => {
     viewMode.value = 'scenes'
     editingNodeName.value = "" 
     sequenceAudio.value = null 
+
+    // --- FIX: Trigger Deferred Auto-Save ---
+    // If the timer ran out while we were working, save now that we are safe on the main canvas.
+    if (hasUnsavedChanges.value && autoSaveTimer.value <= 0) {
+         saveProjectData(true);
+    }
+    // ---------------------------------------
+
   }, 300) 
 }
 
@@ -3512,15 +3504,21 @@ loadProjectData();
   }, 20000);
 
   autoSaveInterval = setInterval(() => {
-        if (hasUnsavedChanges.value) {
-            if (autoSaveTimer.value > 0) {
-                autoSaveTimer.value--;
-            } else {
-                // Timer reached 0, Trigger Auto-Save
-                saveProjectData(true);
-            }
-        }
-    }, 1000);
+      if (hasUnsavedChanges.value) {
+          if (autoSaveTimer.value > 0) {
+              autoSaveTimer.value--;
+          } else {
+              // Timer reached 0. 
+              // FIX: Only trigger save if we are NOT editing a node (Popup is closed)
+              if (!showPopup.value) {
+                  saveProjectData(true);
+              } else {
+                  // Optional: You can log this to know it's waiting
+                  // console.log("Auto-save deferred: Waiting for user to close editor.");
+              }
+          }
+      }
+  }, 1000);
 })
 
 onBeforeUnmount(() => {

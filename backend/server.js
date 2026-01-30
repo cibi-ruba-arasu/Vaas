@@ -63,11 +63,19 @@ const uploadToGCS = async (base64Data, folderPath, fileNamePrefix) => {
     // 2. Extract Info
     const contentType = base64Data.substring(5, splitIndex);
     const ext = getExtension(contentType);
+    
+    // Extract the raw base64 string
     const rawBase64 = base64Data.substring(splitIndex + 8);
+    
+    // Create the Buffer (This is the heavy operation, done once)
     const buffer = Buffer.from(rawBase64, "base64");
 
     // 3. Generate Hash & Path
-    const hash = crypto.createHash("md5").update(rawBase64).digest("hex");
+    // --- FIX IS HERE: Use 'buffer' instead of 'rawBase64' ---
+    // Passing the huge string to update() caused the memory crash.
+    const hash = crypto.createHash("md5").update(buffer).digest("hex"); 
+    // --------------------------------------------------------
+
     const fullFileName = `${fileNamePrefix}_${hash}.${ext}`;
     const fullPath = `${folderPath}/${fullFileName}`;
 
@@ -101,6 +109,7 @@ const uploadToGCS = async (base64Data, folderPath, fileNamePrefix) => {
     return null;
   }
 };
+
 /* ===== HELPER: RECURSIVE MEDIA PROCESSOR ===== */
 const processProjectAssets = async (nodes, userId, projectId) => {
   const usedFilePaths = new Set();
@@ -429,8 +438,33 @@ app.get("/projects", authMiddleware, async (req, res) => {
 
   if (!bucket) return res.json([])
 
-  // oldest → newest
-  const sorted = bucket.projects.sort(
+  // Convert Mongoose Docs to plain JS objects
+  const projectsRaw = bucket.projects.toObject();
+
+  // Fetch stats for each project from the CanvasState collection
+  const projectsWithStats = await Promise.all(projectsRaw.map(async (p) => {
+      const state = await CanvasState.findOne({ projectId: p._id });
+      
+      let stats = {
+          disconnected: 0,
+          hasGeneralNode: false,
+          totalNodes: 0
+      };
+
+      if (state) {
+          stats.disconnected = state.disconnectedOptionsCount || 0;
+          // Check if at least one node is of type 'General' (Visual Scene)
+          stats.hasGeneralNode = state.nodes ? state.nodes.some(n => n.node_type === 'General') : false;
+      }
+
+      return {
+          ...p,
+          stats // Attach stats to the project object
+      };
+  }));
+
+  // Sort: oldest → newest
+  const sorted = projectsWithStats.sort(
     (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
   )
 

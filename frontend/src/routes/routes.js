@@ -10,7 +10,7 @@ import Homepage from "@/components/Homepage.vue"
 import UserProfile from "@/components/UserProfile.vue"
 import Create from "@/components/Create.vue"
 import Canvas from "@/components/Canvas.vue"
-
+import Publish from "@/components/Publish.vue" // <--- 1. Import Publish
 
 const routes = [
   {
@@ -67,6 +67,13 @@ const routes = [
     path: "/canvas/:projectId",
     name: "Canvas",
     component: Canvas,
+    meta: { requiresAuth: true }
+  },
+  // --- 2. Add Publish Route ---
+  {
+    path: "/publish/:projectId",
+    name: "Publish",
+    component: Publish,
     meta: { requiresAuth: true }
   }
 ]
