@@ -13,6 +13,9 @@ import CanvasState from "./schema/CanvasState.js"
 import { Storage } from "@google-cloud/storage"; // Import GCS
 import path from "path";
 import crypto from "crypto"
+import { translate } from "@vitalets/google-translate-api";
+import pLimit from "p-limit";
+import Post from "./schema/Post.js"; // Import the new Schema
 
 dotenv.config()
 
@@ -23,6 +26,11 @@ app.use(cors())
 app.use(express.json({ limit: '200mb' })); 
 app.use(express.urlencoded({ limit: '200mb', extended: true }));
 
+const TARGET_LANGUAGES = [
+    'en', 'es', 'fr', 'de', 'zh-cn', 'ja', 'ko', 'ru', 'pt', 'hi'
+];
+
+const limit = pLimit(5); 
 
 /* ===== GOOGLE CLOUD STORAGE SETUP ===== */
 const storage = new Storage({
@@ -32,6 +40,19 @@ const storage = new Storage({
 const bucketName = "loomart-media-storage"; // REPLACE THIS (e.g. loomart-media-storage)
 const bucket = storage.bucket(bucketName);
 
+const deleteFolderContent = async (prefix) => {
+  try {
+    // Get all files starting with this prefix (folder path)
+    const [files] = await bucket.getFiles({ prefix });
+    
+    if (files.length > 0) {
+      console.log(`🗑️ Deleting ${files.length} old files in: ${prefix}`);
+      await Promise.all(files.map(file => file.delete()));
+    }
+  } catch (err) {
+    console.error("Delete Error:", err);
+  }
+};
 
 const getExtension = (mimeType) => {
   const map = {
@@ -108,6 +129,36 @@ const uploadToGCS = async (base64Data, folderPath, fileNamePrefix) => {
     console.error(`[GCS] Upload FAILED:`, error);
     return null;
   }
+};
+
+
+// Helper: Random delay to look human
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+const translateToAll = async (text, sourceLang) => {
+    if (!text || typeof text !== 'string') return {};
+
+    const results = {};
+    const promises = TARGET_LANGUAGES.map(lang => {
+        return limit(async () => {
+            if (lang === sourceLang) {
+                results[lang] = text;
+                return;
+            }
+            try {
+                // Delay to prevent Google blocking IP
+                await delay(500 + Math.random() * 500); 
+                const res = await translate(text, { to: lang });
+                results[lang] = res.text;
+            } catch (err) {
+                console.error(`⚠️ Translation skipped (${lang}):`, err.message);
+                results[lang] = text; // Fallback to original
+            }
+        });
+    });
+
+    await Promise.all(promises);
+    return results;
 };
 
 /* ===== HELPER: RECURSIVE MEDIA PROCESSOR ===== */
@@ -473,35 +524,34 @@ app.get("/projects", authMiddleware, async (req, res) => {
 
 app.post("/projects", authMiddleware, async (req, res) => {
   const { mongoId } = req.user
-  const { name, description } = req.body
+  const { name, description, thumbnail } = req.body
 
-  if (!name) {
-    return res.status(400).json({ message: "Project name required" })
-  }
+  if (!name) return res.status(400).json({ message: "Name required" })
 
   const user = await User.findById(mongoId).select("username")
-
   let bucket = await Project.findOne({ userId: mongoId })
 
   if (!bucket) {
-    bucket = new Project({
-      userId: mongoId,
-      username: user.username,
-      projects: []
-    })
+    bucket = new Project({ userId: mongoId, username: user.username, projects: [] })
   }
 
-  const exists = bucket.projects.some(
-    p => p.name.toLowerCase() === name.toLowerCase()
-  )
+  // 1. Create Project Subdocument (to get ID)
+  const newProject = bucket.projects.create({ name, description });
 
-  if (exists) {
-    return res.status(409).json({
-      message: "Project with same name already exists"
-    })
+  // 2. Handle Thumbnail Upload
+  if (thumbnail && thumbnail.startsWith("data:")) {
+      // PATH: users/{uid}/projects/{pid}/thumbnail/
+      const thumbnailFolder = `users/${mongoId}/projects/${newProject._id}/thumbnail`;
+      
+      // Upload (filename prefix 'cover' creates users/.../thumbnail/cover_hash.jpg)
+      const uploadResult = await uploadToGCS(thumbnail, thumbnailFolder, "cover");
+      
+      if (uploadResult) {
+          newProject.thumbnail = uploadResult.url;
+      }
   }
 
-  bucket.projects.push({ name, description })
+  bucket.projects.push(newProject)
   await bucket.save()
 
   res.status(201).json(bucket.projects.at(-1))
@@ -509,38 +559,85 @@ app.post("/projects", authMiddleware, async (req, res) => {
 
 app.put("/projects/:id", authMiddleware, async (req, res) => {
   const { mongoId } = req.user
-  const { name, description } = req.body
+  const { name, description, thumbnail } = req.body
 
   const bucket = await Project.findOne({ userId: mongoId })
-
-  if (!bucket) {
-    return res.status(404).json({ message: "Project not found" })
-  }
+  if (!bucket) return res.status(404).json({ message: "Bucket not found" })
 
   const project = bucket.projects.id(req.params.id)
+  if (!project) return res.status(404).json({ message: "Project not found" })
 
-  if (!project) {
-    return res.status(404).json({ message: "Project not found" })
+  // Path: users -> specific user -> projects -> specific project -> thumbnail folder
+  const thumbnailFolder = `users/${mongoId}/projects/${project._id}/thumbnail`;
+  
+  let skippedUpload = false; 
+
+  // --- LOGIC START ---
+
+  // 1. User selected "Aura" (Gradient CSS String)
+  if (thumbnail && thumbnail.startsWith("linear-gradient")) {
+      console.log("🎨 Saving gradient aura...");
+      await deleteFolderContent(thumbnailFolder); // Remove old images
+      project.thumbnail = thumbnail;
+  }
+  
+  // 2. User selected "Sigil" (Image Base64)
+  else if (thumbnail && thumbnail.startsWith("data:")) {
+      
+      const splitIndex = thumbnail.indexOf(';base64,');
+      if (splitIndex !== -1) {
+          const rawBase64 = thumbnail.substring(splitIndex + 8);
+          const buffer = Buffer.from(rawBase64, "base64");
+          
+          // A. Calculate Hash
+          const hash = crypto.createHash("md5").update(buffer).digest("hex");
+          const contentType = thumbnail.substring(5, splitIndex);
+          const ext = getExtension(contentType);
+          
+          // B. Construct Expected Filename
+          const expectedFileName = `cover_${hash}.${ext}`;
+          const fullPath = `${thumbnailFolder}/${expectedFileName}`;
+
+          // C. Check if this EXACT file exists in Cloud Storage
+          const file = storage.bucket(bucketName).file(fullPath);
+          const [exists] = await file.exists();
+
+          if (exists) {
+              // D. DUPLICATE FOUND - Do NOT delete old files, Do NOT upload
+              console.log(`[GCS] Same image detected. Skipping upload.`);
+              skippedUpload = true; 
+              
+              // Ensure DB has the correct URL
+              project.thumbnail = `https://storage.googleapis.com/${bucketName}/${fullPath}`;
+          } else {
+              // E. NEW IMAGE - Safe to delete old folder content and upload new
+              console.log("📸 New Sigil detected. Replacing old...");
+              await deleteFolderContent(thumbnailFolder); 
+              
+              const uploadResult = await uploadToGCS(thumbnail, thumbnailFolder, "cover");
+              if (uploadResult) project.thumbnail = uploadResult.url;
+          }
+      }
+  }
+  // 3. Keep Existing (If user didn't change anything, thumbnail is just a URL string)
+  else if (thumbnail && thumbnail.startsWith("http")) {
+      project.thumbnail = thumbnail;
+  }
+  // 4. Removed completely
+  else if (thumbnail === null) {
+      await deleteFolderContent(thumbnailFolder);
+      project.thumbnail = undefined;
   }
 
-  const duplicate = bucket.projects.some(
-    p =>
-      p._id.toString() !== project._id.toString() &&
-      p.name.toLowerCase() === name.toLowerCase()
-  )
-
-  if (duplicate) {
-    return res.status(409).json({
-      message: "Project name already exists"
-    })
-  }
-
+  // Update Metadata
   project.name = name
   project.description = description
   project.updatedAt = new Date()
 
   await bucket.save()
-  res.json(project)
+  
+  // Return the flag so Frontend can show the warning
+  res.json({ project, skippedUpload })
 })
 
 app.delete("/projects/:id", authMiddleware, async (req, res) => {
@@ -668,11 +765,43 @@ app.get("/canvas/load/:projectId", authMiddleware, async (req, res) => {
   }
 });
 
+app.get("/projects/details/:projectId", authMiddleware, async (req, res) => {
+  const { mongoId } = req.user;
+  const { projectId } = req.params;
+
+  try {
+    const bucket = await Project.findOne({ userId: mongoId });
+    if (!bucket) return res.status(404).json({ message: "User projects not found" });
+
+    const project = bucket.projects.id(projectId);
+    if (!project) return res.status(404).json({ message: "Project not found" });
+
+    res.json(project);
+  } catch (err) {
+    res.status(500).json({ message: "Error fetching project details" });
+  }
+});
+
+app.get("/user/me", authMiddleware, async (req, res) => {
+  try {
+    // req.user.mongoId is populated by your authMiddleware
+    const user = await User.findById(req.user.mongoId).select("email username country");
+    
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json(user);
+  } catch (err) {
+    console.error("User fetch error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("🟢 MongoDB connected"))
   .catch(err => console.error("❌ Mongo error:", err))
-
 
 app.listen(PORT, () =>
   

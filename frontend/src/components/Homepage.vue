@@ -4,7 +4,7 @@ import { useRouter } from "vue-router"
 
 const router = useRouter()
 const bgColor = ref("#808080")
-const token = localStorage.getItem("token")
+const token = sessionStorage.getItem("token")
 
 onMounted(async () => {
   const res = await fetch("http://localhost:5000/user/theme", {

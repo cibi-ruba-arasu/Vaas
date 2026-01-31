@@ -8,6 +8,10 @@ const singleProjectSchema = new mongoose.Schema(
     },
     description: {
       type: String
+    },
+    // ✅ ADD THIS FIELD
+    thumbnail: {
+        type: String 
     }
   },
   { timestamps: true }

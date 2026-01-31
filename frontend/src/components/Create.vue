@@ -3,27 +3,44 @@ import { ref, onMounted } from "vue"
 import { useRouter } from "vue-router"
 
 const router = useRouter()
-const token = localStorage.getItem("token")
+const token = sessionStorage.getItem("token")
 const projects = ref([])
 
 const showModal = ref(false)
 const showDeleteModal = ref(false)
 const editingProject = ref(null)
+const isProcessing = ref(false)
 
 const form = ref({
   name: "",
-  description: ""
+  description: "",
+  thumbnail: null
 })
 
-const openProject = project => {
-  router.push(`/canvas/${project._id}`)
+/* FILE HANDLING */
+const handleFileChange = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+
+    if (file.size > 5 * 1024 * 1024) return alert("File too large (Max 5MB)")
+
+    const reader = new FileReader()
+    reader.onload = (event) => {
+        form.value.thumbnail = event.target.result
+    }
+    reader.readAsDataURL(file)
 }
 
-const handlePublishClick = (project) => {
-    if (!canPublish(project)) return;
-    router.push(`/publish/${project._id}`); // Navigate to new page
+// NEW: Remove Thumbnail Function
+const removeThumbnail = () => {
+    form.value.thumbnail = null // This sends 'null' to the backend
+    
+    // Reset file input so user can re-select same file if they want
+    const fileInput = document.querySelector('.file-input')
+    if(fileInput) fileInput.value = ''
 }
 
+/* FETCH & ACTIONS */
 const fetchProjects = async () => {
   try {
     const res = await fetch("http://localhost:5000/projects", {
@@ -31,584 +48,327 @@ const fetchProjects = async () => {
     })
     projects.value = await res.json()
   } catch (e) {
-    console.error("Failed to fetch projects", e)
+    console.error("Fetch failed", e)
   }
 }
 
-/* VALIDATION LOGIC */
+const openProject = project => {
+  router.push(`/canvas/${project._id}`)
+}
+
+const handlePublishClick = (project) => {
+    console.log("Attempting to publish project:", project._id);
+    if (!canPublish(project)) {
+        console.warn("Publish conditions not met");
+        return;
+    }
+    router.push(`/publish/${project._id}`); 
+}
+
 const canPublish = (project) => {
-    // If stats haven't loaded yet, default to false
     if (!project.stats) return false;
-    // Must have at least 1 scene (General Node) AND 0 disconnected options
     return project.stats.hasGeneralNode && project.stats.disconnected === 0;
 }
 
 const getPublishError = (project) => {
-    if (!project.stats) return "Loading stats...";
-    if (!project.stats.hasGeneralNode) return "Project is empty. Add a scene!";
-    if (project.stats.disconnected > 0) return `${project.stats.disconnected} disconnected options found.`;
+    if (!project.stats) return "Loading...";
+    if (!project.stats.hasGeneralNode) return "Add a scene first";
+    if (project.stats.disconnected > 0) return "Fix disconnected nodes";
     return "";
 }
 
-/* CREATE or UPDATE */
-const saveProject = async () => {
-  if (!form.value.name.trim()) {
-    return alert("Project name required")
-  }
-
+/* MODALS */
+const handleSubmit = async () => {
   const url = editingProject.value
     ? `http://localhost:5000/projects/${editingProject.value._id}`
     : "http://localhost:5000/projects"
-
+  
   const method = editingProject.value ? "PUT" : "POST"
 
-  const res = await fetch(url, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify(form.value)
-  })
+  isProcessing.value = true 
 
-  const data = await res.json()
-  if (!res.ok) return alert(data.message)
+  try {
+    // Artificial delay for animation
+    await new Promise(r => setTimeout(r, 1000)); 
 
-  closeModal()
-  fetchProjects()
+    const res = await fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(form.value)
+    })
+
+    if (!res.ok) {
+        const d = await res.json()
+        alert(d.message)
+    } else {
+        closeModal()
+        await fetchProjects()
+    }
+  } catch (e) { 
+      console.error(e) 
+  } finally {
+      isProcessing.value = false 
+  }
 }
 
-/* OPEN EDIT */
-const editProject = project => {
-  editingProject.value = project
-  form.value = {
-    name: project.name,
-    description: project.description
+const deleteProject = async () => {
+  isProcessing.value = true
+  try {
+    await fetch(`http://localhost:5000/projects/${editingProject.value._id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    closeDeleteModal()
+    fetchProjects()
+  } catch (e) { console.error(e) }
+  finally { isProcessing.value = false }
+}
+
+const openCreateModal = () => {
+  editingProject.value = null
+  form.value = { name: "", description: "", thumbnail: null }
+  showModal.value = true
+}
+
+const openEditModal = (p) => {
+  editingProject.value = p
+  form.value = { 
+      name: p.name, 
+      description: p.description,
+      thumbnail: p.thumbnail || null // Ensure explicit null if undefined
   }
   showModal.value = true
 }
 
-/* DELETE */
-const confirmDelete = project => {
-  editingProject.value = project
-  showDeleteModal.value = true
-}
+const closeModal = () => showModal.value = false
+const confirmDelete = (p) => { editingProject.value = p; showDeleteModal.value = true }
+const closeDeleteModal = () => { showDeleteModal.value = false; editingProject.value = null }
 
-const deleteProject = async () => {
-  await fetch(
-    `http://localhost:5000/projects/${editingProject.value._id}`,
-    {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` }
-    }
-  )
+/* DROPDOWN LOGIC */
+const activeDropdown = ref(null)
+const toggleDropdown = (id) => activeDropdown.value = activeDropdown.value === id ? null : id
 
-  showDeleteModal.value = false
-  editingProject.value = null
+onMounted(() => {
   fetchProjects()
-}
-
-const closeModal = () => {
-  showModal.value = false
-  editingProject.value = null
-  form.value = { name: "", description: "" }
-}
-
-onMounted(fetchProjects)
-
-const formatDate = date => {
-  return new Date(date).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric"
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".menu")) activeDropdown.value = null
   })
-}
+})
 </script>
 
 <template>
-  <div class="page">
-    
-    <header class="dashboard-header">
-      <div class="header-content">
-        <h1>Weaver Studio</h1>
-        <p class="tagline">Spin your threads of imagination into living worlds.</p>
+  <div class="create-page">
+    <header class="header">
+      <h1 class="logo">Loomart</h1>
+      <div class="header-right">
+        <button class="profile-btn" @click="router.push('/profile')">Profile</button>
       </div>
     </header>
 
-    <div class="grid">
-      <div
-        v-for="project in projects"
-        :key="project._id"
-        class="project-card"
-        @click="openProject(project)"
-      >
-        <div class="card-header">
-          <h3>{{ project.name }}</h3>
+    <div class="main-content">
+      <div class="top-bar">
+        <h2>Your Tapestry</h2>
+      </div>
 
-          <div class="menu" @click.stop>
-            ⋮
-            <div class="dropdown">
-              <button @click="editProject(project)">Edit</button>
-              <button class="danger" @click="confirmDelete(project)">
-                Delete
-              </button>
+      <div class="projects-grid">
+        <div 
+          v-for="project in projects" 
+          :key="project._id" 
+          class="project-card glass-card"
+          @click="openProject(project)"
+        >
+          <div class="card-thumbnail" :style="{
+              backgroundImage: project.thumbnail 
+                ? `url(${project.thumbnail})` 
+                : 'linear-gradient(to bottom right, #000000, #1e3a8a)'
+          }"></div>
+
+          <div class="card-content">
+            <div class="card-header">
+                <h3 class="truncate" :title="project.name">{{ project.name }}</h3>
+                
+                <div class="menu" @click.stop="toggleDropdown(project._id)">
+                    ⋮
+                    <div v-if="activeDropdown === project._id" class="dropdown">
+                        <button @click.stop="openEditModal(project)">Edit Settings</button>
+                        <button @click.stop="confirmDelete(project)" class="danger">Delete</button>
+                    </div>
+                </div>
+            </div>
+            
+            <p class="desc truncate-2">{{ project.description || "No description" }}</p>
+            
+            <div class="card-footer">
+                <span class="date">{{ new Date(project.updatedAt).toLocaleDateString() }}</span>
+                <div class="publish-wrapper" @click.stop> <span v-if="!canPublish(project)" class="status-dot error" :title="getPublishError(project)"></span>
+                    <button v-else class="publish-icon-btn" @click.stop="handlePublishClick(project)" title="Publish">
+                        🚀
+                    </button>
+                </div>
             </div>
           </div>
         </div>
 
-        <div class="publish-wrapper" @click.stop>
-            <button 
-                  class="publish-btn" 
-                  :class="{ disabled: !canPublish(project) }"
-                  @click="handlePublishClick(project)" 
-              >
-                  {{ canPublish(project) ? '🚀 Publish' : '⚠️ Not Ready' }}
-              </button>
-            
-            <div v-if="!canPublish(project)" class="publish-tooltip">
-                {{ getPublishError(project) }}
+        <div class="project-card create-card" @click="openCreateModal">
+            <div class="create-inner">
+                <div class="glow-icon">+</div>
+                <span>Weave New Story</span>
             </div>
         </div>
 
-        <p>{{ project.description }}</p>
-        <small class="created">
-          Created on {{ formatDate(project.createdAt) }}
-        </small>
-      </div>
-
-      <div class="plus-box" @click="showModal = true">
-        <span>+</span>
-        <small>Create Project</small>
       </div>
     </div>
 
-    <transition name="fade">
-      <div v-if="showModal" class="modal-backdrop" @click.self="closeModal">
-        <div class="modal scale">
-          <h2>
-            {{ editingProject ? "Edit Project" : "New Project" }}
-          </h2>
+    <div v-if="showModal" class="modal-overlay">
+      <div class="modal glass-modal">
+        <h3>{{ editingProject ? "Edit Project" : "New Creation" }}</h3>
+        
+        <label>Name</label>
+        <input v-model="form.name" placeholder="Name your world..." />
+        
+        <label>Description</label>
+        <textarea v-model="form.description" placeholder="What is this story about?"></textarea>
 
-          <input v-model="form.name" placeholder="Project name" />
-          <textarea v-model="form.description" placeholder="Description" />
+        <label>Thumbnail</label>
+        <div class="thumb-preview-row">
+            <div class="preview-wrapper">
+                <div class="preview-box" :style="{
+                    backgroundImage: form.thumbnail 
+                        ? `url(${form.thumbnail})` 
+                        : 'linear-gradient(to bottom right, #000000, #1e3a8a)'
+                }"></div>
+                
+                <button 
+                    v-if="form.thumbnail" 
+                    class="remove-thumb-btn" 
+                    @click="removeThumbnail"
+                    title="Remove Thumbnail"
+                >×</button>
+            </div>
 
-          <div class="actions">
-            <button class="cancel" @click="closeModal">Cancel</button>
-            <button class="save" @click="saveProject">Save</button>
-          </div>
+            <div class="file-input-wrapper">
+                <input type="file" accept="image/*" @change="handleFileChange" class="file-input" />
+                <span class="file-hint">Max 5MB</span>
+            </div>
+        </div>
+
+        <div class="modal-actions">
+          <button @click="closeModal" class="cancel">Close</button>
+          <button @click="handleSubmit" class="save">Weave</button>
         </div>
       </div>
-    </transition>
+    </div>
 
-    <transition name="fade">
-      <div v-if="showDeleteModal" class="modal-backdrop">
-        <div class="modal scale">
-          <h3>Delete this project?</h3>
-          <p>This action cannot be undone.</p>
-
-          <div class="actions">
-            <button class="cancel" @click="showDeleteModal = false">
-              Cancel
-            </button>
-            <button class="danger" @click="deleteProject">
-              Delete
-            </button>
-          </div>
+    <div v-if="showDeleteModal" class="modal-overlay">
+      <div class="modal small glass-modal">
+        <h3>Unravel Project?</h3>
+        <p>This cannot be undone.</p>
+        <div class="modal-actions">
+          <button @click="closeDeleteModal" class="cancel">Keep</button>
+          <button @click="deleteProject" class="danger-btn">Delete</button>
         </div>
       </div>
-    </transition>
+    </div>
+
+    <div v-if="isProcessing" class="mystical-overlay">
+        <div class="loom-container">
+            <div class="ring ring-1"></div>
+            <div class="ring ring-2"></div>
+            <div class="ring ring-3"></div>
+            <div class="core-light"></div>
+        </div>
+        <p class="mystical-text">Weaving Reality...</p>
+    </div>
+
   </div>
 </template>
 
 <style scoped>
-.page {
-  min-height: 100vh;
-  background: #020617;
-  padding: 3rem;
-  color: #e5e7eb;
-}
+/* Keep your existing styles (Grid, Card, Mystical Loader, etc.) */
+.create-page { min-height: 100vh; background: #020617; color: #e2e8f0; font-family: 'Inter', sans-serif; position: relative; overflow-x: hidden; }
 
-/* DASHBOARD HEADER */
-.dashboard-header {
-  margin-bottom: 3rem;
-  border-bottom: 1px solid rgba(30, 58, 138, 0.5);
-  padding-bottom: 1.5rem;
-}
+.header { display: flex; justify-content: space-between; padding: 1.2rem 2.5rem; background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(10px); border-bottom: 1px solid rgba(255, 255, 255, 0.05); position: sticky; top: 0; z-index: 20; }
+.logo { font-size: 1.6rem; font-weight: 800; background: linear-gradient(135deg, #a855f7, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -1px; margin: 0; }
+.profile-btn { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #94a3b8; padding: 0.6rem 1.2rem; border-radius: 8px; cursor: pointer; transition: 0.2s; font-size: 0.9rem; }
+.profile-btn:hover { background: rgba(255,255,255,0.1); color: white; border-color: rgba(255,255,255,0.2); }
 
-.dashboard-header h1 {
-  font-size: 2.5rem;
-  font-weight: 800;
-  background: linear-gradient(90deg, #00ff88, #3b82f6);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  margin-bottom: 0.5rem;
-  letter-spacing: -1px;
-}
+.main-content { max-width: 1200px; margin: 2rem auto; padding: 0 2rem; }
+.top-bar { margin-bottom: 2.5rem; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 1rem; }
+.top-bar h2 { font-weight: 300; font-size: 1.8rem; color: #f8fafc; letter-spacing: 1px; }
 
-.tagline {
-  font-size: 1.1rem;
-  color: #94a3b8;
-  font-style: italic;
-  font-family: 'Courier New', monospace;
-}
+.projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 2rem; }
 
-/* GRID */
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); /* Slightly wider cards */
-  gap: 1.8rem;
-}
+.project-card { border-radius: 16px; overflow: hidden; cursor: pointer; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); display: flex; flex-direction: column; position: relative; background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255, 255, 255, 0.05); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); }
+.glass-card:hover { transform: translateY(-8px); box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.2); border-color: rgba(168, 85, 247, 0.3); }
 
-/* PROJECT CARD */
-.project-card {
-  background: rgba(15, 23, 42, 0.9);
-  border: 1px solid #1e3a8a;
-  border-radius: 14px;
-  padding: 1.2rem;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  display: flex;
-  flex-direction: column;
-}
+.card-thumbnail { height: 150px; width: 100%; background-size: cover; background-position: center; border-bottom: 1px solid rgba(255,255,255,0.05); position: relative; }
+.card-thumbnail::after { content: ''; position: absolute; inset: 0; background: linear-gradient(to top, rgba(15, 23, 42, 0.9), transparent); }
 
-.project-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 10px 30px rgba(59, 130, 246, 0.15);
-}
+.card-content { padding: 1.2rem; display: flex; flex-direction: column; flex-grow: 1; }
+.card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; }
+.card-header h3 { margin: 0; font-size: 1.15rem; color: #f1f5f9; font-weight: 600; line-height: 1.3; font-family: 'Inter', sans-serif; letter-spacing: -0.5px; }
+.truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+.truncate-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; height: 2.8em; line-height: 1.4em; }
+.desc { font-size: 0.9rem; color: #94a3b8; margin-bottom: 1.2rem; flex-grow: 1; }
+.card-footer { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 1rem; margin-top: auto; }
+.date { font-size: 0.75rem; color: #64748b; font-family: monospace; }
 
-.project-card h3 {
-  margin-bottom: 0.4rem;
-  font-size: 1.1rem;
-  color: #fff;
-}
+.create-card { min-height: 300px; background: rgba(255, 255, 255, 0.02); border: 2px dashed rgba(255, 255, 255, 0.1); display: flex; align-items: center; justify-content: center; color: #94a3b8; transition: all 0.3s ease; }
+.create-card:hover { background: rgba(255, 255, 255, 0.04); border-color: rgba(59, 130, 246, 0.5); color: #fff; transform: translateY(-4px); }
+.create-inner { text-align: center; }
+.glow-icon { font-size: 3rem; margin-bottom: 10px; background: linear-gradient(135deg, #3b82f6, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.3)); transition: transform 0.3s; }
+.create-card:hover .glow-icon { transform: scale(1.1) rotate(90deg); }
 
-.project-card p {
-  font-size: 0.85rem;
-  color: #cbd5f5;
-  margin-bottom: auto; /* Pushes date to bottom if description is short */
-  line-height: 1.4;
-}
+.publish-icon-btn { background: none; border: none; font-size: 1.2rem; cursor: pointer; transition: transform 0.2s; filter: grayscale(1); opacity: 0.5; }
+.publish-icon-btn:hover { transform: scale(1.2); filter: grayscale(0); opacity: 1; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.5); }
 
-/* PUBLISH BUTTON & TOOLTIP */
-.publish-wrapper {
-    position: relative; /* Anchor for tooltip */
-    margin: 1rem 0;
-    width: 100%;
-}
+.menu { position: relative; color: #64748b; cursor: pointer; padding: 0 5px; font-size: 1.2rem; transition: color 0.2s; }
+.menu:hover { color: #fff; }
+.dropdown { position: absolute; right: 0; top: 25px; background: #1e293b; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; width: 140px; z-index: 20; box-shadow: 0 10px 30px rgba(0,0,0,0.5); overflow: hidden; padding: 5px; }
+.dropdown button { display: block; width: 100%; padding: 8px 12px; text-align: left; background: none; border: none; color: #cbd5e1; cursor: pointer; font-size: 0.9rem; border-radius: 4px; transition: 0.2s; }
+.dropdown button:hover { background: rgba(255,255,255,0.05); color: white; }
+.dropdown button.danger:hover { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
 
-.publish-btn {
-    background: linear-gradient(90deg, #00ff88, #059669);
-    color: #000;
-    border: none;
-    padding: 0.5rem 0.8rem;
-    border-radius: 6px;
-    font-weight: 700;
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    width: 100%;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    box-shadow: 0 2px 10px rgba(0, 255, 136, 0.2);
-}
+.modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(8px); display: flex; justify-content: center; align-items: center; z-index: 50; }
+.glass-modal { background: #1e293b; padding: 2.5rem; border-radius: 20px; width: 450px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
+.modal h3 { margin: 0 0 1.5rem 0; color: #f8fafc; font-weight: 300; font-size: 1.5rem; letter-spacing: 1px; }
+.modal label { display: block; font-size: 0.85rem; color: #94a3b8; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+.modal input, .modal textarea { width: 100%; padding: 12px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: white; margin-bottom: 20px; box-sizing: border-box; font-family: inherit; transition: border-color 0.2s; }
+.modal input:focus, .modal textarea:focus { outline: none; border-color: #60a5fa; }
 
-.publish-btn:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 15px rgba(0, 255, 136, 0.3);
-    filter: brightness(1.1);
-}
+/* THUMBNAIL INPUT STYLES */
+.thumb-preview-row { display: flex; align-items: center; gap: 20px; margin-bottom: 25px; }
+.preview-wrapper { position: relative; width: 70px; height: 70px; flex-shrink: 0; }
+.preview-box { width: 100%; height: 100%; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); background-size: cover; background-position: center; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+.remove-thumb-btn { position: absolute; top: -8px; right: -8px; background: #ef4444; color: white; border: none; width: 20px; height: 20px; border-radius: 50%; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 5px rgba(0,0,0,0.5); transition: transform 0.2s; }
+.remove-thumb-btn:hover { transform: scale(1.1); }
 
-/* DISABLED STATE */
-.publish-btn.disabled {
-    background: rgba(255, 255, 255, 0.05);
-    color: #64748b;
-    cursor: not-allowed;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    transform: none;
-    box-shadow: none;
-}
+.file-input-wrapper { display: flex; flex-direction: column; gap: 5px; }
+.file-input { margin-bottom: 0 !important; border: none !important; padding: 0 !important; background: transparent !important; }
+.file-hint { font-size: 0.75rem; color: #64748b; }
 
-.publish-btn.disabled:hover {
-    background: rgba(255, 255, 255, 0.08);
-}
+.modal-actions { display: flex; justify-content: flex-end; gap: 12px; }
+.cancel { background: transparent; border: 1px solid rgba(255,255,255,0.1); color: #cbd5e1; padding: 10px 20px; border-radius: 8px; cursor: pointer; transition: 0.2s; }
+.cancel:hover { border-color: rgba(255,255,255,0.3); color: white; }
+.save { background: linear-gradient(135deg, #3b82f6, #a855f7); border: none; color: white; padding: 10px 24px; border-radius: 8px; cursor: pointer; font-weight: 600; box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4); transition: transform 0.2s; }
+.save:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(59, 130, 246, 0.6); }
+.danger-btn { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.5); color: #fca5a5; padding: 10px 20px; border-radius: 8px; cursor: pointer; }
+.danger-btn:hover { background: rgba(239, 68, 68, 0.2); color: #fff; }
 
-/* TOOLTIP STYLES */
-.publish-tooltip {
-    position: absolute;
-    top: calc(100% + 8px); /* Below the button */
-    left: 50%;
-    transform: translateX(-50%);
-    background: #0f172a;
-    border: 1px solid #ef4444; /* Red border for warning */
-    color: #fca5a5;
-    padding: 0.5rem 0.8rem;
-    border-radius: 6px;
-    font-size: 0.75rem;
-    white-space: nowrap;
-    z-index: 20;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s ease, transform 0.2s ease;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-}
-
-.publish-tooltip::before {
-    content: "";
-    position: absolute;
-    top: -5px;
-    left: 50%;
-    transform: translateX(-50%) rotate(45deg);
-    width: 8px;
-    height: 8px;
-    background: #0f172a;
-    border-left: 1px solid #ef4444;
-    border-top: 1px solid #ef4444;
-}
-
-/* Show Tooltip on Hover of Wrapper */
-.publish-wrapper:hover .publish-tooltip {
-    opacity: 1;
-    pointer-events: auto;
-}
-
-/* PLUS BOX */
-.plus-box {
-  border: 2px dashed #3b82f6;
-  border-radius: 14px;
-  min-height: 200px; /* Match approximate card height */
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  cursor: pointer;
-  transition: all 0.25s ease;
-}
-
-.plus-box span {
-  font-size: 3rem;
-  line-height: 1;
-  color: #3b82f6;
-}
-
-.plus-box small {
-  margin-top: 0.5rem;
-  opacity: 0.8;
-  color: #93c5fd;
-  font-weight: 600;
-}
-
-.plus-box:hover {
-  background: rgba(59, 130, 246, 0.1);
-  transform: scale(1.02);
-  border-color: #60a5fa;
-}
-
-/* MODAL BACKDROP */
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(2, 6, 23, 0.85);
-  backdrop-filter: blur(4px);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 50;
-}
-
-/* MODAL */
-.modal {
-  background: #0f172a;
-  border: 1px solid #1e3a8a;
-  border-radius: 16px;
-  padding: 2rem;
-  width: 100%;
-  max-width: 420px;
-  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
-}
-
-.modal h2 {
-  text-align: center;
-  margin-bottom: 1.5rem;
-  color: #fff;
-}
-
-.modal input,
-.modal textarea {
-  width: 100%;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 8px;
-  padding: 0.8rem;
-  color: #e5e7eb;
-  margin-bottom: 1rem;
-  font-family: inherit;
-  box-sizing: border-box;
-}
-
-.modal input:focus,
-.modal textarea:focus {
-    outline: none;
-    border-color: #3b82f6;
-    background: rgba(59, 130, 246, 0.05);
-}
-
-.modal textarea {
-  resize: none;
-  min-height: 100px;
-}
-
-/* ACTIONS */
-.actions {
-  display: flex;
-  gap: 0.8rem;
-  justify-content: flex-end;
-  margin-top: 0.5rem;
-}
-
-.cancel {
-  background: transparent;
-  border: 1px solid #475569;
-  color: #94a3b8;
-}
-
-.save {
-  background: #3b82f6;
-  border: none;
-  color: white;
-}
-
-.cancel,
-.save {
-  padding: 0.6rem 1.2rem;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-weight: 600;
-}
-
-.save:hover {
-  background: #2563eb;
-}
-
-.cancel:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
-  border-color: #94a3b8;
-}
-
-/* ANIMATIONS */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.25s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-
-.scale-enter-active {
-  transition: transform 0.25s ease, opacity 0.25s ease;
-}
-
-.scale-enter-from {
-  transform: scale(0.9);
-  opacity: 0;
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.menu {
-  position: relative;
-  cursor: pointer;
-  font-size: 1.2rem;
-  color: #64748b;
-  padding: 0 0.5rem;
-}
-
-.menu:hover {
-    color: #fff;
-}
-
-.menu:hover .dropdown {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-}
-
-.dropdown {
-  position: absolute;
-  right: 0;
-  top: 25px;
-  background: #1e293b;
-  border: 1px solid #334155;
-  border-radius: 8px;
-  padding: 0.4rem;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-5px);
-  transition: all 0.2s ease;
-  z-index: 10;
-  min-width: 100px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-}
-
-.dropdown button {
-  background: none;
-  border: none;
-  color: #cbd5e1;
-  padding: 0.5rem 0.8rem;
-  text-align: left;
-  width: 100%;
-  cursor: pointer;
-  border-radius: 4px;
-  font-size: 0.85rem;
-}
-
-.dropdown button:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
-}
-
-.dropdown .danger {
-  color: #f87171;
-}
-
-.dropdown .danger:hover {
-    background: rgba(239, 68, 68, 0.1);
-}
-
-.danger {
-  background: #dc2626;
-  color: white;
-  border: none;
-  padding: 0.6rem 1.2rem;
-  border-radius: 8px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.danger:hover {
-  background: #b91c1c;
-}
-
-.created {
-  display: block;
-  margin-top: 1rem;
-  font-size: 0.7rem;
-  color: #64748b;
-  border-top: 1px solid rgba(255,255,255,0.05);
-  padding-top: 0.8rem;
-}
-
-.project-card {
-  cursor: pointer;
-}
-
-.project-card:hover h3 {
-  color: #60a5fa;
-}
+.mystical-overlay { position: fixed; inset: 0; z-index: 100; background: rgba(2, 6, 23, 0.9); backdrop-filter: blur(12px); display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.loom-container { position: relative; width: 120px; height: 120px; display: flex; justify-content: center; align-items: center; }
+.ring { position: absolute; border-radius: 50%; border: 2px solid transparent; }
+.ring-1 { width: 100%; height: 100%; border-top-color: #a855f7; border-left-color: rgba(168, 85, 247, 0.3); animation: spin-right 2s linear infinite; }
+.ring-2 { width: 75%; height: 75%; border-bottom-color: #3b82f6; border-right-color: rgba(59, 130, 246, 0.3); animation: spin-left 3s linear infinite; }
+.ring-3 { width: 50%; height: 50%; border-top-color: #06b6d4; border-right-color: rgba(6, 182, 212, 0.3); animation: spin-right 1.5s linear infinite; }
+.core-light { width: 10px; height: 10px; background: white; border-radius: 50%; box-shadow: 0 0 20px 10px rgba(255, 255, 255, 0.2); animation: pulse-core 2s ease-in-out infinite; }
+.mystical-text { margin-top: 2rem; font-size: 1.2rem; letter-spacing: 4px; text-transform: uppercase; background: linear-gradient(90deg, #a855f7, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 600; animation: text-glow 2s ease-in-out infinite alternate; }
+@keyframes spin-right { 100% { transform: rotate(360deg); } }
+@keyframes spin-left { 100% { transform: rotate(-360deg); } }
+@keyframes pulse-core { 0%, 100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.5); opacity: 0.4; } }
+@keyframes text-glow { from { opacity: 0.6; filter: blur(0px); } to { opacity: 1; filter: blur(1px); } }
 </style>

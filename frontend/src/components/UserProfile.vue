@@ -14,8 +14,8 @@ const user = ref({
 })
 
 const logout = () => {
-  localStorage.removeItem("token")
-  localStorage.removeItem("user") // if you stored it earlier
+  sessionStorage.removeItem("token")
+  sessionStorage.removeItem("user")
   router.push("/login")
 }
 
@@ -34,7 +34,7 @@ onMounted(async () => {
     console.log("STATUS:", res.status)
 
   if (!res.ok) {
-    localStorage.removeItem("token")
+    sessionStorage.removeItem("token")
     return router.push("/login")
   }
 

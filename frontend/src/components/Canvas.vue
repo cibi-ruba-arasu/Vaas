@@ -5,7 +5,7 @@ import { useRoute, useRouter } from "vue-router"
 /* ================= ROUTE ================= */
 const route = useRoute()
 const projectId = route.params.projectId
-const token = localStorage.getItem("token")
+const token = sessionStorage.getItem("token")
 
 const cursorStyle = ref('default') // Needed for the template :style="{ cursor: cursorStyle }"
 

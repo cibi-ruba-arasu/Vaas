@@ -10,7 +10,7 @@ import Homepage from "@/components/Homepage.vue"
 import UserProfile from "@/components/UserProfile.vue"
 import Create from "@/components/Create.vue"
 import Canvas from "@/components/Canvas.vue"
-import Publish from "@/components/Publish.vue" // <--- 1. Import Publish
+import Publish from "@/components/Publish.vue"
 
 const routes = [
   {
@@ -69,10 +69,9 @@ const routes = [
     component: Canvas,
     meta: { requiresAuth: true }
   },
-  // --- 2. Add Publish Route ---
   {
-    path: "/publish/:projectId",
-    name: "Publish",
+    path: '/publish/:id',
+    name: 'Publish',
     component: Publish,
     meta: { requiresAuth: true }
   }
@@ -97,28 +96,22 @@ router.beforeEach((to, from, next) => {
     if (!resetEmail) return next("/login")
   }
 
-  if (to.meta.requiresAuth) {
-    const token = localStorage.getItem("token")
-    if (!token) return next("/login")
-  }
-
-  if (to.meta.requiresAuth && !localStorage.getItem("token")) {
-    return next("/login")
-  }
-
   /* ===== AUTH PROTECTION (JWT) ===== */
   if (to.meta.requiresAuth) {
-    const token = localStorage.getItem("token")
+    // UPDATED: Check sessionStorage instead of localStorage
+    const token = sessionStorage.getItem("token")
 
     if (!token) {
       // ❌ Not logged in
       return next("/login")
     }
 
-    // ✅ Token exists (basic protection)
+    // ✅ Token exists
     return next()
   }
-
+  if (to.meta.requiresAuth && !sessionStorage.getItem("token")) {
+    return next("/login")
+  }
   next()
 })
 

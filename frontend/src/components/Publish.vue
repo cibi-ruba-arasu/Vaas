@@ -1,799 +1,426 @@
 <script setup>
-import { ref, computed, onMounted } from "vue"
-import { useRoute, useRouter } from "vue-router"
+import { ref, onMounted, computed, nextTick, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
-const route = useRoute()
-const router = useRouter()
-const projectId = route.params.projectId
-const token = localStorage.getItem("token")
+const route = useRoute();
+const router = useRouter();
+const projectId = route.params.id;
+const token = sessionStorage.getItem("token");
 
-/* ================= STATE ================= */
-const loading = ref(true)
-const projectName = ref("")
+const project = ref(null);
+const loading = ref(true);
+const isUploading = ref(false);
 
-// --- Creative Description State ---
-const bgAngle = ref(135)
-const bgColors = ref(['#1e1e2e', '#3b0764']) 
-const descriptionBlocks = ref([]) 
-const activeBlockIndex = ref(null)
+const localName = ref("");
 
-// --- Classification State ---
-const selectedCategory = ref(null)
+/* --- ADVANCED DESCRIPTION STATE --- */
+const containerColors = ref(["#1e293b", "#0f172a"]);
+const containerAngle = ref(135);
+const blocks = ref([]);
+const activeBlockId = ref(null); 
+const blockRefs = ref({}); 
 
-// --- NEW: Custom Tags State ---
-const newTagInput = ref("")
-const customTags = ref([])
+const getGradient = (colors, angle) => {
+  if (!colors || colors.length === 0) return 'transparent';
+  if (colors.length === 1) return colors[0];
+  return `linear-gradient(${angle}deg, ${colors.join(', ')})`;
+};
 
-const selectedWarnings = ref([])
-const honestyConfirmed = ref(false)
+const containerStyle = computed(() => ({
+  background: getGradient(containerColors.value, containerAngle.value)
+}));
 
-const categories = [
-    // --- CORE GENRES ---
-    "Action", "Adventure", "RPG", "Strategy", "Simulation", 
-    "Horror", "Romance", "Mystery", "Fantasy", "Sci-Fi", 
-    "Slice of Life", "Comedy", "Drama", "Thriller", "Sports", 
-    "Music", "Educational", "Puzzle", "Idle",
+/* --- BLOCK ACTIONS --- */
+const addBlock = async () => {
+  const id = Date.now();
+  blocks.value.push({
+    id,
+    type: 'text',
+    content: "",
+    isBold: false,
+    isItalic: false,
+    align: 'center',
+    fontSize: 18, 
+    textColors: ['#ffffff'],
+    textAngle: 90,
+    bgColors: ['transparent'],
+    bgAngle: 90
+  });
+  
+  activeBlockId.value = id;
+  await nextTick();
+  // Focus and resize immediately
+  if (blockRefs.value[id]) {
+    blockRefs.value[id].focus();
+    autoResize(blockRefs.value[id]);
+  }
+};
 
-    // --- SUB-GENRES & SETTINGS ---
-    "Cyberpunk", "Steampunk", "Dieselpunk", "Solarpunk",
-    "Dystopian", "Post-Apocalyptic", "Space Opera", "Mecha",
-    "Noir", "Neo-Noir", "Western", "Historical", "Alternate History",
-    "Urban Fantasy", "Dark Fantasy", "High Fantasy", "Isekai",
-    "Supernatural", "Paranormal", "Magic Realism", "Mythology", "Folklore",
-    "Superhero", "Martial Arts", "Military", "War", "Espionage",
+const removeBlock = (index) => {
+  blocks.value.splice(index, 1);
+  activeBlockId.value = null;
+  // Clean up ref
+  // Note: Vue handles ref removal automatically in templates usually, 
+  // but good to keep state clean if needed.
+};
 
-    // --- NARRATIVE STYLES ---
-    "Visual Novel", "Interactive Fiction", "Kinetic Novel", 
-    "Dating Sim", "Otome", "Galge", "Text-Based", "Point & Click",
-    "Choice Matters", "Multiple Endings", "Episodic",
+const checkContent = (block, event) => {
+  // We don't need to call autoResize here manually anymore 
+  // because the watcher below will catch the content change.
+  // But keeping it for immediate responsiveness during typing is fine.
+  if (event && event.target) autoResize(event.target);
 
-    // --- THEMES & MOODS ---
-    "Psychological", "Philosophical", "Surreal", "Abstract",
-    "Cozy", "Wholesome", "Relaxing", "Atmospheric", 
-    "Tragedy", "Satire", "Parody", "Memes", "Dark Humor",
-    "Coming of Age", "School Life", "Workplace", "Medical", "Legal", "Crime",
-    "Detective", "Survival", "Battle Royale", "Time Travel",
+  const gifRegex = /\.(gif|webp|png|jpg|jpeg)($|\?)/i;
+  if (gifRegex.test(block.content)) {
+    block.type = 'gif';
+  } else {
+    block.type = 'text';
+  }
+};
 
-    // --- MATURE & SPECIFIC ---
-    "18+ (NSFW)", "Violence", "Gore", "Body Horror", 
-    "LGBTQ+", "BL (Boys' Love)", "GL (Girls' Love)", "Harem",
-    "Vampire", "Werewolf", "Zombies", "Lovecraftian", "Gothic"
-]
+// --- FIX: AUTO-RESIZE LOGIC ---
+const autoResize = (el) => {
+  if (!el) return;
+  el.style.height = 'auto'; // Shrink to fit content (resets height)
+  el.style.height = el.scrollHeight + 'px'; // Expand to new content height
+};
 
-const warnings = [
-    "None (Clean Content)", 
-    "Sexual Content", "Graphic Violence", "Drug Use", "Self-Harm", 
-    "Strong Language", "Flashing Lights", "Gambling", "Horror Elements"
-]
+// --- NEW: WATCH FOR STYLE CHANGES ---
+// This ensures that if Font Size, Bold, or Italic changes, the box resizes immediately
+watch(blocks, async () => {
+  await nextTick(); // Wait for the DOM to update with new font size
+  for (const id in blockRefs.value) {
+    autoResize(blockRefs.value[id]);
+  }
+}, { deep: true });
 
-/* ================= COMPUTED ================= */
-const containerBackground = computed(() => {
-    if (bgColors.value.length === 1) return bgColors.value[0];
-    return `linear-gradient(${bgAngle.value}deg, ${bgColors.value.join(', ')})`
-})
+/* --- COLOR HELPERS --- */
+const addColor = (array) => { array.push('#3b82f6'); };
+const removeColor = (array, index) => { if (array.length > 1) array.splice(index, 1); };
 
-const activeBlock = computed(() => {
-    if (activeBlockIndex.value === null) return null
-    return descriptionBlocks.value[activeBlockIndex.value]
-})
-
-const isFormValid = computed(() => {
-    return (
-        projectName.value.trim().length > 0 &&
-        descriptionBlocks.value.length > 0 &&
-        selectedCategory.value !== null &&
-        honestyConfirmed.value === true
-    )
-})
-
-/* ================= METHODS ================= */
-const fetchProjectData = async () => {
-    try {
-        const res = await fetch(`http://localhost:5000/projects/${projectId}`, {
-            headers: { Authorization: `Bearer ${token}` }
-        })
-        if (res.ok) {
-            const data = await res.json()
-            projectName.value = data.name
+/* --- API CALLS --- */
+const fetchProjectDetails = async () => {
+  try {
+    const res = await fetch(`http://localhost:5000/projects/details/${projectId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (res.ok) {
+      project.value = await res.json();
+      localName.value = project.value.name;
+      try {
+        const parsed = JSON.parse(project.value.description);
+        if (Array.isArray(parsed)) blocks.value = parsed;
+        else throw new Error();
+      } catch (e) {
+        if (project.value.description) {
+           blocks.value = [{ 
+             id: 1, type: 'text', content: project.value.description, fontSize: 18,
+             textColors: ['#ffffff'], bgColors: ['transparent'], align: 'left' 
+           }];
         }
-    } catch (err) {
-        console.error("Failed to load project info", err)
-    } finally {
-        loading.value = false
+      }
+      // Initial resize on load
+      nextTick(() => {
+        for (const id in blockRefs.value) {
+          autoResize(blockRefs.value[id]);
+        }
+      });
     }
-}
+  } catch (e) { console.error(e); } finally { loading.value = false; }
+};
 
-const addBgColor = () => bgColors.value.push('#000000')
-const removeBgColor = (index) => {
-    if (bgColors.value.length > 1) bgColors.value.splice(index, 1)
-}
+const handleFileChange = async (e) => {
+  const file = e.target.files[0];
+  if (!file || file.size > 5 * 1024 * 1024) return;
+  const reader = new FileReader();
+  reader.onload = async (v) => await updateThumbnail(v.target.result);
+  reader.readAsDataURL(file);
+};
 
-const addTextBlock = () => {
-    descriptionBlocks.value.push({
-        text: "New Description Text",
-        color: "#ffffff",
-        backgroundColor: "rgba(0,0,0,0.5)",
-        fontFamily: "sans-serif",
-        fontSize: 16,
-        fontWeight: "normal",
-        fontStyle: "normal",
-        textDecoration: "none",
-        textAlign: "center",
-        padding: 10,
-        borderRadius: 4,
-        borderWidth: 0,
-        borderColor: "transparent"
-    })
-    activeBlockIndex.value = descriptionBlocks.value.length - 1
-}
+const updateThumbnail = async (base64) => {
+  isUploading.value = true;
+  await saveProject(base64);
+  isUploading.value = false;
+};
 
-const deleteActiveBlock = () => {
-    if (activeBlockIndex.value !== null) {
-        descriptionBlocks.value.splice(activeBlockIndex.value, 1)
-        activeBlockIndex.value = null
+const publishProject = async () => {
+  console.log("Publishing...");
+  await saveProject(null);
+};
+
+const saveProject = async (newThumbnail = null) => {
+  try {
+    const payload = {
+      name: localName.value,
+      description: JSON.stringify(blocks.value), 
+      thumbnail: newThumbnail || project.value.thumbnail
+    };
+    const res = await fetch(`http://localhost:5000/projects/${projectId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      project.value = data.project;
     }
-}
-
-const selectBlock = (index) => {
-    activeBlockIndex.value = index
-}
-
-const selectCategory = (cat) => {
-    selectedCategory.value = cat
-}
-
-// --- NEW: Custom Tag Methods ---
-const addCustomTag = () => {
-    const val = newTagInput.value.trim()
-    if (!val) return
-    
-    // Prevent duplicates
-    if (!customTags.value.includes(val)) {
-        customTags.value.push(val)
-    }
-    
-    newTagInput.value = "" // Clear input
-}
-
-const removeCustomTag = (index) => {
-    customTags.value.splice(index, 1)
-}
-
-const toggleWarning = (warn) => {
-    if (warn === "None (Clean Content)") {
-        selectedWarnings.value = ["None (Clean Content)"]
-        return
-    }
-
-    if (selectedWarnings.value.includes("None (Clean Content)")) {
-        selectedWarnings.value = [] 
-    }
-
-    if (selectedWarnings.value.includes(warn)) {
-        selectedWarnings.value = selectedWarnings.value.filter(w => w !== warn)
-    } else {
-        selectedWarnings.value.push(warn)
-    }
-}
-
-const handlePublish = () => {
-    if (!isFormValid.value) return
-    
-    const publishPayload = {
-        projectId,
-        name: projectName.value,
-        descriptionData: {
-            background: containerBackground.value,
-            blocks: descriptionBlocks.value
-        },
-        category: selectedCategory.value,
-        tags: customTags.value, // <--- Added Tags to Payload
-        warnings: selectedWarnings.value
-    }
-
-    console.log("🚀 Publishing Project...", publishPayload)
-    alert("Project Publish logic triggered! (Check Console)")
-}
-
-const goBack = () => {
-    router.back()
-}
+  } catch(e) { console.error(e); }
+};
 
 onMounted(() => {
-    fetchProjectData()
-})
+  if (!projectId) return router.push("/create");
+  fetchProjectDetails();
+});
+
+const activeBlock = computed(() => {
+  return blocks.value.find(b => b.id === activeBlockId.value);
+});
 </script>
 
 <template>
-  <div class="publish-page">
-    
-    <header class="pub-header">
-        <button class="back-btn" @click="goBack">← Back</button>
-        <h1>Publish Project</h1>
-        <div style="width: 60px;"></div>
-    </header>
+  <div class="publish-page" v-if="!loading && project">
+    <div class="publish-container">
+      
+      <div class="left-panel">
+        <div class="thumbnail-editor" :style="{ backgroundImage: project.thumbnail ? `url(${project.thumbnail})` : 'linear-gradient(to bottom right, #000, #1e3a8a)' }">
+          <div class="overlay" v-if="!isUploading">
+             <label class="change-btn"><span>Change Cover</span><input type="file" @change="handleFileChange" hidden /></label>
+          </div>
+          <div class="overlay loading" v-else><div class="spinner"></div></div>
+        </div>
+        <button class="publish-btn" @click="publishProject">🚀 Publish to Feed</button>
+      </div>
 
-    <div v-if="loading" class="loading">Loading Project Details...</div>
-
-    <div v-else class="content-container">
-        
-        <section class="form-section">
-            <label>Project Name</label>
-            <input v-model="projectName" class="main-input" placeholder="Enter project name..." />
-        </section>
-
-        <section class="form-section">
-            <label>Creative Description</label>
-            <p class="sub-label">Design your project's cover description.</p>
-
-            <div class="creative-editor">
-                <div class="editor-toolbar">
-                    <div class="toolbar-group">
-                        <span class="tb-label">Background</span>
-                        <div class="bg-controls">
-                            <div v-for="(col, idx) in bgColors" :key="idx" class="color-wrapper">
-                                <input type="color" v-model="bgColors[idx]" />
-                                <button v-if="bgColors.length > 1" @click="removeBgColor(idx)" class="tiny-btn">×</button>
-                            </div>
-                            <button @click="addBgColor" class="add-color-btn">+</button>
-                        </div>
-                        <div class="angle-control">
-                            <span>{{ bgAngle }}°</span>
-                            <input type="range" v-model="bgAngle" min="0" max="360" />
-                        </div>
-                    </div>
-
-                    <div class="toolbar-group block-settings" :class="{ disabled: activeBlockIndex === null }">
-                        <span class="tb-label">Selected Text Style</span>
-                        <div v-if="activeBlock" class="style-row">
-                            <input v-model="activeBlock.text" class="text-content-input" placeholder="Edit text..." />
-                            <div class="style-actions">
-                                <input type="color" v-model="activeBlock.color" title="Text Color" />
-                                <input type="color" v-model="activeBlock.backgroundColor" title="Background Color" />
-                                <input type="number" v-model="activeBlock.fontSize" style="width:50px" title="Size" />
-                                <button @click="activeBlock.fontWeight = activeBlock.fontWeight === 'bold' ? 'normal' : 'bold'" :class="{active: activeBlock.fontWeight === 'bold'}">B</button>
-                                <button @click="activeBlock.fontStyle = activeBlock.fontStyle === 'italic' ? 'normal' : 'italic'" :class="{active: activeBlock.fontStyle === 'italic'}">I</button>
-                                <button class="delete-block-btn" @click="deleteActiveBlock" title="Delete Block">🗑️</button>
-                            </div>
-                        </div>
-                        <div v-else class="no-selection">Select a text block to edit style</div>
-                    </div>
-
-                    <div class="toolbar-actions">
-                        <button class="add-text-btn" @click="addTextBlock">+ Add Text Block</button>
-                    </div>
-                </div>
-
-                <div class="description-canvas" :style="{ background: containerBackground }" @click.self="activeBlockIndex = null">
-                    <div 
-                        v-for="(block, index) in descriptionBlocks" 
-                        :key="index"
-                        class="desc-text-block"
-                        :class="{ active: activeBlockIndex === index }"
-                        @click.stop="selectBlock(index)"
-                        :style="{
-                            color: block.color,
-                            backgroundColor: block.backgroundColor,
-                            fontFamily: block.fontFamily,
-                            fontSize: block.fontSize + 'px',
-                            fontWeight: block.fontWeight,
-                            fontStyle: block.fontStyle,
-                            textDecoration: block.textDecoration,
-                            textAlign: block.textAlign,
-                            padding: block.padding + 'px',
-                            borderRadius: block.borderRadius + 'px',
-                            border: `${block.borderWidth}px solid ${block.borderColor}`
-                        }"
-                    >
-                        {{ block.text }}
-                    </div>
-                    <div v-if="descriptionBlocks.length === 0" class="canvas-placeholder">
-                        Click "Add Text Block" to start writing
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <section class="form-section">
-            <label>Category <span class="req">*</span></label>
-            <div class="chips-grid">
-                <button 
-                    v-for="cat in categories" 
-                    :key="cat" 
-                    class="chip"
-                    :class="{ selected: selectedCategory === cat }"
-                    @click="selectCategory(cat)"
-                >
-                    {{ cat }}
-                </button>
-            </div>
-        </section>
-
-        <section class="form-section">
-            <label>Custom Tags</label>
-            <p class="sub-label">Add specific keywords to help users find your project.</p>
-            
-            <div class="tag-input-group">
-                <input 
-                    v-model="newTagInput" 
-                    class="main-input tag-input" 
-                    placeholder="Type a tag and press Enter..." 
-                    @keydown.enter.prevent="addCustomTag"
-                />
-                <button class="add-tag-btn" @click="addCustomTag">Add</button>
-            </div>
-
-            <div class="chips-grid" v-if="customTags.length > 0">
-                <div 
-                    v-for="(tag, index) in customTags" 
-                    :key="tag" 
-                    class="chip custom-tag"
-                >
-                    {{ tag }}
-                    <button class="remove-tag-x" @click="removeCustomTag(index)">×</button>
-                </div>
-            </div>
-        </section>
-
-        <section class="form-section">
-            <label>Content Warnings</label>
-            <div class="warning-box">
-                <div class="warning-header">
-                    <span class="icon">⚠️</span>
-                    <p><strong>Honesty Policy:</strong> Please accurately tag your content. Mislabeling severe content may result in project removal.</p>
-                </div>
-                <div class="chips-grid">
-                    <button 
-                        v-for="warn in warnings" 
-                        :key="warn" 
-                        class="chip warning"
-                        :class="{ 
-                            'selected': selectedWarnings.includes(warn),
-                            'clean-tag': warn === 'None (Clean Content)' 
-                        }"
-                        @click="toggleWarning(warn)"
-                    >
-                        {{ warn }}
-                    </button>
-                </div>
-                
-                <div class="honesty-check">
-                    <label>
-                        <input type="checkbox" v-model="honestyConfirmed">
-                        I confirm that these tags accurately represent my project.
-                    </label>
-                </div>
-            </div>
-        </section>
-
-        <div class="publish-action-area">
-            <button 
-                class="main-publish-btn" 
-                :disabled="!isFormValid"
-                @click="handlePublish"
-            >
-                {{ isFormValid ? '🚀 Publish Project' : 'Complete all fields to Publish' }}
-            </button>
+      <div class="right-panel">
+        <div class="header-row">
+          <input v-model="localName" class="title-input" placeholder="Name your world..." />
         </div>
 
+        <div class="desc-box-container">
+          
+          <div class="desc-header">
+            <span class="header-label">Canvas Background</span>
+            <div class="gradient-controls">
+              <div v-for="(color, idx) in containerColors" :key="idx" class="color-wrap">
+                <input type="color" v-model="containerColors[idx]" />
+                <button v-if="containerColors.length > 1" @click="removeColor(containerColors, idx)" class="tiny-del">×</button>
+              </div>
+              <button class="add-color-btn" @click="addColor(containerColors)">+</button>
+              <div class="angle-slider-wrap">
+                <label>Angle</label>
+                <input type="range" v-model="containerAngle" min="0" max="360" />
+              </div>
+            </div>
+          </div>
+
+          <div class="desc-toolbar" v-if="activeBlock && activeBlock.type === 'text'">
+            
+            <div class="toolbar-section">
+              <label>Text Color</label>
+              <div class="gradient-controls small">
+                <div v-for="(c, i) in activeBlock.textColors" :key="i" class="color-wrap">
+                   <input type="color" v-model="activeBlock.textColors[i]" />
+                   <button v-if="activeBlock.textColors.length > 1" @click="removeColor(activeBlock.textColors, i)" class="tiny-del">×</button>
+                </div>
+                <button class="add-color-btn" @click="addColor(activeBlock.textColors)">+</button>
+                <input type="range" v-model="activeBlock.textAngle" min="0" max="360" title="Angle" class="mini-slider" />
+              </div>
+            </div>
+
+            <div class="vertical-sep"></div>
+
+            <div class="toolbar-section">
+              <label>Block Background</label>
+              <div class="gradient-controls small">
+                <div v-for="(c, i) in activeBlock.bgColors" :key="i" class="color-wrap">
+                   <input type="color" v-model="activeBlock.bgColors[i]" />
+                   <button v-if="activeBlock.bgColors.length > 1" @click="removeColor(activeBlock.bgColors, i)" class="tiny-del">×</button>
+                </div>
+                <button class="add-color-btn" @click="addColor(activeBlock.bgColors)">+</button>
+                <input type="range" v-model="activeBlock.bgAngle" min="0" max="360" title="Angle" class="mini-slider" />
+              </div>
+            </div>
+
+            <div class="vertical-sep"></div>
+
+            <div class="toolbar-section style-group">
+               <div class="size-control">
+                 <label>Size</label>
+                 <input type="number" v-model="activeBlock.fontSize" class="size-input" @click.stop />
+               </div>
+
+              <button :class="{ active: activeBlock.isBold }" @click="activeBlock.isBold = !activeBlock.isBold"><b>B</b></button>
+              <button :class="{ active: activeBlock.isItalic }" @click="activeBlock.isItalic = !activeBlock.isItalic"><i>I</i></button>
+              <div class="align-group">
+                <button :class="{ active: activeBlock.align === 'left' }" @click="activeBlock.align = 'left'">⇠</button>
+                <button :class="{ active: activeBlock.align === 'center' }" @click="activeBlock.align = 'center'">⇿</button>
+                <button :class="{ active: activeBlock.align === 'right' }" @click="activeBlock.align = 'right'">⇢</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="desc-toolbar empty" v-else>
+            <span>Select a text block to edit styles</span>
+          </div>
+
+          <div class="desc-canvas" :style="containerStyle">
+            
+            <div 
+              v-for="(block, index) in blocks" 
+              :key="block.id" 
+              class="desc-block-row"
+              @click="activeBlockId = block.id"
+              :style="{
+                /* FIX: Apply Block Background here on the parent */
+                background: getGradient(block.bgColors, block.bgAngle),
+                borderRadius: '6px' 
+              }"
+            >
+            <button class="row-del-btn" @click.stop="removeBlock(index)">×</button>
+              <div v-if="block.type === 'gif'" class="gif-wrapper" :style="{ justifyContent: block.align }">
+                <img :src="block.content" />
+                <button class="revert-btn" @click="block.type='text'; block.content=''">Edit Link</button>
+              </div>
+
+              <textarea 
+                v-else
+                :ref="el => blockRefs[block.id] = el"
+                v-model="block.content"
+                @input="checkContent(block, $event)"
+                @focus="activeBlockId = block.id"
+                placeholder="Type text or paste GIF url..."
+                class="block-input"
+                rows="1" 
+                :style="{
+                  fontSize: (block.fontSize || 18) + 'px',
+                  fontWeight: block.isBold ? 'bold' : 'normal',
+                  fontStyle: block.isItalic ? 'italic' : 'normal',
+                  textAlign: block.align,
+                  
+                  /* FIX: Ensure textarea background is transparent so parent shows through */
+                  backgroundColor: 'transparent',
+                  
+                  /* Text Gradient Logic */
+                  color: block.textColors.length > 1 ? 'transparent' : block.textColors[0],
+                  backgroundImage: block.textColors.length > 1 ? getGradient(block.textColors, block.textAngle) : 'none',
+                  webkitBackgroundClip: block.textColors.length > 1 ? 'text' : 'unset',
+                  backgroundClip: block.textColors.length > 1 ? 'text' : 'unset'
+                }"
+              ></textarea>
+            </div>
+
+            <button class="add-text-btn" @click="addBlock">+ Add Text / GIF</button>
+          </div>
+
+        </div>
+
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* Keeping all existing styles... */
-.publish-page {
-    min-height: 100vh;
-    background: #020617;
-    color: #e2e8f0;
-    font-family: 'Inter', sans-serif;
-}
-.pub-header {
-    height: 64px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 24px;
-    background: rgba(15, 23, 42, 0.8);
-    backdrop-filter: blur(10px);
-    position: sticky;
-    top: 0;
-    z-index: 50;
-}
-.pub-header h1 {
-    font-size: 1.2rem;
-    font-weight: 700;
-    background: linear-gradient(90deg, #00ff88, #3b82f6);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin: 0;
-}
-.back-btn {
-    background: transparent;
-    border: 1px solid rgba(255,255,255,0.2);
-    color: #94a3b8;
-    padding: 6px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-.back-btn:hover {
-    color: #fff;
-    border-color: #fff;
-}
-.content-container {
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 40px 20px;
-    padding-bottom: 100px;
-}
-.loading {
-    text-align: center;
-    padding: 50px;
-    color: #94a3b8;
-    font-style: italic;
-}
-.form-section {
-    margin-bottom: 40px;
-    background: rgba(30, 41, 59, 0.5);
-    padding: 24px;
-    border-radius: 12px;
-    border: 1px solid rgba(255,255,255,0.05);
-}
-.form-section label {
-    display: block;
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #fff;
-    margin-bottom: 8px;
-}
-.sub-label {
-    font-size: 0.85rem;
-    color: #94a3b8;
-    margin-top: -4px;
-    margin-bottom: 16px;
-}
-.req { color: #f87171; }
-.main-input {
-    width: 100%;
-    background: #0f172a;
-    border: 1px solid rgba(255,255,255,0.1);
-    padding: 12px 16px;
-    font-size: 1rem;
-    color: #fff;
-    border-radius: 8px;
-    box-sizing: border-box;
-}
-.main-input:focus {
-    outline: none;
-    border-color: #3b82f6;
-}
-.creative-editor {
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 8px;
-    overflow: hidden;
-}
-.editor-toolbar {
-    background: #1e293b;
-    padding: 12px;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
-    display: flex;
-    flex-wrap: wrap;
-    gap: 16px;
-    align-items: flex-start;
-}
-.toolbar-group {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    border-right: 1px solid rgba(255,255,255,0.1);
-    padding-right: 16px;
-}
-.toolbar-group:last-child { border-right: none; }
-.tb-label {
-    font-size: 0.7rem;
-    color: #64748b;
-    text-transform: uppercase;
-    font-weight: 700;
-}
-.bg-controls {
-    display: flex;
-    gap: 6px;
-}
-.color-wrapper {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-}
-.color-wrapper input[type="color"] {
-    width: 24px;
-    height: 24px;
-    border: none;
-    padding: 0;
-    background: transparent;
-    cursor: pointer;
-}
-.tiny-btn {
-    font-size: 10px;
-    background: none;
-    border: none;
-    color: #f87171;
-    cursor: pointer;
-}
-.add-color-btn {
-    background: rgba(255,255,255,0.1);
-    border: none;
-    color: #fff;
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    cursor: pointer;
-}
-.angle-control {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.8rem;
-    color: #94a3b8;
-}
-.block-settings {
-    flex: 1;
-}
-.block-settings.disabled {
-    opacity: 0.3;
-    pointer-events: none;
-}
-.style-row {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-.text-content-input {
-    background: rgba(0,0,0,0.3);
-    border: 1px solid rgba(255,255,255,0.1);
-    color: #fff;
-    padding: 4px 8px;
-    border-radius: 4px;
-    width: 100%;
-    box-sizing: border-box;
-}
-.style-actions {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-}
-.style-actions button {
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.1);
-    color: #ccc;
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.8rem;
-    font-family: serif;
-    font-weight: bold;
-}
-.style-actions button.active {
-    background: #3b82f6;
-    color: white;
-    border-color: #3b82f6;
-}
-.style-actions input[type="color"] {
-    width: 24px;
-    height: 24px;
-    border: none;
-    padding: 0;
-    background: transparent;
-}
-.delete-block-btn {
-    margin-left: auto;
-    color: #f87171 !important;
-}
-.no-selection {
-    font-size: 0.8rem;
-    color: #64748b;
-    font-style: italic;
-    padding: 10px 0;
-}
-.toolbar-actions {
-    display: flex;
-    align-items: center;
-}
-.add-text-btn {
-    background: #00ff88;
-    color: #000;
-    border: none;
-    padding: 8px 12px;
-    border-radius: 6px;
-    font-weight: 600;
-    font-size: 0.85rem;
-    cursor: pointer;
-}
-.add-text-btn:hover { background: #00cc6a; }
-.description-canvas {
-    min-height: 250px;
-    padding: 20px;
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    align-items: center;
-}
-.canvas-placeholder {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    color: rgba(255,255,255,0.3);
-    pointer-events: none;
-}
-.desc-text-block {
-    cursor: pointer;
-    transition: transform 0.1s;
-    user-select: none;
-    max-width: 100%;
-}
-.desc-text-block:hover {
-    outline: 1px dashed rgba(255,255,255,0.3);
-}
-.desc-text-block.active {
-    outline: 2px solid #3b82f6;
-    transform: scale(1.02);
-}
-.chips-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    gap: 10px;
-}
-.chip {
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.1);
-    color: #94a3b8;
-    padding: 8px 12px; /* Adjusted padding */
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    transition: all 0.2s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-.chip:hover {
-    background: rgba(255,255,255,0.1);
-    color: #e2e8f0;
-}
-.chip.selected {
-    background: rgba(59, 130, 246, 0.2);
-    border-color: #3b82f6;
-    color: #60a5fa;
-    font-weight: 600;
-}
+/* MAIN LAYOUT */
+.publish-page { min-height: 100vh; background: #020617; color: white; padding: 2rem; display: flex; justify-content: center; font-family: 'Inter', sans-serif; }
+.publish-container { display: flex; gap: 3rem; max-width: 1200px; width: 100%; align-items: flex-start; }
 
-/* === NEW: CUSTOM TAGS STYLING === */
-.tag-input-group {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 16px;
-}
-.tag-input {
-    flex: 1;
-}
-.add-tag-btn {
-    background: #f97316;
-    color: white;
-    border: none;
-    padding: 0 20px;
-    border-radius: 8px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s;
-}
-.add-tag-btn:hover {
-    background: #ea580c;
-}
+.left-panel { flex: 0.8; position: sticky; top: 2rem; display: flex; flex-direction: column; gap: 1.5rem; }
+.thumbnail-editor { width: 100%; aspect-ratio: 16/9; border-radius: 20px; background-size: cover; background-position: center; border: 1px solid rgba(255,255,255,0.1); position: relative; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+.overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; opacity: 0; transition: 0.3s; }
+.thumbnail-editor:hover .overlay { opacity: 1; }
+.change-btn { background: white; color: black; padding: 10px 20px; border-radius: 30px; font-weight: 700; cursor: pointer; transition: transform 0.2s; }
+.change-btn:hover { transform: scale(1.05); }
 
-/* The Orange Custom Tag Box */
-.chip.custom-tag {
-    background: rgba(249, 115, 22, 0.15);
-    border-color: #f97316;
-    color: #fdba74;
-    cursor: default;
-    justify-content: space-between; /* Space text and X */
-    padding-right: 8px;
-    gap: 8px;
-}
-.remove-tag-x {
-    background: none;
-    border: none;
-    color: #fdba74;
-    cursor: pointer;
-    font-size: 1.1rem;
-    line-height: 1;
-    padding: 2px;
-    display: flex;
-    align-items: center;
-    opacity: 0.7;
-    transition: opacity 0.2s;
-}
-.remove-tag-x:hover {
-    opacity: 1;
-    color: #fff;
-}
+.right-panel { flex: 1; display: flex; flex-direction: column; gap: 1.5rem; width: 100%; }
 
-/* === WARNINGS === */
-.chip.clean-tag {
-    grid-column: span 2; 
-    border-color: #00ff88;
-    color: #00ff88;
+.header-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.title-input { background: transparent; border: none; border-bottom: 2px solid #334155; color: white; font-size: 2.2rem; font-weight: 800; width: 100%; padding: 5px; transition: border-color 0.3s; }
+.title-input:focus { border-color: #3b82f6; outline: none; }
+
+.publish-btn { 
+  width: 100%; background: linear-gradient(135deg, #3b82f6, #a855f7); border: none; color: white; padding: 16px; border-radius: 12px; font-weight: 700; font-size: 1.1rem; cursor: pointer; box-shadow: 0 10px 25px rgba(59, 130, 246, 0.4); transition: all 0.2s; display: flex; justify-content: center; align-items: center; gap: 10px;
 }
-.chip.clean-tag.selected {
-    background: rgba(0, 255, 136, 0.2);
-    color: #fff;
-    font-weight: bold;
+.publish-btn:hover { transform: translateY(-3px); box-shadow: 0 15px 35px rgba(59, 130, 246, 0.6); }
+
+/* --- DESCRIPTION BOX --- */
+.desc-box-container { border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; background: #0f172a; display: flex; flex-direction: column; }
+
+.desc-header { background: #1e293b; padding: 12px 20px; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.header-label { font-size: 0.75rem; text-transform: uppercase; color: #94a3b8; font-weight: 700; letter-spacing: 0.5px; }
+
+.desc-toolbar { background: #334155; padding: 10px 20px; display: flex; align-items: center; gap: 20px; min-height: 60px; flex-wrap: wrap; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.desc-toolbar.empty { justify-content: center; color: #64748b; font-size: 0.85rem; font-style: italic; background: #1e293b; }
+
+.toolbar-section { display: flex; flex-direction: column; gap: 5px; }
+.toolbar-section.style-group { flex-direction: row; align-items: center; gap: 8px; margin-left: auto; }
+@media (max-width: 600px) { .toolbar-section.style-group { margin-left: 0; margin-top: 10px; } }
+.toolbar-section label { font-size: 0.65rem; color: #cbd5e1; font-weight: 600; text-transform: uppercase; }
+
+.vertical-sep { width: 1px; height: 30px; background: rgba(255,255,255,0.1); }
+
+/* COLORS */
+.gradient-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gradient-controls.small { gap: 6px; }
+.color-wrap { position: relative; display: flex; align-items: center; }
+.color-wrap input[type="color"] { width: 36px; height: 36px; border: 2px solid rgba(255,255,255,0.2); padding: 0; background: none; cursor: pointer; border-radius: 6px; overflow: hidden; }
+.tiny-del { position: absolute; top: -6px; right: -6px; background: #ef4444; border: none; color: white; width: 14px; height: 14px; font-size: 9px; border-radius: 50%; display: flex; justify-content: center; align-items: center; cursor: pointer; z-index: 2; box-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+.add-color-btn { width: 36px; height: 36px; background: rgba(255,255,255,0.1); border: 1px dashed rgba(255,255,255,0.3); color: white; border-radius: 6px; cursor: pointer; font-size: 1.2rem; line-height: 1; display: flex; justify-content: center; align-items: center; }
+.add-color-btn:hover { background: rgba(255,255,255,0.2); }
+
+/* INPUTS */
+.angle-slider-wrap { display: flex; flex-direction: column; margin-left: 10px; width: 80px; }
+.angle-slider-wrap label { font-size: 0.6rem; color: #94a3b8; margin-bottom: 2px; }
+input[type="range"] { width: 100%; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; outline: none; cursor: pointer; }
+.mini-slider { width: 60px; margin-left: 5px; }
+
+/* FONT SIZE */
+.size-control { display: flex; flex-direction: column; gap: 2px; margin-right: 5px; }
+.size-input { width: 50px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 4px; padding: 5px; font-size: 0.9rem; text-align: center; }
+
+/* BUTTONS */
+.desc-toolbar button { background: rgba(0,0,0,0.2); border: 1px solid transparent; color: #cbd5e1; width: 32px; height: 32px; border-radius: 6px; cursor: pointer; display: flex; justify-content: center; align-items: center; transition: 0.2s; }
+.desc-toolbar button:hover { background: rgba(255,255,255,0.1); }
+.desc-toolbar button.active { background: #3b82f6; color: white; border-color: #2563eb; }
+.align-group { display: flex; gap: 2px; background: rgba(0,0,0,0.2); border-radius: 6px; padding: 2px; }
+.align-group button { background: transparent; border: none; }
+.align-group button.active { background: #3b82f6; }
+
+/* CANVAS */
+.desc-canvas { min-height: 350px; padding: 30px; display: flex; flex-direction: column; gap: 15px; }
+.desc-block-row { position: relative; width: 100%; transition: transform 0.2s; }
+.desc-block-row:hover .row-del-btn { opacity: 1; }
+
+.block-input {
+  width: 100%;
+  border: 1px dashed transparent;
+  padding: 10px;
+  outline: none;
+  border-radius: 6px;
+  transition: border-color 0.2s;
+  resize: none; 
+  overflow: hidden; 
+  caret-color: #ffffff; /* FORCE CARET TO BE VISIBLE */
+  font-family: inherit;
+  line-height: 1.4;
+  /* Ensure min-height matches initial font size roughly */
+  min-height: 40px; 
 }
-.chip.warning.selected {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: #ef4444;
-    color: #fca5a5;
-}
-.warning-box {
-    background: rgba(0,0,0,0.3);
-    padding: 16px;
-    border-radius: 8px;
-    border: 1px solid rgba(239, 68, 68, 0.2);
-}
-.warning-header {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 16px;
-    color: #fca5a5;
-    font-size: 0.9rem;
-}
-.honesty-check {
-    margin-top: 20px;
-    padding-top: 16px;
-    border-top: 1px solid rgba(255,255,255,0.1);
-}
-.honesty-check label {
-    font-size: 0.95rem;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    cursor: pointer;
-}
-.honesty-check input {
-    width: 18px;
-    height: 18px;
-    accent-color: #ef4444;
-}
-.publish-action-area {
-    margin-top: 40px;
-    text-align: center;
-}
-.main-publish-btn {
-    background: linear-gradient(90deg, #00ff88, #3b82f6);
-    color: #000;
-    border: none;
-    padding: 16px 48px;
-    border-radius: 50px;
-    font-size: 1.2rem;
-    font-weight: 800;
-    cursor: pointer;
-    box-shadow: 0 4px 20px rgba(0, 255, 136, 0.3);
-    transition: all 0.3s;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}
-.main-publish-btn:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 30px rgba(0, 255, 136, 0.5);
-}
-.main-publish-btn:disabled {
-    background: #334155;
-    color: #94a3b8;
-    cursor: not-allowed;
-    box-shadow: none;
+.block-input:focus { border-color: rgba(255,255,255,0.3); box-shadow: 0 0 15px rgba(0,0,0,0.1); }
+
+.gif-wrapper { display: flex; width: 100%; position: relative; padding: 10px 0; }
+.gif-wrapper img { max-width: 100%; border-radius: 8px; max-height: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+.revert-btn { position: absolute; top: 20px; right: 20px; background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 4px; border: none; color: white; cursor: pointer; font-size: 0.8rem; backdrop-filter: blur(4px); }
+
+.row-del-btn { position: absolute; left: -35px; top: 50%; transform: translateY(-50%); background: #ef4444; border: none; color: white; width: 24px; height: 24px; border-radius: 50%; cursor: pointer; opacity: 0; transition: 0.2s; z-index: 10; display: flex; align-items: center; justify-content: center; padding-bottom: 2px; }
+
+.add-text-btn { margin-top: 15px; width: 100%; padding: 12px; background: rgba(255,255,255,0.05); border: 1px dashed rgba(255,255,255,0.2); color: #94a3b8; border-radius: 8px; cursor: pointer; transition: 0.2s; font-size: 0.9rem; }
+.add-text-btn:hover { background: rgba(255,255,255,0.1); color: white; border-color: #3b82f6; }
+
+.spinner { width: 30px; height: 30px; border: 3px solid rgba(255,255,255,0.1); border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 900px) {
+  .publish-container { flex-direction: column; }
+  .left-panel { position: static; width: 100%; }
 }
 </style>

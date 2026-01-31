@@ -36,9 +36,9 @@ const handleLogin = async () => {
       return alert(data.message)
     }
 
-    // ✅ Save auth data
-    localStorage.setItem("token", data.token)
-    localStorage.setItem("user", JSON.stringify(data.user))
+   // ✅ CHANGE: Save auth data to sessionStorage
+    sessionStorage.setItem("token", data.token)
+    sessionStorage.setItem("user", JSON.stringify(data.user))
 
     // ✅ Redirect to Homepage
     router.push("/home")
