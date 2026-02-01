@@ -15,7 +15,7 @@ import path from "path";
 import crypto from "crypto"
 import { translate } from "@vitalets/google-translate-api";
 import pLimit from "p-limit";
-import Post from "./schema/Post.js"; // Import the new Schema
+import Publish from "./schema/Publish.js"
 
 dotenv.config()
 
@@ -485,40 +485,36 @@ app.get("/user/profile", authMiddleware, async (req, res) => {
 app.get("/projects", authMiddleware, async (req, res) => {
   const { mongoId } = req.user
 
+  // 1. Fetch User's Project Bucket
   const bucket = await Project.findOne({ userId: mongoId })
-
   if (!bucket) return res.json([])
 
-  // Convert Mongoose Docs to plain JS objects
+  // 2. Convert to Plain Objects
   const projectsRaw = bucket.projects.toObject();
 
-  // Fetch stats for each project from the CanvasState collection
-  const projectsWithStats = await Promise.all(projectsRaw.map(async (p) => {
+  // 3. Attach Stats & Check Published Status
+  const projectsWithData = await Promise.all(projectsRaw.map(async (p) => {
+      // ✅ CHECK PUBLISH DB: Check if this specific project ID exists in Publish collection
+      const isPublished = await Publish.exists({ projectId: p._id });
+
+      // Check Canvas Stats
       const state = await CanvasState.findOne({ projectId: p._id });
       
-      let stats = {
-          disconnected: 0,
-          hasGeneralNode: false,
-          totalNodes: 0
-      };
-
+      let stats = { disconnected: 0, hasGeneralNode: false, totalNodes: 0 };
       if (state) {
           stats.disconnected = state.disconnectedOptionsCount || 0;
-          // Check if at least one node is of type 'General' (Visual Scene)
           stats.hasGeneralNode = state.nodes ? state.nodes.some(n => n.node_type === 'General') : false;
       }
 
       return {
-          ...p,
-          stats // Attach stats to the project object
+          ...p, // Name, description, thumbnail from Project DB
+          stats,
+          isPublished: !!isPublished // ✅ SEND THIS TO FRONTEND (True/False)
       };
   }));
 
-  // Sort: oldest → newest
-  const sorted = projectsWithStats.sort(
-    (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
-  )
-
+  // Sort by newest updated
+  const sorted = projectsWithData.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
   res.json(sorted)
 })
 
@@ -559,85 +555,38 @@ app.post("/projects", authMiddleware, async (req, res) => {
 
 app.put("/projects/:id", authMiddleware, async (req, res) => {
   const { mongoId } = req.user
-  const { name, description, thumbnail } = req.body
-
+  const { name, description, thumbnail, titleFont } = req.body // Added titleFont
+  
   const bucket = await Project.findOne({ userId: mongoId })
   if (!bucket) return res.status(404).json({ message: "Bucket not found" })
-
+  
   const project = bucket.projects.id(req.params.id)
   if (!project) return res.status(404).json({ message: "Project not found" })
 
-  // Path: users -> specific user -> projects -> specific project -> thumbnail folder
   const thumbnailFolder = `users/${mongoId}/projects/${project._id}/thumbnail`;
   
-  let skippedUpload = false; 
-
-  // --- LOGIC START ---
-
-  // 1. User selected "Aura" (Gradient CSS String)
   if (thumbnail && thumbnail.startsWith("linear-gradient")) {
-      console.log("🎨 Saving gradient aura...");
-      await deleteFolderContent(thumbnailFolder); // Remove old images
+      await deleteFolderContent(thumbnailFolder);
       project.thumbnail = thumbnail;
-  }
-  
-  // 2. User selected "Sigil" (Image Base64)
-  else if (thumbnail && thumbnail.startsWith("data:")) {
-      
+  } else if (thumbnail && thumbnail.startsWith("data:")) {
       const splitIndex = thumbnail.indexOf(';base64,');
       if (splitIndex !== -1) {
-          const rawBase64 = thumbnail.substring(splitIndex + 8);
-          const buffer = Buffer.from(rawBase64, "base64");
-          
-          // A. Calculate Hash
-          const hash = crypto.createHash("md5").update(buffer).digest("hex");
-          const contentType = thumbnail.substring(5, splitIndex);
-          const ext = getExtension(contentType);
-          
-          // B. Construct Expected Filename
-          const expectedFileName = `cover_${hash}.${ext}`;
-          const fullPath = `${thumbnailFolder}/${expectedFileName}`;
-
-          // C. Check if this EXACT file exists in Cloud Storage
-          const file = storage.bucket(bucketName).file(fullPath);
-          const [exists] = await file.exists();
-
-          if (exists) {
-              // D. DUPLICATE FOUND - Do NOT delete old files, Do NOT upload
-              console.log(`[GCS] Same image detected. Skipping upload.`);
-              skippedUpload = true; 
-              
-              // Ensure DB has the correct URL
-              project.thumbnail = `https://storage.googleapis.com/${bucketName}/${fullPath}`;
-          } else {
-              // E. NEW IMAGE - Safe to delete old folder content and upload new
-              console.log("📸 New Sigil detected. Replacing old...");
-              await deleteFolderContent(thumbnailFolder); 
-              
-              const uploadResult = await uploadToGCS(thumbnail, thumbnailFolder, "cover");
-              if (uploadResult) project.thumbnail = uploadResult.url;
-          }
+          await deleteFolderContent(thumbnailFolder);
+          const uploadResult = await uploadToGCS(thumbnail, thumbnailFolder, "cover");
+          if (uploadResult) project.thumbnail = uploadResult.url;
       }
-  }
-  // 3. Keep Existing (If user didn't change anything, thumbnail is just a URL string)
-  else if (thumbnail && thumbnail.startsWith("http")) {
-      project.thumbnail = thumbnail;
-  }
-  // 4. Removed completely
-  else if (thumbnail === null) {
+  } else if (thumbnail === null) {
       await deleteFolderContent(thumbnailFolder);
       project.thumbnail = undefined;
   }
 
-  // Update Metadata
   project.name = name
   project.description = description
+  if (titleFont) project.titleFont = titleFont; // ✅ Save Font
   project.updatedAt = new Date()
 
   await bucket.save()
-  
-  // Return the flag so Frontend can show the warning
-  res.json({ project, skippedUpload })
+  res.json({ project })
 })
 
 app.delete("/projects/:id", authMiddleware, async (req, res) => {
@@ -765,20 +714,74 @@ app.get("/canvas/load/:projectId", authMiddleware, async (req, res) => {
   }
 });
 
+app.get("/projects", authMiddleware, async (req, res) => {
+  const { mongoId } = req.user
+
+  // 1. Fetch User's Project Bucket
+  const bucket = await Project.findOne({ userId: mongoId })
+  if (!bucket) return res.json([])
+
+  // 2. Convert Mongoose Docs to JS Objects
+  const projectsRaw = bucket.projects.toObject();
+
+  // 3. Attach Stats & Check Published Status
+  const projectsWithData = await Promise.all(projectsRaw.map(async (p) => {
+      // ✅ Check Publish DB: Does this project exist in Publish collection?
+      const isPublished = await Publish.exists({ projectId: p._id });
+
+      // ✅ Check Canvas Stats (Fixed variable name to 'state' to avoid conflict)
+      // Note: We query the 'CanvasState' model, NOT 'Project'
+      const state = await CanvasState.findOne({ projectId: p._id });
+      
+      let stats = { disconnected: 0, hasGeneralNode: false, totalNodes: 0 };
+      if (state) {
+          stats.disconnected = state.disconnectedOptionsCount || 0;
+          stats.hasGeneralNode = state.nodes ? state.nodes.some(n => n.node_type === 'General') : false;
+      }
+
+      return {
+          ...p, // Returns name, description from Project DB
+          stats,
+          isPublished: !!isPublished // Converts result to true/false
+      };
+  }));
+
+  const sorted = projectsWithData.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+  res.json(sorted)
+})
+
 app.get("/projects/details/:projectId", authMiddleware, async (req, res) => {
   const { mongoId } = req.user;
   const { projectId } = req.params;
 
+  console.log(`🔍 Fetching details for Project: ${projectId} | User: ${mongoId}`);
+
   try {
+    // 1. Find the User's Project Bucket
     const bucket = await Project.findOne({ userId: mongoId });
-    if (!bucket) return res.status(404).json({ message: "User projects not found" });
+    
+    if (!bucket) {
+      console.log("❌ Bucket not found for this user.");
+      return res.status(404).json({ message: "User project bucket not found" });
+    }
 
+    // 2. Find the specific Project Sub-document using Mongoose's .id() method
     const project = bucket.projects.id(projectId);
-    if (!project) return res.status(404).json({ message: "Project not found" });
 
+    if (!project) {
+      console.log(`❌ Project ID ${projectId} does not exist in user's bucket.`);
+      // List available IDs to debug
+      const availableIds = bucket.projects.map(p => p._id.toString());
+      console.log("ℹ️ Available Projects:", availableIds);
+      return res.status(404).json({ message: "Project not found" });
+    }
+
+    console.log("✅ Project found:", project.name);
     res.json(project);
+
   } catch (err) {
-    res.status(500).json({ message: "Error fetching project details" });
+    console.error("🔥 Error fetching details:", err);
+    res.status(500).json({ message: "Server error fetching details" });
   }
 });
 
@@ -795,6 +798,98 @@ app.get("/user/me", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("User fetch error:", err);
     res.status(500).json({ message: "Server error" });
+  }
+});
+
+/* ... existing imports ... */
+// Add this route near your other user routes (e.g., before app.listen)
+
+/* ===== USER SEARCH ===== */
+app.get("/users/search", authMiddleware, async (req, res) => {
+  const { q } = req.query;
+
+  if (!q || q.length < 1) return res.json([]);
+
+  try {
+    // Search for username, case-insensitive, limit to 10 results
+    const users = await User.find({
+      username: { $regex: q, $options: "i" }
+    })
+    .select("username userid country") // Return specific fields
+    .limit(10);
+
+    res.json(users);
+  } catch (err) {
+    console.error("Search error:", err);
+    res.status(500).json({ message: "Search failed" });
+  }
+});
+
+app.post("/publish", authMiddleware, async (req, res) => {
+  const { 
+    id, // Project ID
+    name, 
+    titleFont, 
+    description, 
+    language, 
+    categories, 
+    customCategories, 
+    warnings, 
+    isThumbnailNSFW, 
+    monetization, 
+    thumbnail 
+  } = req.body;
+
+  const { mongoId } = req.user;
+
+  try {
+    // 1. Validation: Ensure it is a Free project
+    if (monetization && monetization.isPaid) {
+      return res.status(400).json({ 
+        message: "This route currently only supports Free projects." 
+      });
+    }
+
+    // 2. Get Author Details (Snapshot the username)
+    const author = await User.findById(mongoId).select("username");
+    if (!author) return res.status(404).json({ message: "Author not found" });
+
+    // 3. Prepare Data
+    const publishData = {
+      projectId: id,
+      authorId: mongoId,
+      authorName: author.username,
+      name,
+      titleFont,
+      description,
+      language,
+      categories,
+      customCategories,
+      warnings,
+      isThumbnailNSFW,
+      monetization,
+      thumbnail,
+      publishedAt: new Date() // <--- EXACT TIME RECORDED
+    };
+
+    // 4. Save to Publish Collection (Upsert: Update if exists, Create if new)
+    const result = await Publish.findOneAndUpdate(
+      { projectId: id }, 
+      publishData,
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    console.log(`🚀 Project Published: ${name} by ${author.username} at ${result.publishedAt}`);
+
+    res.json({ 
+      success: true, 
+      message: "Project published successfully!",
+      publishedAt: result.publishedAt 
+    });
+
+  } catch (err) {
+    console.error("Publish Error:", err);
+    res.status(500).json({ message: "Failed to publish project" });
   }
 });
 

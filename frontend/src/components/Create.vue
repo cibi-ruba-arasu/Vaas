@@ -31,11 +31,9 @@ const handleFileChange = (e) => {
     reader.readAsDataURL(file)
 }
 
-// NEW: Remove Thumbnail Function
+// Remove Thumbnail Function
 const removeThumbnail = () => {
-    form.value.thumbnail = null // This sends 'null' to the backend
-    
-    // Reset file input so user can re-select same file if they want
+    form.value.thumbnail = null
     const fileInput = document.querySelector('.file-input')
     if(fileInput) fileInput.value = ''
 }
@@ -46,7 +44,15 @@ const fetchProjects = async () => {
     const res = await fetch("http://localhost:5000/projects", {
       headers: { Authorization: `Bearer ${token}` }
     })
-    projects.value = await res.json()
+    
+    if (res.ok) {
+        projects.value = await res.json()
+        
+        // ✅ DEBUGGING: Check the first project in the list
+        if (projects.value.length > 0) {
+            console.log("First Project Status:", projects.value[0].name, "Published:", projects.value[0].isPublished);
+        }
+    }
   } catch (e) {
     console.error("Fetch failed", e)
   }
@@ -57,9 +63,7 @@ const openProject = project => {
 }
 
 const handlePublishClick = (project) => {
-    console.log("Attempting to publish project:", project._id);
     if (!canPublish(project)) {
-        console.warn("Publish conditions not met");
         return;
     }
     router.push(`/publish/${project._id}`); 
@@ -88,7 +92,6 @@ const handleSubmit = async () => {
   isProcessing.value = true 
 
   try {
-    // Artificial delay for animation
     await new Promise(r => setTimeout(r, 1000)); 
 
     const res = await fetch(url, {
@@ -138,7 +141,7 @@ const openEditModal = (p) => {
   form.value = { 
       name: p.name, 
       description: p.description,
-      thumbnail: p.thumbnail || null // Ensure explicit null if undefined
+      thumbnail: p.thumbnail || null
   }
   showModal.value = true
 }
@@ -203,9 +206,18 @@ onMounted(() => {
             
             <div class="card-footer">
                 <span class="date">{{ new Date(project.updatedAt).toLocaleDateString() }}</span>
-                <div class="publish-wrapper" @click.stop> <span v-if="!canPublish(project)" class="status-dot error" :title="getPublishError(project)"></span>
-                    <button v-else class="publish-icon-btn" @click.stop="handlePublishClick(project)" title="Publish">
-                        🚀
+                
+                <div class="publish-wrapper" @click.stop> 
+                    <span v-if="!canPublish(project)" class="status-dot error" :title="getPublishError(project)"></span>
+                    
+                    <button 
+                      v-else 
+                      class="publish-btn-large" 
+                      :class="{ 'update-mode': project.isPublished }"
+                      @click.stop="handlePublishClick(project)" 
+                      :title="project.isPublished ? 'Update Published Project' : 'Publish to Feed'"
+                    >
+                      {{ project.isPublished ? 'Update' : 'Publish' }} 🚀
                     </button>
                 </div>
             </div>
@@ -287,7 +299,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* Keep your existing styles (Grid, Card, Mystical Loader, etc.) */
 .create-page { min-height: 100vh; background: #020617; color: #e2e8f0; font-family: 'Inter', sans-serif; position: relative; overflow-x: hidden; }
 
 .header { display: flex; justify-content: space-between; padding: 1.2rem 2.5rem; background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(10px); border-bottom: 1px solid rgba(255, 255, 255, 0.05); position: sticky; top: 0; z-index: 20; }
@@ -322,8 +333,37 @@ onMounted(() => {
 .glow-icon { font-size: 3rem; margin-bottom: 10px; background: linear-gradient(135deg, #3b82f6, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.3)); transition: transform 0.3s; }
 .create-card:hover .glow-icon { transform: scale(1.1) rotate(90deg); }
 
-.publish-icon-btn { background: none; border: none; font-size: 1.2rem; cursor: pointer; transition: transform 0.2s; filter: grayscale(1); opacity: 0.5; }
-.publish-icon-btn:hover { transform: scale(1.2); filter: grayscale(0); opacity: 1; }
+/* UPDATED PUBLISH BUTTON STYLES */
+.publish-btn-large {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  color: white;
+  border: none;
+  padding: 8px 16px; /* Bigger padding */
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.2);
+}
+
+.publish-btn-large:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 15px rgba(59, 130, 246, 0.4);
+}
+
+/* Style change for UPDATE mode (Greenish to distinguish) */
+.publish-btn-large.update-mode {
+  background: linear-gradient(135deg, #10b981, #059669); 
+}
+
+.publish-btn-large.update-mode:hover {
+  box-shadow: 0 6px 15px rgba(16, 185, 129, 0.4);
+}
+
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.5); }
 
 .menu { position: relative; color: #64748b; cursor: pointer; padding: 0 5px; font-size: 1.2rem; transition: color 0.2s; }

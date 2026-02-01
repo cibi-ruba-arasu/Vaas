@@ -10,64 +10,44 @@ const token = sessionStorage.getItem("token");
 const project = ref(null);
 const loading = ref(true);
 const isUploading = ref(false);
+const isPublishing = ref(false);
+const fetchError = ref(null); // Added for error state
 
 const localName = ref("");
+const titleFont = ref("Cinzel"); 
 
-/* --- LANGUAGE DATA (Google Cloud Core 25) --- */
+/* --- UNHEALTHY AMOUNT OF FONTS --- */
+const FONT_OPTIONS = [
+  "Cinzel", "Playfair Display", "Merriweather", "Lora", "Libre Baskerville", "Cormorant Garamond", "EB Garamond",
+  "Inter", "Roboto", "Open Sans", "Lato", "Montserrat", "Poppins", "Raleway", "Oswald", "Quicksand",
+  "Bebas Neue", "Anton", "Abril Fatface", "Righteous", "Orbitron", "Audiowide", "Russo One",
+  "Dancing Script", "Pacifico", "Shadows Into Light", "Indie Flower", "Caveat", "Amatic SC", "Sacramento", "Great Vibes",
+  "Creepster", "Nosifer", "Butcherman", "Eater", "Metal Mania", "Frijole", "Blackletter", 
+  "Bangers", "Comic Neue", "Fredoka One", "Luckiest Guy", "Press Start 2P", "VT323"
+];
+
+/* --- LANGUAGE DATA --- */
 const selectedLanguage = ref("en");
-
 const SUPPORTED_LANGUAGES = [
-  { code: "en", name: "English" },
-  { code: "es", name: "Spanish" },
-  { code: "fr", name: "French" },
-  { code: "de", name: "German" },
-  { code: "zh", name: "Chinese (Simplified)" },
-  { code: "ja", name: "Japanese" },
-  { code: "ko", name: "Korean" },
-  { code: "ru", name: "Russian" },
-  { code: "pt", name: "Portuguese" },
-  { code: "hi", name: "Hindi" },
-  { code: "ar", name: "Arabic" },
-  { code: "bn", name: "Bengali" },
-  { code: "it", name: "Italian" },
-  { code: "nl", name: "Dutch" },
-  { code: "tr", name: "Turkish" },
-  { code: "pl", name: "Polish" },
-  { code: "vi", name: "Vietnamese" },
-  { code: "th", name: "Thai" },
-  { code: "id", name: "Indonesian" },
-  { code: "sv", name: "Swedish" },
-  { code: "fil", name: "Filipino" },
-  { code: "ms", name: "Malay" },
-  { code: "uk", name: "Ukrainian" },
-  { code: "el", name: "Greek" },
+  { code: "en", name: "English" }, { code: "es", name: "Spanish" }, { code: "fr", name: "French" },
+  { code: "de", name: "German" }, { code: "zh", name: "Chinese (Simplified)" }, { code: "ja", name: "Japanese" },
+  { code: "ko", name: "Korean" }, { code: "ru", name: "Russian" }, { code: "pt", name: "Portuguese" },
+  { code: "hi", name: "Hindi" }, { code: "ar", name: "Arabic" }, { code: "bn", name: "Bengali" },
+  { code: "it", name: "Italian" }, { code: "nl", name: "Dutch" }, { code: "tr", name: "Turkish" },
+  { code: "pl", name: "Polish" }, { code: "vi", name: "Vietnamese" }, { code: "th", name: "Thai" },
+  { code: "id", name: "Indonesian" }, { code: "sv", name: "Swedish" }, { code: "fil", name: "Filipino" },
+  { code: "ms", name: "Malay" }, { code: "uk", name: "Ukrainian" }, { code: "el", name: "Greek" },
   { code: "he", name: "Hebrew" }
 ];
 
 /* --- CATEGORY DATA --- */
 const selectedCategories = ref([]);
-
 const CATEGORY_GROUPS = [
-  {
-    label: "Core Genres",
-    items: ["Action", "Adventure", "RPG", "Strategy", "Simulation", "Horror", "Romance", "Mystery", "Fantasy", "Sci-Fi", "Slice of Life", "Comedy", "Drama", "Thriller", "Sports", "Music", "Educational", "Puzzle", "Idle"]
-  },
-  {
-    label: "Sub-Genres & Settings",
-    items: ["Cyberpunk", "Steampunk", "Dieselpunk", "Solarpunk", "Dystopian", "Post-Apocalyptic", "Space Opera", "Mecha", "Noir", "Neo-Noir", "Western", "Historical", "Alternate History", "Urban Fantasy", "Dark Fantasy", "High Fantasy", "Isekai", "Supernatural", "Paranormal", "Magic Realism", "Mythology", "Folklore", "Superhero", "Martial Arts", "Military", "War", "Espionage"]
-  },
-  {
-    label: "Narrative Styles",
-    items: ["Visual Novel", "Interactive Fiction", "Kinetic Novel", "Dating Sim", "Otome", "Galge", "Text-Based", "Point & Click", "Choice Matters", "Multiple Endings", "Episodic"]
-  },
-  {
-    label: "Themes & Moods",
-    items: ["Psychological", "Philosophical", "Surreal", "Abstract", "Cozy", "Wholesome", "Relaxing", "Atmospheric", "Tragedy", "Satire", "Parody", "Memes", "Dark Humor", "Coming of Age", "School Life", "Workplace", "Medical", "Legal", "Crime", "Detective", "Survival", "Battle Royale", "Time Travel"]
-  },
-  {
-    label: "Mature & Specific",
-    items: ["18+ (NSFW)", "Violence", "Gore", "Body Horror", "LGBTQ+", "BL (Boys' Love)", "GL (Girls' Love)", "Harem", "Vampire", "Werewolf", "Zombies", "Lovecraftian", "Gothic"]
-  }
+  { label: "Core Genres", items: ["Action", "Adventure", "RPG", "Strategy", "Simulation", "Horror", "Romance", "Mystery", "Fantasy", "Sci-Fi", "Slice of Life", "Comedy", "Drama", "Thriller", "Sports", "Music", "Educational", "Puzzle", "Idle"] },
+  { label: "Sub-Genres & Settings", items: ["Cyberpunk", "Steampunk", "Dieselpunk", "Solarpunk", "Dystopian", "Post-Apocalyptic", "Space Opera", "Mecha", "Noir", "Neo-Noir", "Western", "Historical", "Alternate History", "Urban Fantasy", "Dark Fantasy", "High Fantasy", "Isekai", "Supernatural", "Paranormal", "Magic Realism", "Mythology", "Folklore", "Superhero", "Martial Arts", "Military", "War", "Espionage"] },
+  { label: "Narrative Styles", items: ["Visual Novel", "Interactive Fiction", "Kinetic Novel", "Dating Sim", "Otome", "Galge", "Text-Based", "Point & Click", "Choice Matters", "Multiple Endings", "Episodic"] },
+  { label: "Themes & Moods", items: ["Psychological", "Philosophical", "Surreal", "Abstract", "Cozy", "Wholesome", "Relaxing", "Atmospheric", "Tragedy", "Satire", "Parody", "Memes", "Dark Humor", "Coming of Age", "School Life", "Workplace", "Medical", "Legal", "Crime", "Detective", "Survival", "Battle Royale", "Time Travel"] },
+  { label: "Mature & Specific", items: ["18+ (NSFW)", "Violence", "Gore", "Body Horror", "LGBTQ+", "BL (Boys' Love)", "GL (Girls' Love)", "Harem", "Vampire", "Werewolf", "Zombies", "Lovecraftian", "Gothic"] }
 ];
 
 const toggleCategory = (cat) => {
@@ -127,6 +107,11 @@ const setSafeContent = () => {
   }
 };
 
+/* --- MONETIZATION STATE --- */
+const isPaid = ref(false);
+const hasDemo = ref(false);
+const demoNodeLimit = ref(10);
+
 /* --- ADVANCED DESCRIPTION STATE --- */
 const containerColors = ref(["#1e293b", "#0f172a"]);
 const containerAngle = ref(135);
@@ -144,6 +129,40 @@ const containerStyle = computed(() => ({
   background: getGradient(containerColors.value, containerAngle.value)
 }));
 
+/* --- PUBLISH STATUS TRACKER --- */
+const Publish_Status = computed(() => {
+  return {
+    id: projectId,
+    thumbnail: project.value?.thumbnail || null,
+    name: localName.value,
+    titleFont: titleFont.value,
+    description: blocks.value,
+    language: selectedLanguage.value,
+    categories: selectedCategories.value,
+    customCategories: customCategories.value,
+    warnings: selectedWarnings.value,
+    isThumbnailNSFW: isThumbnailNSFW.value,
+    monetization: {
+      isPaid: isPaid.value,
+      hasDemo: hasDemo.value,
+      demoNodeLimit: demoNodeLimit.value
+    }
+  }
+});
+
+watch(Publish_Status, (newStatus) => {
+  console.log("Publish_Status Update:", newStatus);
+}, { deep: true });
+
+/* --- FORM VALIDATION --- */
+const isFormValid = computed(() => {
+  if (!localName.value || localName.value.trim() === "") return false;
+  if (selectedCategories.value.length === 0) return false;
+  if (!isSafeContent.value && selectedWarnings.value.length === 0) return false;
+  if (blocks.value.length === 0) return false;
+  return true;
+});
+
 /* --- BLOCK ACTIONS --- */
 const addBlock = async () => {
   const id = Date.now();
@@ -153,6 +172,7 @@ const addBlock = async () => {
     content: "",
     isBold: false,
     isItalic: false,
+    fontFamily: 'Inter',
     align: 'center',
     fontSize: 18, 
     textColors: ['#ffffff'],
@@ -176,13 +196,8 @@ const removeBlock = (index) => {
 
 const checkContent = (block, event) => {
   if (event && event.target) autoResize(event.target);
-
   const gifRegex = /\.(gif|webp|png|jpg|jpeg)($|\?)/i;
-  if (gifRegex.test(block.content)) {
-    block.type = 'gif';
-  } else {
-    block.type = 'text';
-  }
+  block.type = gifRegex.test(block.content) ? 'gif' : 'text';
 };
 
 const autoResize = (el) => {
@@ -212,21 +227,19 @@ const fetchProjectDetails = async () => {
       project.value = await res.json();
       localName.value = project.value.name;
       
-      if (project.value.categories && Array.isArray(project.value.categories)) {
-        selectedCategories.value = project.value.categories;
-      }
-      if (project.value.customCategories && Array.isArray(project.value.customCategories)) {
-        customCategories.value = project.value.customCategories;
-      }
-      if (project.value.warnings && Array.isArray(project.value.warnings)) {
-        selectedWarnings.value = project.value.warnings;
-      }
-      if (selectedWarnings.value.length === 0 && project.value.isSafeContent) {
-        isSafeContent.value = true;
-      }
-      // Load Language & Thumbnail NSFW
+      if (project.value.titleFont) titleFont.value = project.value.titleFont;
+      if (project.value.categories) selectedCategories.value = project.value.categories;
+      if (project.value.customCategories) customCategories.value = project.value.customCategories;
+      if (project.value.warnings) selectedWarnings.value = project.value.warnings;
+      if (selectedWarnings.value.length === 0 && project.value.isSafeContent) isSafeContent.value = true;
       if (project.value.language) selectedLanguage.value = project.value.language;
       if (project.value.isThumbnailNSFW) isThumbnailNSFW.value = project.value.isThumbnailNSFW;
+
+      if (project.value.monetization) {
+        isPaid.value = project.value.monetization.isPaid || false;
+        hasDemo.value = project.value.monetization.hasDemo || false;
+        demoNodeLimit.value = project.value.monetization.demoNodeLimit || 10;
+      }
 
       try {
         const parsed = JSON.parse(project.value.description);
@@ -236,17 +249,18 @@ const fetchProjectDetails = async () => {
         if (project.value.description) {
            blocks.value = [{ 
              id: 1, type: 'text', content: project.value.description, fontSize: 18,
-             textColors: ['#ffffff'], bgColors: ['transparent'], align: 'left' 
+             fontFamily: 'Inter', textColors: ['#ffffff'], bgColors: ['transparent'], align: 'left' 
            }];
         }
       }
-      nextTick(() => {
-        for (const id in blockRefs.value) {
-          autoResize(blockRefs.value[id]);
-        }
-      });
+      nextTick(() => { for (const id in blockRefs.value) autoResize(blockRefs.value[id]); });
+    } else {
+      fetchError.value = "Failed to load project data. You may need to log in again.";
     }
-  } catch (e) { console.error(e); } finally { loading.value = false; }
+  } catch (e) { 
+    console.error(e); 
+    fetchError.value = "Network error while loading project.";
+  } finally { loading.value = false; }
 };
 
 const handleFileChange = async (e) => {
@@ -264,22 +278,59 @@ const updateThumbnail = async (base64) => {
 };
 
 const publishProject = async () => {
-  console.log("Publishing...");
   await saveProject(null);
+
+  if (isPaid.value) {
+    alert("Paid publishing is coming soon! Only Free projects can be published right now.");
+    return;
+  }
+
+  isPublishing.value = true;
+  try {
+    const res = await fetch("http://localhost:5000/publish", {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json", 
+        Authorization: `Bearer ${token}` 
+      },
+      body: JSON.stringify(Publish_Status.value)
+    });
+
+    const data = await res.json();
+    
+    if (res.ok) {
+      alert("🎉 Successfully Published to the Feed!");
+      router.push('/create');
+    } else {
+      alert("Publishing Failed: " + data.message);
+    }
+  } catch (e) {
+    console.error("Publish error", e);
+    alert("Network error occurred.");
+  } finally {
+    isPublishing.value = false;
+  }
 };
 
 const saveProject = async (newThumbnail = null) => {
   try {
     const payload = {
       name: localName.value,
+      titleFont: titleFont.value,
       description: JSON.stringify(blocks.value), 
       categories: selectedCategories.value,
       customCategories: customCategories.value,
       warnings: selectedWarnings.value,
       isSafeContent: isSafeContent.value,
-      language: selectedLanguage.value, // Added
-      isThumbnailNSFW: isThumbnailNSFW.value, // Added
-      thumbnail: newThumbnail || project.value.thumbnail
+      language: selectedLanguage.value, 
+      isThumbnailNSFW: isThumbnailNSFW.value,
+      monetization: { 
+        isPaid: isPaid.value,
+        hasDemo: hasDemo.value,
+        demoNodeLimit: demoNodeLimit.value
+      },
+      thumbnail: newThumbnail || project.value.thumbnail,
+      titleFont: titleFont.value // Added to ensure font is saved
     };
     const res = await fetch(`http://localhost:5000/projects/${projectId}`, {
       method: "PUT",
@@ -304,8 +355,19 @@ const activeBlock = computed(() => {
 </script>
 
 <template>
-  <div class="publish-page" v-if="!loading && project">
-    <div class="publish-container">
+  <div class="publish-page">
+    <div v-if="loading" class="loading-state">
+      <div class="spinner"></div>
+      <p>Summoning Project Details...</p>
+    </div>
+
+    <div v-else-if="fetchError" class="error-state">
+      <h3>⚠️ Error Loading Project</h3>
+      <p>{{ fetchError }}</p>
+      <button @click="router.push('/create')" class="back-btn">Return to Tapestry</button>
+    </div>
+
+    <div class="publish-container" v-else-if="project">
       
       <div class="left-panel">
         <div class="thumbnail-editor" :style="{ backgroundImage: project.thumbnail ? `url(${project.thumbnail})` : 'linear-gradient(to bottom right, #000, #1e3a8a)' }">
@@ -316,7 +378,11 @@ const activeBlock = computed(() => {
           
           <div v-if="isThumbnailNSFW" class="nsfw-overlay-badge">NSFW</div>
         </div>
-        <button class="publish-btn" @click="publishProject">🚀 Publish to Feed</button>
+        
+        <button class="publish-btn" @click="publishProject" :disabled="isPublishing || !isFormValid">
+          <span v-if="!isPublishing">{{ isFormValid ? '🚀 Publish to Feed' : '📝 Complete Details to Publish' }}</span>
+          <span v-else>✨ Weaving...</span>
+        </button>
 
         <div class="dashboard-box">
           <h4 class="dash-title">Publication Summary</h4>
@@ -324,6 +390,17 @@ const activeBlock = computed(() => {
           <div class="dash-meta-row">
             <span class="meta-label">Language:</span>
             <span class="meta-val">{{ SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name || selectedLanguage }}</span>
+          </div>
+
+          <div class="dash-meta-row">
+            <span class="meta-label">Model:</span>
+            <span class="meta-val" :class="{ 'paid-text': isPaid, 'free-text': !isPaid }">
+              {{ isPaid ? 'Premium / Paid' : 'Free to Play' }}
+            </span>
+          </div>
+          <div v-if="isPaid && hasDemo" class="dash-meta-row">
+            <span class="meta-label">Demo:</span>
+            <span class="meta-val">Enabled ({{ demoNodeLimit }} Nodes)</span>
           </div>
 
           <div v-if="selectedCategories.length > 0">
@@ -361,8 +438,20 @@ const activeBlock = computed(() => {
       <div class="right-panel">
         
         <div class="header-section">
-          <label class="input-label">PROJECT TITLE</label>
-          <input v-model="localName" class="title-input" placeholder="Name your world..." />
+          <label class="input-label">PROJECT TITLE & FONT</label>
+          <div class="title-row">
+             <input 
+               v-model="localName" 
+               class="title-input" 
+               placeholder="Name your world..." 
+               :style="{ fontFamily: titleFont }" 
+             />
+             <div class="font-select-wrap">
+               <select v-model="titleFont" class="font-select">
+                 <option v-for="f in FONT_OPTIONS" :key="f" :value="f" :style="{ fontFamily: f }">{{ f }}</option>
+               </select>
+             </div>
+          </div>
         </div>
 
         <div class="section-container">
@@ -395,7 +484,18 @@ const activeBlock = computed(() => {
                   <input type="range" v-model="activeBlock.textAngle" min="0" max="360" title="Angle" class="mini-slider" />
                 </div>
               </div>
+              
               <div class="vertical-sep"></div>
+
+              <div class="toolbar-section">
+                <label>Font Style</label>
+                <select v-model="activeBlock.fontFamily" class="font-select mini">
+                   <option v-for="f in FONT_OPTIONS" :key="f" :value="f" :style="{ fontFamily: f }">{{ f }}</option>
+                </select>
+              </div>
+
+              <div class="vertical-sep"></div>
+
               <div class="toolbar-section">
                 <label>Block Background</label>
                 <div class="gradient-controls small">
@@ -453,6 +553,7 @@ const activeBlock = computed(() => {
                   class="block-input"
                   rows="1" 
                   :style="{
+                    fontFamily: block.fontFamily || 'Inter',
                     fontSize: (block.fontSize || 18) + 'px',
                     fontWeight: block.isBold ? 'bold' : 'normal',
                     fontStyle: block.isItalic ? 'italic' : 'normal',
@@ -562,15 +663,66 @@ const activeBlock = computed(() => {
            </div>
         </div>
 
+        <div class="section-container">
+          <label class="input-label">MONETIZATION</label>
+          <div class="categories-wrapper" style="border-color: rgba(59, 130, 246, 0.3);">
+            
+            <div class="monetization-row">
+              <button 
+                class="tag-chip" 
+                :class="{ selected: !isPaid }" 
+                @click="isPaid = false"
+              >
+                🎁 Free to Play
+              </button>
+              <button 
+                class="tag-chip" 
+                :class="{ selected: isPaid }" 
+                @click="isPaid = true"
+              >
+                💎 Paid / Premium
+              </button>
+            </div>
+
+            <div v-if="isPaid" class="demo-config-section">
+              <div class="nsfw-toggle-row no-border">
+                <div class="nsfw-info">
+                   <span class="nsfw-label">Enable Free Demo?</span>
+                   <p class="nsfw-desc">Allow users to play a limited portion of the project.</p>
+                </div>
+                <label class="toggle-switch">
+                   <input type="checkbox" v-model="hasDemo" />
+                   <span class="slider"></span>
+                </label>
+              </div>
+
+              <div v-if="hasDemo" class="demo-limit-row">
+                <label class="input-label mb-0">Demo Limit (Nodes)</label>
+                <div class="number-input-wrap">
+                  <input type="number" v-model="demoNodeLimit" class="demo-num-input" min="1" />
+                  <span class="limit-desc">Users can play up to {{ demoNodeLimit }} nodes.</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* GOOGLE FONTS IMPORT - THE UNHEALTHY LIST */
+@import url('https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Amatic+SC&family=Anton&family=Audiowide&family=Bangers&family=Bebas+Neue&family=Blackletter&family=Butcherman&family=Caveat&family=Cinzel:wght@400;700&family=Comic+Neue:wght@400;700&family=Cormorant+Garamond:wght@400;700&family=Creepster&family=Dancing+Script:wght@400;700&family=EB+Garamond&family=Eater&family=Fredoka+One&family=Frijole&family=Great+Vibes&family=Indie+Flower&family=Inter:wght@400;700&family=Lato:wght@400;700&family=Libre+Baskerville&family=Lora&family=Luckiest+Guy&family=Merriweather&family=Metal+Mania&family=Montserrat:wght@400;700&family=Nosifer&family=Open+Sans:wght@400;700&family=Orbitron&family=Oswald&family=Pacifico&family=Playfair+Display:wght@400;700&family=Poppins:wght@400;700&family=Press+Start+2P&family=Quicksand:wght@400;700&family=Raleway:wght@400;700&family=Righteous&family=Roboto:wght@400;700&family=Ruslan+Display&family=Russo+One&family=Sacramento&family=Shadows+Into+Light&family=VT323&display=swap');
+
 /* MAIN LAYOUT */
 .publish-page { min-height: 100vh; background: #020617; color: white; padding: 2rem; display: flex; justify-content: center; font-family: 'Inter', sans-serif; }
 .publish-container { display: flex; gap: 3rem; max-width: 1200px; width: 100%; align-items: flex-start; }
+
+.loading-state, .error-state { text-align: center; margin-top: 100px; color: #94a3b8; }
+.back-btn { margin-top: 20px; padding: 10px 20px; background: #3b82f6; border: none; color: white; border-radius: 8px; cursor: pointer; }
 
 .left-panel { flex: 0.8; position: sticky; top: 2rem; display: flex; flex-direction: column; gap: 1.5rem; }
 .thumbnail-editor { width: 100%; aspect-ratio: 16/9; border-radius: 20px; background-size: cover; background-position: center; border: 1px solid rgba(255,255,255,0.1); position: relative; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
@@ -587,13 +739,22 @@ const activeBlock = computed(() => {
 /* LABELS & HEADER */
 .input-label { display: block; font-size: 0.8rem; font-weight: 700; color: #94a3b8; letter-spacing: 1px; margin-bottom: 0.8rem; text-transform: uppercase; }
 .header-section { display: flex; flex-direction: column; }
-.title-input { background: transparent; border: none; border-bottom: 2px solid #334155; color: white; font-size: 2.5rem; font-weight: 800; width: 100%; padding: 5px 0; transition: border-color 0.3s; }
+
+/* TITLE & FONT ROW */
+.title-row { display: flex; gap: 15px; align-items: flex-end; }
+.title-input { flex: 1; background: transparent; border: none; border-bottom: 2px solid #334155; color: white; font-size: 2.5rem; font-weight: 800; padding: 5px 0; transition: border-color 0.3s; width: 100%; }
 .title-input:focus { border-color: #3b82f6; outline: none; }
+
+.font-select-wrap { width: 140px; }
+.font-select { width: 100%; background: #0f172a; border: 1px solid #334155; color: white; padding: 8px; border-radius: 8px; outline: none; cursor: pointer; font-size: 0.9rem; }
+.font-select.mini { width: 120px; padding: 5px; font-size: 0.8rem; }
+.font-select option { background: #1e293b; color: white; padding: 5px; }
 
 .publish-btn { 
   width: 100%; background: linear-gradient(135deg, #3b82f6, #a855f7); border: none; color: white; padding: 16px; border-radius: 12px; font-weight: 700; font-size: 1.1rem; cursor: pointer; box-shadow: 0 10px 25px rgba(59, 130, 246, 0.4); transition: all 0.2s; display: flex; justify-content: center; align-items: center; gap: 10px;
 }
 .publish-btn:hover { transform: translateY(-3px); box-shadow: 0 15px 35px rgba(59, 130, 246, 0.6); }
+.publish-btn:disabled { opacity: 0.7; cursor: not-allowed; transform: none; filter: grayscale(0.8); }
 
 /* DASHBOARD SUMMARY */
 .dashboard-box { background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
@@ -603,6 +764,8 @@ const activeBlock = computed(() => {
 .dash-meta-row { display: flex; justify-content: space-between; font-size: 0.85rem; color: #cbd5e1; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 8px; }
 .meta-label { color: #94a3b8; }
 .meta-val { font-weight: 600; color: #fff; }
+.paid-text { color: #3b82f6; } /* Blue for Paid */
+.free-text { color: #86efac; } /* Green for Free */
 
 .mini-tag { font-size: 0.75rem; padding: 4px 10px; border-radius: 12px; font-weight: 600; }
 .mini-tag.blue { background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3); }
@@ -616,7 +779,7 @@ const activeBlock = computed(() => {
 .lang-select { width: 100%; background: transparent; border: none; color: white; font-size: 1rem; outline: none; padding: 5px; cursor: pointer; }
 .lang-select option { background: #1e293b; color: white; }
 
-/* DESCRIPTION EDITOR (Same as before) */
+/* DESCRIPTION EDITOR */
 .section-container { display: flex; flex-direction: column; }
 .desc-box-container { border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; background: #0f172a; display: flex; flex-direction: column; }
 .desc-header { background: #1e293b; padding: 12px 20px; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
@@ -687,10 +850,20 @@ input[type="range"] { width: 100%; height: 4px; background: rgba(255,255,255,0.2
 .safe-mode:hover { background: rgba(34, 197, 94, 0.1); color: white; }
 .safe-mode.selected { background: #22c55e; color: black; box-shadow: 0 4px 15px rgba(34, 197, 94, 0.4); }
 
-/* NSFW TOGGLE ROW */
+/* NSFW TOGGLE ROW (Shared Style for Monetization too) */
 .nsfw-toggle-row { display: flex; justify-content: space-between; align-items: center; background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2); padding: 20px; border-radius: 12px; }
+.nsfw-toggle-row.no-border { border: none; background: transparent; padding: 0; margin-bottom: 20px; } /* For demo toggle */
 .nsfw-label { font-weight: 700; color: #fca5a5; font-size: 1rem; }
 .nsfw-desc { margin: 5px 0 0 0; color: #94a3b8; font-size: 0.85rem; }
+
+/* MONETIZATION STYLES */
+.monetization-row { display: flex; gap: 10px; margin-bottom: 20px; }
+.demo-config-section { background: rgba(0, 0, 0, 0.2); padding: 20px; border-radius: 12px; border: 1px dashed rgba(255, 255, 255, 0.1); }
+.demo-limit-row { display: flex; flex-direction: column; gap: 8px; }
+.number-input-wrap { display: flex; align-items: center; gap: 15px; }
+.demo-num-input { width: 80px; padding: 8px; border-radius: 8px; background: #0f172a; border: 1px solid #334155; color: white; outline: none; }
+.limit-desc { font-size: 0.85rem; color: #64748b; }
+.mb-0 { margin-bottom: 0; }
 
 /* TOGGLE SWITCH */
 .toggle-switch { position: relative; display: inline-block; width: 50px; height: 26px; }
