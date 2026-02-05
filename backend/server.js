@@ -461,62 +461,127 @@ app.post("/user/theme", authMiddleware, async (req, res) => {
 
 app.get("/user/profile", authMiddleware, async (req, res) => {
   try {
-    const user = await User.findById(req.user.mongoId).select(
-      "username dob country state city"
-    )
+    const user = await User.findById(req.user.mongoId).select("-password");
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    if (!user) {
-      return res.status(404).json({ message: "User not found" })
-    }
+    // Count actual published projects for "Weaves/Posts" stat
+    const publishedCount = await Publish.countDocuments({ authorId: req.user.mongoId });
 
     res.json({
       username: user.username,
-      dob: user.dob,
-      country: user.country,
-      state: user.state,
-      city: user.city
-    })
+      userid: user.userid,
+      description: user.description,
+      profilePic: user.profilePic,
+      verified: user.verified,
+      stats: {
+        followers: user.followersCount || 0,
+        following: user.followingCount || 0, // ✅ Added Following
+        rating: user.rating || 5.0,
+        weaves: publishedCount // ✅ Synced with actual Publishes
+      }
+    });
   } catch (err) {
-    console.error(err)
-    res.status(500).json({ message: "Server error" })
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
   }
-})
+});
+
+app.get("/user/publishes", authMiddleware, async (req, res) => {
+  try {
+    const publishes = await Publish.find({ authorId: req.user.mongoId })
+      .sort({ publishedAt: -1 }); // Newest first
+    res.json(publishes);
+  } catch (err) {
+    console.error("Fetch Publishes Error:", err);
+    res.status(500).json({ message: "Error fetching published projects" });
+  }
+});
+
+/* ===== GET SINGLE POST BY ID (For Post.vue) ===== */
+app.get("/posts/:id", authMiddleware, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    // 1. Find the published document
+    const post = await Publish.findById(id);
+    
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    // 2. Increment Views (Simple counter)
+    // Using findOneAndUpdate to be atomic and avoid race conditions
+    await Publish.findByIdAndUpdate(id, { $inc: { views: 1 } });
+
+    // 3. Return the post data
+    res.json(post);
+
+  } catch (err) {
+    console.error("Error fetching post:", err);
+    res.status(500).json({ message: "Server error fetching post" });
+  }
+});
+
+/* ===== UPDATE USER PROFILE ===== */
+app.put("/user/profile", authMiddleware, async (req, res) => {
+  const { mongoId } = req.user;
+  // Add pfp_status to the destructuring
+  const { username, description, profilePic, pfp_status } = req.body; 
+
+  try {
+    const updatedUser = await User.findByIdAndUpdate(
+      mongoId,
+      { 
+        username, 
+        description, 
+        profilePic, // The rendered image
+        pfp_status  // ✅ The raw editor data
+      },
+      { new: true }
+    ).select("-password");
+
+    res.json(updatedUser);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Update failed" });
+  }
+});
 
 app.get("/projects", authMiddleware, async (req, res) => {
-  const { mongoId } = req.user
+  const { mongoId } = req.user;
 
-  // 1. Fetch User's Project Bucket
-  const bucket = await Project.findOne({ userId: mongoId })
-  if (!bucket) return res.json([])
+  // 1. Fetch User's Project Bucket using .lean() for Plain Objects
+  const bucket = await Project.findOne({ userId: mongoId }).lean();
+  
+  if (!bucket) return res.json([]);
 
-  // 2. Convert to Plain Objects
-  const projectsRaw = bucket.projects.toObject();
+  const projectsRaw = bucket.projects; // Now this is already a plain array
 
-  // 3. Attach Stats & Check Published Status
+  // 2. Attach Stats & Check Published Status
   const projectsWithData = await Promise.all(projectsRaw.map(async (p) => {
-      // ✅ CHECK PUBLISH DB: Check if this specific project ID exists in Publish collection
+      // Check Publish DB
       const isPublished = await Publish.exists({ projectId: p._id });
 
       // Check Canvas Stats
       const state = await CanvasState.findOne({ projectId: p._id });
       
-      let stats = { disconnected: 0, hasGeneralNode: false, totalNodes: 0 };
+      let stats = { disconnected: 0, orphans: 0, hasGeneralNode: false, totalNodes: 0 };
       if (state) {
           stats.disconnected = state.disconnectedOptionsCount || 0;
+          stats.orphans = state.orphanedNodesCount || 0;
           stats.hasGeneralNode = state.nodes ? state.nodes.some(n => n.node_type === 'General') : false;
       }
 
       return {
-          ...p, // Name, description, thumbnail from Project DB
+          ...p, // Properly spreads name, description, thumbnail now
           stats,
-          isPublished: !!isPublished // ✅ SEND THIS TO FRONTEND (True/False)
+          isPublished: !!isPublished
       };
   }));
 
-  // Sort by newest updated
-  const sorted = projectsWithData.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
-  res.json(sorted)
-})
+  const sorted = projectsWithData.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  res.json(sorted);
+});
 
 app.post("/projects", authMiddleware, async (req, res) => {
   const { mongoId } = req.user
@@ -825,9 +890,52 @@ app.get("/users/search", authMiddleware, async (req, res) => {
   }
 });
 
+/* ===== GET PUBLIC USER PROFILE (By Custom UserID) ===== */
+app.get("/users/:userid", authMiddleware, async (req, res) => {
+  const { userid } = req.params;
+
+  try {
+    // 1. Find User by their custom 'userid' (not _id)
+    // Exclude sensitive info like password and email
+    const user = await User.findOne({ userid }).select("-password -email");
+
+    if (!user) {
+      return res.status(404).json({ message: "Weaver not found in this timeline." });
+    }
+
+    // 2. Find all Publishes by this user's Mongo ID
+    const publishes = await Publish.find({ authorId: user._id }).sort({ publishedAt: -1 });
+
+    // 3. Return combined data
+    res.json({
+      user: {
+        _id: user._id,
+        username: user.username,
+        userid: user.userid,
+        description: user.description, // Rich text object
+        profilePic: user.profilePic,
+        country: user.country,
+        verified: user.verified, // 'normal', 'verified', etc.
+        stats: {
+          followers: user.followersCount || 0,
+          following: user.followingCount || 0,
+          rating: user.rating || 0.0,
+          weaves: publishes.length // Dynamic count
+        }
+      },
+      projects: publishes
+    });
+
+  } catch (err) {
+    console.error("Fetch User Error:", err);
+    res.status(500).json({ message: "Server error searching for weaver." });
+  }
+});
+
+/* ===== PUBLISH PROJECT (Creating the Snapshot) ===== */
 app.post("/publish", authMiddleware, async (req, res) => {
   const { 
-    id, // Project ID
+    id, // This is the Project ID
     name, 
     titleFont, 
     description, 
@@ -843,43 +951,54 @@ app.post("/publish", authMiddleware, async (req, res) => {
   const { mongoId } = req.user;
 
   try {
-    // 1. Validation: Ensure it is a Free project
     if (monetization && monetization.isPaid) {
-      return res.status(400).json({ 
-        message: "This route currently only supports Free projects." 
-      });
+      return res.status(400).json({ message: "This route currently only supports Free projects." });
     }
 
-    // 2. Get Author Details (Snapshot the username)
+    // 1. Fetch Author
     const author = await User.findById(mongoId).select("username");
     if (!author) return res.status(404).json({ message: "Author not found" });
 
-    // 3. Prepare Data
+    // 2. FETCH THE LIVE CANVAS STATE (The Snapshot)
+    // We use .lean() to get a plain JavaScript object we can modify/store easily
+    const liveCanvasState = await CanvasState.findOne({ projectId: id }).lean();
+
+    if (!liveCanvasState) {
+      return res.status(400).json({ message: "Cannot publish: No content found in the editor." });
+    }
+
+    // Optional: Clean up the snapshot (remove Mongo specific IDs from the copy if needed)
+    delete liveCanvasState._id;
+    delete liveCanvasState.__v;
+    // We keep projectId inside the snapshot just in case, but it's nested now.
+
+    // 3. Prepare Publish Data
     const publishData = {
-      projectId: id,
+      projectId: id, // Keeps the link so "Update" knows where to look
       authorId: mongoId,
       authorName: author.username,
-      name,
-      titleFont,
-      description,
-      language,
-      categories,
-      customCategories,
-      warnings,
-      isThumbnailNSFW,
-      monetization,
+      name, 
+      titleFont, 
+      description, 
+      language, 
+      categories, 
+      customCategories, 
+      warnings, 
+      isThumbnailNSFW, 
+      monetization, 
       thumbnail,
-      publishedAt: new Date() // <--- EXACT TIME RECORDED
+      canvasState: liveCanvasState, // ✅ SAVING THE SNAPSHOT HERE
+      publishedAt: new Date()
     };
 
-    // 4. Save to Publish Collection (Upsert: Update if exists, Create if new)
+    // 4. Upsert (Insert or Update) into Publish Collection
     const result = await Publish.findOneAndUpdate(
       { projectId: id }, 
       publishData,
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
 
-    console.log(`🚀 Project Published: ${name} by ${author.username} at ${result.publishedAt}`);
+    console.log(`🚀 Snapshot Created: ${name} by ${author.username}`);
 
     res.json({ 
       success: true, 
@@ -890,6 +1009,101 @@ app.post("/publish", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("Publish Error:", err);
     res.status(500).json({ message: "Failed to publish project" });
+  }
+});
+
+app.get("/publish/:projectId", authMiddleware, async (req, res) => {
+  const { projectId } = req.params;
+  try {
+    const publishedProject = await Publish.findOne({ projectId });
+    if (!publishedProject) return res.status(404).json({ message: "Project not published yet" });
+    res.json(publishedProject);
+  } catch (err) {
+    res.status(500).json({ message: "Error fetching published data" });
+  }
+});
+
+app.get("/posts/:id", authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { mongoId } = req.user; 
+
+  try {
+    const post = await Publish.findById(id);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    // --- ANALYTICS LOGIC ---
+    let incUpdate = {};
+    let arrayUpdate = {};
+
+    const isAuthor = post.authorId.toString() === mongoId;
+
+    if (!isAuthor) {
+      incUpdate.visits = 1; // Always increment visits
+      
+      const hasViewed = post.viewedBy && post.viewedBy.includes(mongoId);
+      if (!hasViewed) {
+        incUpdate.views = 1; 
+        arrayUpdate.viewedBy = mongoId; 
+      }
+    }
+
+    if (Object.keys(incUpdate).length > 0 || arrayUpdate.viewedBy) {
+      const updateQuery = { $inc: incUpdate };
+      if (arrayUpdate.viewedBy) updateQuery.$push = { viewedBy: arrayUpdate.viewedBy };
+      await Publish.findByIdAndUpdate(id, updateQuery);
+      
+      // Update local object for response
+      if (incUpdate.visits) post.visits = (post.visits || 0) + 1;
+      if (incUpdate.views) post.views = (post.views || 0) + 1;
+    }
+
+    // ✅ SEND NESTED STRUCTURE TO MATCH FRONTEND
+    res.json({
+        post,
+        stats: {
+            views: post.views,
+            visits: post.visits,
+            plays: post.plays
+        }
+    });
+
+  } catch (err) {
+    console.error("Error fetching post:", err);
+    res.status(500).json({ message: "Server error fetching post" });
+  }
+});
+
+app.post("/posts/:id/play", authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { mongoId } = req.user;
+
+  try {
+    const post = await Publish.findById(id);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    const isAuthor = post.authorId.toString() === mongoId;
+
+    // Do not count author plays
+    if (isAuthor) {
+        return res.json({ success: false, message: "Author play not counted" });
+    }
+
+    // Check if user already played
+    const hasPlayed = post.playedBy && post.playedBy.includes(mongoId);
+
+    if (!hasPlayed) {
+        await Publish.findByIdAndUpdate(id, {
+            $inc: { plays: 1 },
+            $push: { playedBy: mongoId }
+        });
+        return res.json({ success: true, newPlay: true });
+    }
+
+    res.json({ success: true, newPlay: false });
+
+  } catch (err) {
+    console.error("Play tracking error:", err);
+    res.status(500).json({ message: "Error tracking play" });
   }
 });
 

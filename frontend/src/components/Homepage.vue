@@ -219,9 +219,11 @@ const saveColor = async () => {
         <div class="sidebar-content">
           <h3>The Loom</h3>
           <ul>
-            <li @click="router.push('/dashboard')">Dashboard</li>
-            <li @click="router.push('/threads')">My Threads</li>
-            <li @click="router.push('/map')">Cosmic Map</li>
+            <li @click="router.push('/recent')">Recent</li>
+            <li @click="router.push('/trending')">Trending</li>
+            <li @click="router.push('/explore')">Explore</li>
+            <li @click="router.push('/popular')">Popular</li>
+            <li @click="router.push('/verified')">Verified weavers</li>
             <li class="logout" @click="router.push('/login')">Disconnect</li>
           </ul>
         </div>

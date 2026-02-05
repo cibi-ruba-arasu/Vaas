@@ -11,6 +11,9 @@ import UserProfile from "@/components/UserProfile.vue"
 import Create from "@/components/Create.vue"
 import Canvas from "@/components/Canvas.vue"
 import Publish from "@/components/Publish.vue"
+import Update from '../components/Update.vue'
+import Post from '@/components/Post.vue';
+import User from '@/components/User.vue'
 
 const routes = [
   {
@@ -74,6 +77,24 @@ const routes = [
     name: 'Publish',
     component: Publish,
     meta: { requiresAuth: true }
+  },
+  {
+    path: '/update/:id',
+    name: 'Update',
+    component: Update,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: "/post/:id",
+    name: "Post",
+    component: Post,
+    meta: { requiresAuth: true } // Or false if you want public access
+  },
+  {
+    path: "/user/:userid", // ✅ Matches the router.push from Homepage search
+    name: "User",
+    component: User,
+    meta: { requiresAuth: true }
   }
 ]
 
@@ -98,7 +119,6 @@ router.beforeEach((to, from, next) => {
 
   /* ===== AUTH PROTECTION (JWT) ===== */
   if (to.meta.requiresAuth) {
-    // UPDATED: Check sessionStorage instead of localStorage
     const token = sessionStorage.getItem("token")
 
     if (!token) {
@@ -109,9 +129,7 @@ router.beforeEach((to, from, next) => {
     // ✅ Token exists
     return next()
   }
-  if (to.meta.requiresAuth && !sessionStorage.getItem("token")) {
-    return next("/login")
-  }
+  
   next()
 })
 

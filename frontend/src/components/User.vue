@@ -1,0 +1,343 @@
+<script setup>
+import { ref, onMounted, computed, watch } from "vue"
+import { useRoute, useRouter } from "vue-router"
+
+const route = useRoute()
+const router = useRouter()
+const token = sessionStorage.getItem("token")
+
+const loading = ref(true)
+const error = ref(null)
+
+const user = ref({
+  username: "Loading...",
+  description: { blocks: [], container: { colors: ['transparent'], angle: 135 } },
+  profilePic: null,
+  verified: 'normal',
+  stats: { followers: 0, following: 0, rating: 0.0, weaves: 0 }
+})
+
+const projects = ref([])
+
+// --- HELPER: Gradient Generator ---
+const getGradient = (colors, angle) => {
+  if (!colors || colors.length === 0) return 'transparent';
+  if (colors.length === 1) return colors[0];
+  return `linear-gradient(${angle}deg, ${colors.join(', ')})`;
+};
+
+// --- HELPER: Container Style ---
+const containerStyle = computed(() => {
+  const desc = user.value.description;
+  if (desc && desc.container) {
+    return {
+      background: getGradient(desc.container.colors, desc.container.angle),
+      padding: '20px',
+      borderRadius: '12px',
+      border: '1px solid rgba(255,255,255,0.1)'
+    }
+  }
+  return {};
+});
+
+// --- HELPER: Tag Logic for Cards ---
+const getPreviewTags = (pub) => {
+  const combined = [...(pub.categories || []), ...(pub.customCategories || [])];
+  return combined.slice(0, 3);
+}
+const getTotalTagCount = (pub) => {
+  return (pub.categories?.length || 0) + (pub.customCategories?.length || 0) + (pub.warnings?.length || 0);
+}
+
+const fetchData = async () => {
+  const targetId = route.params.userid; // Get from URL
+  if (!token) return router.push("/login")
+  
+  loading.value = true;
+  error.value = null;
+
+  try {
+    const res = await fetch(`http://localhost:5000/users/${targetId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    
+    if (res.ok) {
+      const data = await res.json()
+      user.value = data.user;
+      projects.value = data.projects;
+
+      // Handle Legacy Description (String vs Object)
+      if (typeof user.value.description === 'string') {
+        user.value.description = {
+          blocks: [{
+            id: 1, type: 'text', content: user.value.description, 
+            fontFamily: 'Inter', fontSize: 16, textColors: ['#cbd5e1'], align: 'left'
+          }],
+          container: { colors: ['transparent'], angle: 0 }
+        };
+      } else if (!user.value.description) {
+         user.value.description = { blocks: [], container: { colors: ['transparent'] } };
+      }
+
+    } else {
+      error.value = "Weaver not found.";
+    }
+  } catch (e) {
+    console.error(e)
+    error.value = "Connection severed.";
+  } finally {
+    loading.value = false;
+  }
+}
+
+// Watch route changes (in case we click another user from this page)
+watch(() => route.params.userid, fetchData)
+
+onMounted(() => {
+  fetchData()
+})
+</script>
+
+<template>
+  <div class="profile-page">
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+
+    <div v-if="error" class="center-msg error">
+        <h2>⚠️</h2>
+        <p>{{ error }}</p>
+        <button @click="router.back()" class="btn outline-btn">Return</button>
+    </div>
+
+    <div v-else-if="loading" class="center-msg">
+        <div class="spinner"></div>
+    </div>
+
+    <div class="content-wrapper" v-else>
+      
+      <header class="profile-header glass-panel">
+        <div class="header-inner">
+          
+          <div class="identity-block">
+            <button @click="router.back()" class="nav-back">← Back</button>
+
+            <div class="top-row">
+              <div class="pfp-wrapper">
+                <div class="pfp-circle">
+                   <span v-if="!user.profilePic" class="initial">{{ user.username.charAt(0) }}</span>
+                   <img v-else :src="user.profilePic" class="pfp-img" />
+                </div>
+              </div>
+
+              <div class="name-col">
+                <div class="username-row">
+                  <h1 class="username">{{ user.username }}</h1>
+                  <div class="verified-badge" :class="user.verified" :title="user.verified">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                  </div>
+                </div>
+                
+                <div class="stats-row">
+                  <div class="stat"><span class="val">{{ user.stats.followers }}</span> <span class="lbl">Followers</span></div>
+                  <div class="sep">•</div>
+                  <div class="stat"><span class="val">{{ user.stats.following }}</span> <span class="lbl">Following</span></div>
+                  <div class="sep">•</div>
+                  <div class="stat"><span class="val">{{ user.stats.rating }} ★</span> <span class="lbl">Rating</span></div>
+                  <div class="sep">•</div>
+                  <div class="stat"><span class="val">{{ user.stats.weaves }}</span> <span class="lbl">Weaves</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="bio-section">
+              <div class="bio-canvas" :style="containerStyle">
+                <div v-if="user.description.blocks && user.description.blocks.length > 0">
+                    <div 
+                    v-for="block in user.description.blocks" 
+                    :key="block.id" 
+                    class="bio-block"
+                    :style="{
+                        textAlign: block.align,
+                        background: getGradient(block.bgColors, block.bgAngle),
+                        borderRadius: '6px',
+                        padding: '4px'
+                    }"
+                    >
+                    <div 
+                        class="view-text"
+                        :style="{
+                            fontFamily: block.fontFamily,
+                            fontSize: block.fontSize + 'px',
+                            fontWeight: block.isBold ? 'bold' : 'normal',
+                            fontStyle: block.isItalic ? 'italic' : 'normal',
+                            color: block.textColors.length > 1 ? 'transparent' : block.textColors[0],
+                            backgroundImage: block.textColors.length > 1 ? getGradient(block.textColors, block.textAngle) : 'none',
+                            webkitBackgroundClip: block.textColors.length > 1 ? 'text' : 'unset',
+                            backgroundClip: block.textColors.length > 1 ? 'text' : 'unset'
+                        }"
+                    >{{ block.content }}</div>
+                    </div>
+                </div>
+                <div v-else class="empty-bio">This weaver has no story yet.</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </header>
+
+      <section class="publishes-section">
+        <h2 class="section-title">Weaves</h2>
+        
+        <div v-if="projects.length > 0" class="projects-grid">
+            <div 
+              v-for="pub in projects" 
+              :key="pub._id" 
+              class="project-card"
+              @click="router.push(`/post/${pub._id}`)"
+            >
+              <div class="card-thumb" :style="{ backgroundImage: pub.thumbnail ? `url('${pub.thumbnail}')` : 'linear-gradient(to bottom right, #1e293b, #0f172a)' }">
+                
+                <div class="tags-overlay">
+                  <div class="overlay-content">
+                    <p class="overlay-title">Tags & Warnings</p>
+                    <div class="tags-container">
+                      <span v-for="warn in pub.warnings" :key="warn" class="mini-chip warning">⚠️ {{ warn }}</span>
+                      <span v-for="cat in pub.categories" :key="cat" class="mini-chip category">{{ cat }}</span>
+                      <span v-for="cust in pub.customCategories" :key="cust" class="mini-chip custom">{{ cust }}</span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              <div class="card-info">
+                <h3>{{ pub.name }}</h3>
+                
+                <div class="preview-tags">
+                  <span v-if="pub.warnings.length" class="dot warning"></span>
+                  <span v-for="tag in getPreviewTags(pub)" :key="tag" class="text-tag">
+                    #{{ tag }}
+                  </span>
+                  <span v-if="getTotalTagCount(pub) > 3" class="more-tag">+{{ getTotalTagCount(pub) - 3 }}</span>
+                </div>
+
+                <div class="card-meta">
+                  <span>{{ new Date(pub.publishedAt).toLocaleDateString() }}</span>
+                  <span class="lang-tag">{{ pub.language.toUpperCase() }}</span>
+                </div>
+              </div>
+            </div>
+        </div>
+        
+        <div v-else class="empty-state">
+            <p>No scrolls published yet.</p>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</template>
+
+<style scoped>
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Inter:wght@400;600&display=swap');
+
+* { box-sizing: border-box; }
+
+.profile-page { min-height: 100vh; background-color: #020617; color: #f0f0f0; font-family: 'Inter', sans-serif; overflow-x: hidden; position: relative; }
+.bg-orb { position: absolute; border-radius: 50%; filter: blur(100px); opacity: 0.3; z-index: 0; pointer-events: none; }
+.orb-1 { width: 40vw; height: 40vw; background: #3b82f6; top: -10%; left: -10%; animation: float 10s infinite alternate; }
+.orb-2 { width: 30vw; height: 30vw; background: #a855f7; top: 20%; right: -5%; animation: float 12s infinite alternate-reverse; }
+.content-wrapper { position: relative; z-index: 1; width: 100%; display: flex; flex-direction: column; }
+
+/* ERROR & LOADING */
+.center-msg { height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 1rem; color: #94a3b8; }
+.spinner { width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1); border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* HEADER */
+.profile-header { width: 100%; min-height: 45vh; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(25px); border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding: 3rem 5%; position: relative; display: flex; align-items: center; }
+.header-inner { width: 100%; max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 2rem; }
+.identity-block { width: 100%; display: flex; flex-direction: column; gap: 1.5rem; }
+
+.nav-back { align-self: flex-start; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #cbd5e1; padding: 6px 12px; border-radius: 8px; cursor: pointer; margin-bottom: 1rem; }
+.nav-back:hover { background: rgba(255,255,255,0.1); }
+
+/* TOP ROW */
+.top-row { display: flex; align-items: center; gap: 2rem; }
+.pfp-circle { width: 120px; height: 120px; border-radius: 50%; background: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05)); border: 2px solid rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+.initial { font-size: 3.5rem; font-family: 'Cinzel', serif; color: white; }
+.pfp-img { width: 100%; height: 100%; object-fit: cover; }
+
+.name-col { display: flex; flex-direction: column; gap: 0.5rem; }
+.username-row { display: flex; align-items: center; gap: 1rem; }
+.username { font-family: 'Cinzel', serif; font-size: clamp(2rem, 4vw, 3.5rem); margin: 0; background: linear-gradient(to right, #fff, #94a3b8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+
+/* VERIFICATION BADGES (Shared Style) */
+.verified-badge { width: 28px; height: 28px; border-radius: 50%; border: 2px solid #334155; display: flex; align-items: center; justify-content: center; color: #334155; }
+.verified-badge.normal { border-color: #334155; color: rgba(255, 255, 255, 0.1); }
+.verified-badge.chosen { border-color: #facc15; color: #facc15; background: rgba(250, 204, 21, 0.1); }
+.verified-badge.verified { border-color: #3b82f6; background: #3b82f6; color: white; box-shadow: 0 0 15px rgba(59, 130, 246, 0.6); }
+.verified-badge.paid { border-color: #22c55e; color: #22c55e; background: rgba(34, 197, 94, 0.1); }
+.verified-badge svg { width: 16px; height: 16px; }
+
+/* STATS */
+.stats-row { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
+.stat { display: flex; align-items: baseline; gap: 6px; }
+.val { font-weight: 700; font-size: 1rem; color: #fff; }
+.lbl { text-transform: uppercase; font-size: 0.75rem; color: #94a3b8; letter-spacing: 1px; }
+.sep { color: #334155; }
+
+/* BIO SECTION */
+.bio-section { width: 100%; margin-top: 1rem; }
+.bio-canvas { width: 100%; max-width: 100%; overflow-wrap: break-word; display: flex; flex-direction: column; gap: 5px; min-height: 50px; }
+.bio-block { position: relative; word-wrap: break-word; }
+.view-text { white-space: pre-wrap; line-height: 1.5; }
+.empty-bio { color: #64748b; font-style: italic; padding: 10px; }
+
+/* PUBLISHES GRID */
+.publishes-section { padding: 4rem 5%; width: 100%; max-width: 1400px; margin: 0 auto; }
+.section-title { font-size: 1.5rem; margin-bottom: 2rem; color: #e2e8f0; font-weight: 300; letter-spacing: 1px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; display: inline-block; }
+.projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 2rem; }
+
+/* CARD & OVERLAY */
+.project-card { background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; overflow: hidden; transition: transform 0.3s; cursor: pointer; position: relative; height: 320px; display: flex; flex-direction: column; }
+.project-card:hover { transform: translateY(-5px); border-color: rgba(59, 130, 246, 0.4); box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+
+.card-thumb { height: 180px; width: 100%; background-size: cover; background-position: center; border-bottom: 1px solid rgba(255,255,255,0.05); position: relative; overflow: hidden; }
+
+/* Tags Overlay */
+.tags-overlay { position: absolute; inset: 0; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(5px); display: flex; align-items: center; justify-content: center; opacity: 0; transform: translateY(10px); transition: all 0.3s ease; padding: 15px; }
+.project-card:hover .tags-overlay { opacity: 1; transform: translateY(0); }
+.overlay-content { width: 100%; max-height: 100%; overflow-y: auto; text-align: center; }
+.overlay-title { font-size: 0.8rem; text-transform: uppercase; color: #94a3b8; margin-bottom: 10px; letter-spacing: 1px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px; display: inline-block; }
+.tags-container { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.mini-chip { font-size: 0.75rem; padding: 4px 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); }
+.mini-chip.category { background: rgba(59, 130, 246, 0.15); color: #93c5fd; border-color: rgba(59, 130, 246, 0.3); }
+.mini-chip.custom { background: rgba(168, 85, 247, 0.15); color: #d8b4fe; border-color: rgba(168, 85, 247, 0.3); }
+.mini-chip.warning { background: rgba(239, 68, 68, 0.15); color: #fca5a5; border-color: rgba(239, 68, 68, 0.3); font-weight: 700; }
+
+/* CARD INFO */
+.card-info { padding: 1.2rem; flex: 1; display: flex; flex-direction: column; justify-content: space-between; }
+.card-info h3 { margin: 0 0 0.5rem 0; font-size: 1.1rem; color: #f1f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-meta { display: flex; justify-content: space-between; font-size: 0.8rem; color: #94a3b8; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 10px; margin-top: auto; }
+.empty-state { text-align: center; color: #64748b; font-style: italic; padding: 3rem; border: 1px dashed rgba(255,255,255,0.1); border-radius: 12px; }
+
+/* PREVIEW TAGS */
+.preview-tags { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; font-size: 0.8rem; color: #94a3b8; overflow: hidden; white-space: nowrap; }
+.text-tag { opacity: 0.8; }
+.more-tag { font-size: 0.7rem; background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; }
+.dot.warning { width: 8px; height: 8px; background: #ef4444; border-radius: 50%; display: inline-block; box-shadow: 0 0 5px rgba(239, 68, 68, 0.5); }
+
+/* RESPONSIVE */
+@media (max-width: 900px) {
+  .header-inner { flex-direction: column; align-items: center; text-align: center; }
+  .top-row { flex-direction: column; text-align: center; }
+  .pfp-circle { width: 100px; height: 100px; }
+  .name-col { align-items: center; }
+  .stats-row { justify-content: center; }
+  .profile-header { padding-bottom: 4rem; min-height: auto; }
+}
+</style>

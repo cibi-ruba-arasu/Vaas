@@ -278,7 +278,8 @@ const updateThumbnail = async (base64) => {
 };
 
 const publishProject = async () => {
-  await saveProject(null);
+  // ❌ REMOVE THIS LINE: This was overwriting your Project DB
+  // await saveProject(null); 
 
   if (isPaid.value) {
     alert("Paid publishing is coming soon! Only Free projects can be published right now.");
@@ -293,7 +294,8 @@ const publishProject = async () => {
         "Content-Type": "application/json", 
         Authorization: `Bearer ${token}` 
       },
-      body: JSON.stringify(Publish_Status.value)
+      // This sends the data ONLY to the Publish database
+      body: JSON.stringify(Publish_Status.value) 
     });
 
     const data = await res.json();

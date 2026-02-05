@@ -17,56 +17,45 @@ const form = ref({
   thumbnail: null
 })
 
-/* FILE HANDLING */
 const handleFileChange = (e) => {
     const file = e.target.files[0]
     if (!file) return
-
     if (file.size > 5 * 1024 * 1024) return alert("File too large (Max 5MB)")
-
     const reader = new FileReader()
-    reader.onload = (event) => {
-        form.value.thumbnail = event.target.result
-    }
+    reader.onload = (event) => form.value.thumbnail = event.target.result
     reader.readAsDataURL(file)
 }
 
-// Remove Thumbnail Function
 const removeThumbnail = () => {
     form.value.thumbnail = null
     const fileInput = document.querySelector('.file-input')
     if(fileInput) fileInput.value = ''
 }
 
-/* FETCH & ACTIONS */
 const fetchProjects = async () => {
   try {
     const res = await fetch("http://localhost:5000/projects", {
       headers: { Authorization: `Bearer ${token}` }
     })
-    
-    if (res.ok) {
-        projects.value = await res.json()
-        
-        // ✅ DEBUGGING: Check the first project in the list
-        if (projects.value.length > 0) {
-            console.log("First Project Status:", projects.value[0].name, "Published:", projects.value[0].isPublished);
-        }
-    }
+    if (res.ok) projects.value = await res.json()
   } catch (e) {
     console.error("Fetch failed", e)
   }
 }
 
-const openProject = project => {
-  router.push(`/canvas/${project._id}`)
-}
+const openProject = project => router.push(`/canvas/${project._id}`)
 
+// --- ROUTING LOGIC CHANGED HERE ---
 const handlePublishClick = (project) => {
-    if (!canPublish(project)) {
-        return;
+    if (!canPublish(project)) return;
+    
+    if (project.isPublished) {
+      // Go to Update Page if published
+      router.push(`/update/${project._id}`);
+    } else {
+      // Go to Publish Page if new
+      router.push(`/publish/${project._id}`);
     }
-    router.push(`/publish/${project._id}`); 
 }
 
 const canPublish = (project) => {
@@ -81,28 +70,21 @@ const getPublishError = (project) => {
     return "";
 }
 
-/* MODALS */
 const handleSubmit = async () => {
   const url = editingProject.value
     ? `http://localhost:5000/projects/${editingProject.value._id}`
     : "http://localhost:5000/projects"
   
   const method = editingProject.value ? "PUT" : "POST"
-
   isProcessing.value = true 
 
   try {
     await new Promise(r => setTimeout(r, 1000)); 
-
     const res = await fetch(url, {
       method,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify(form.value)
     })
-
     if (!res.ok) {
         const d = await res.json()
         alert(d.message)
@@ -110,11 +92,8 @@ const handleSubmit = async () => {
         closeModal()
         await fetchProjects()
     }
-  } catch (e) { 
-      console.error(e) 
-  } finally {
-      isProcessing.value = false 
-  }
+  } catch (e) { console.error(e) } 
+  finally { isProcessing.value = false }
 }
 
 const deleteProject = async () => {
@@ -138,11 +117,7 @@ const openCreateModal = () => {
 
 const openEditModal = (p) => {
   editingProject.value = p
-  form.value = { 
-      name: p.name, 
-      description: p.description,
-      thumbnail: p.thumbnail || null
-  }
+  form.value = { name: p.name, description: p.description, thumbnail: p.thumbnail || null }
   showModal.value = true
 }
 
@@ -150,7 +125,6 @@ const closeModal = () => showModal.value = false
 const confirmDelete = (p) => { editingProject.value = p; showDeleteModal.value = true }
 const closeDeleteModal = () => { showDeleteModal.value = false; editingProject.value = null }
 
-/* DROPDOWN LOGIC */
 const activeDropdown = ref(null)
 const toggleDropdown = (id) => activeDropdown.value = activeDropdown.value === id ? null : id
 
@@ -172,29 +146,16 @@ onMounted(() => {
     </header>
 
     <div class="main-content">
-      <div class="top-bar">
-        <h2>Your Tapestry</h2>
-      </div>
+      <div class="top-bar"><h2>Your Tapestry</h2></div>
 
       <div class="projects-grid">
-        <div 
-          v-for="project in projects" 
-          :key="project._id" 
-          class="project-card glass-card"
-          @click="openProject(project)"
-        >
-          <div class="card-thumbnail" :style="{
-              backgroundImage: project.thumbnail 
-                ? `url(${project.thumbnail})` 
-                : 'linear-gradient(to bottom right, #000000, #1e3a8a)'
-          }"></div>
+        <div v-for="project in projects" :key="project._id" class="project-card glass-card" @click="openProject(project)">
+          <div class="card-thumbnail" :style="{ backgroundImage: project.thumbnail ? `url('${project.thumbnail}')` : 'linear-gradient(to bottom right, #000000, #1e3a8a)' }"></div>
 
           <div class="card-content">
             <div class="card-header">
                 <h3 class="truncate" :title="project.name">{{ project.name }}</h3>
-                
-                <div class="menu" @click.stop="toggleDropdown(project._id)">
-                    ⋮
+                <div class="menu" @click.stop="toggleDropdown(project._id)">⋮
                     <div v-if="activeDropdown === project._id" class="dropdown">
                         <button @click.stop="openEditModal(project)">Edit Settings</button>
                         <button @click.stop="confirmDelete(project)" class="danger">Delete</button>
@@ -206,7 +167,6 @@ onMounted(() => {
             
             <div class="card-footer">
                 <span class="date">{{ new Date(project.updatedAt).toLocaleDateString() }}</span>
-                
                 <div class="publish-wrapper" @click.stop> 
                     <span v-if="!canPublish(project)" class="status-dot error" :title="getPublishError(project)"></span>
                     
@@ -225,76 +185,39 @@ onMounted(() => {
         </div>
 
         <div class="project-card create-card" @click="openCreateModal">
-            <div class="create-inner">
-                <div class="glow-icon">+</div>
-                <span>Weave New Story</span>
-            </div>
+            <div class="create-inner"><div class="glow-icon">+</div><span>Weave New Story</span></div>
         </div>
-
       </div>
     </div>
 
     <div v-if="showModal" class="modal-overlay">
       <div class="modal glass-modal">
         <h3>{{ editingProject ? "Edit Project" : "New Creation" }}</h3>
-        
-        <label>Name</label>
-        <input v-model="form.name" placeholder="Name your world..." />
-        
-        <label>Description</label>
-        <textarea v-model="form.description" placeholder="What is this story about?"></textarea>
-
+        <label>Name</label><input v-model="form.name" placeholder="Name your world..." />
+        <label>Description</label><textarea v-model="form.description" placeholder="What is this story about?"></textarea>
         <label>Thumbnail</label>
         <div class="thumb-preview-row">
             <div class="preview-wrapper">
-                <div class="preview-box" :style="{
-                    backgroundImage: form.thumbnail 
-                        ? `url(${form.thumbnail})` 
-                        : 'linear-gradient(to bottom right, #000000, #1e3a8a)'
-                }"></div>
-                
-                <button 
-                    v-if="form.thumbnail" 
-                    class="remove-thumb-btn" 
-                    @click="removeThumbnail"
-                    title="Remove Thumbnail"
-                >×</button>
+                <div class="preview-box" :style="{ backgroundImage: form.thumbnail ? `url('${form.thumbnail}')` : 'linear-gradient(to bottom right, #000000, #1e3a8a)' }"></div>
+                <button v-if="form.thumbnail" class="remove-thumb-btn" @click="removeThumbnail">×</button>
             </div>
-
-            <div class="file-input-wrapper">
-                <input type="file" accept="image/*" @change="handleFileChange" class="file-input" />
-                <span class="file-hint">Max 5MB</span>
-            </div>
+            <div class="file-input-wrapper"><input type="file" accept="image/*" @change="handleFileChange" class="file-input" /><span class="file-hint">Max 5MB</span></div>
         </div>
-
-        <div class="modal-actions">
-          <button @click="closeModal" class="cancel">Close</button>
-          <button @click="handleSubmit" class="save">Weave</button>
-        </div>
+        <div class="modal-actions"><button @click="closeModal" class="cancel">Close</button><button @click="handleSubmit" class="save">Weave</button></div>
       </div>
     </div>
 
     <div v-if="showDeleteModal" class="modal-overlay">
       <div class="modal small glass-modal">
-        <h3>Unravel Project?</h3>
-        <p>This cannot be undone.</p>
-        <div class="modal-actions">
-          <button @click="closeDeleteModal" class="cancel">Keep</button>
-          <button @click="deleteProject" class="danger-btn">Delete</button>
-        </div>
+        <h3>Unravel Project?</h3><p>This cannot be undone.</p>
+        <div class="modal-actions"><button @click="closeDeleteModal" class="cancel">Keep</button><button @click="deleteProject" class="danger-btn">Delete</button></div>
       </div>
     </div>
 
     <div v-if="isProcessing" class="mystical-overlay">
-        <div class="loom-container">
-            <div class="ring ring-1"></div>
-            <div class="ring ring-2"></div>
-            <div class="ring ring-3"></div>
-            <div class="core-light"></div>
-        </div>
+        <div class="loom-container"><div class="ring ring-1"></div><div class="ring ring-2"></div><div class="ring ring-3"></div><div class="core-light"></div></div>
         <p class="mystical-text">Weaving Reality...</p>
     </div>
-
   </div>
 </template>
 
