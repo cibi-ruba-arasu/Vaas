@@ -464,7 +464,6 @@ app.get("/user/profile", authMiddleware, async (req, res) => {
     const user = await User.findById(req.user.mongoId).select("-password");
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    // Count actual published projects for "Weaves/Posts" stat
     const publishedCount = await Publish.countDocuments({ authorId: req.user.mongoId });
 
     res.json({
@@ -472,12 +471,16 @@ app.get("/user/profile", authMiddleware, async (req, res) => {
       userid: user.userid,
       description: user.description,
       profilePic: user.profilePic,
+      
+      // ✅ THE MISSING PIECE: Send the matrix data back to frontend
+      pfp_status: user.pfp_status, 
+
       verified: user.verified,
       stats: {
         followers: user.followersCount || 0,
-        following: user.followingCount || 0, // ✅ Added Following
+        following: user.followingCount || 0,
         rating: user.rating || 5.0,
-        weaves: publishedCount // ✅ Synced with actual Publishes
+        weaves: publishedCount
       }
     });
   } catch (err) {
@@ -525,7 +528,8 @@ app.get("/posts/:id", authMiddleware, async (req, res) => {
 /* ===== UPDATE USER PROFILE ===== */
 app.put("/user/profile", authMiddleware, async (req, res) => {
   const { mongoId } = req.user;
-  // Add pfp_status to the destructuring
+  
+  // ✅ FIX: Verify pfp_status is included here
   const { username, description, profilePic, pfp_status } = req.body; 
 
   try {
@@ -534,8 +538,8 @@ app.put("/user/profile", authMiddleware, async (req, res) => {
       { 
         username, 
         description, 
-        profilePic, // The rendered image
-        pfp_status  // ✅ The raw editor data
+        profilePic, 
+        pfp_status // ✅ Pass the raw matrix data to DB
       },
       { new: true }
     ).select("-password");

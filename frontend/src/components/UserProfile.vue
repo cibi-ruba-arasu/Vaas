@@ -33,59 +33,82 @@ const getTotalTagCount = (pub) => {
 /* --- PFP EDITOR STATE --- */
 const showPfpEditor = ref(false)
 const pfpCanvasRef = ref(null)
-const MATRIX_SIZE = 128
+
+// ✅ 64x64 Grid (4096 Pixels total)
+const MATRIX_SIZE = 64 
+
 const isPainting = ref(false)
 const currentPaintColor = ref('#000000') 
 const editorState = ref({
-  matrix: [], 
+  matrix: [], // This will always hold the full 4096 "Dense" array for the editor to use
   bgColors: ['#ffffff'],
   bgAngle: 90
 })
+
+/* --- COMPRESSION LOGIC (Sparse Matrix) --- */
+
+// 1. Pack: Turn full grid (4096 items) -> List of colored pixels only
+const packMatrix = (denseArray) => {
+    const sparse = [];
+    denseArray.forEach((color, index) => {
+        if (color) { 
+            sparse.push({ i: index, c: color });
+        }
+    });
+    return sparse;
+}
+
+// 2. Unpack: Turn List of pixels -> Full grid (4096 items)
+const unpackMatrix = (sparseArray, size) => {
+    const dense = new Array(size).fill(null); // Start clean
+    
+    if (!Array.isArray(sparseArray)) return dense;
+
+    sparseArray.forEach(pixel => {
+        // Ensure pixel is valid object { i: index, c: color }
+        if (pixel && pixel.i !== undefined && pixel.c) {
+             if (pixel.i < size) dense[pixel.i] = pixel.c;
+        }
+    });
+    
+    return dense;
+}
 
 /* --- PFP LOGIC --- */
 const initMatrix = () => {
   const size = MATRIX_SIZE * MATRIX_SIZE;
   const savedStatus = user.value.pfp_status;
 
-  // 1. Check if we have valid saved data
+  // 1. Load Background
+  editorState.value.bgColors = savedStatus?.background?.colors?.length 
+      ? [...savedStatus.background.colors] 
+      : ['#ffffff'];
+  editorState.value.bgAngle = savedStatus?.background?.angle || 90;
+
+  // 2. Load Matrix (The Fix)
+  // We check if there is data in the matrix array
   if (savedStatus && Array.isArray(savedStatus.matrix) && savedStatus.matrix.length > 0) {
-    // console.log("Loading saved PFP matrix...", savedStatus.matrix.length);
-    
-    // Deep copy to prevent reactivity issues
-    let loadedMatrix = JSON.parse(JSON.stringify(savedStatus.matrix));
-
-    // Handle size mismatch (if data was corrupted or size changed)
-    if (loadedMatrix.length !== size) {
-        const fixed = new Array(size).fill(null);
-        loadedMatrix.forEach((val, i) => { if(i < size) fixed[i] = val; });
-        loadedMatrix = fixed;
-    }
-
-    editorState.value.matrix = loadedMatrix;
-    editorState.value.bgColors = savedStatus.background?.colors ? [...savedStatus.background.colors] : ['#ffffff'];
-    editorState.value.bgAngle = savedStatus.background?.angle || 90;
+      // Decompress the DB data back into the Editor Grid
+      editorState.value.matrix = unpackMatrix(savedStatus.matrix, size);
   } else {
-    // 2. No saved data? Initialize clean slate
-    // console.log("No saved PFP matrix found. Initializing blank.");
-    editorState.value.matrix = new Array(size).fill(null); 
-    editorState.value.bgColors = ['#e2e8f0', '#94a3b8'];
-    editorState.value.bgAngle = 135;
+      // No data? Start with a blank canvas
+      editorState.value.matrix = new Array(size).fill(null); 
   }
 }
 
 // Watch for modal opening to trigger render
 watch(showPfpEditor, (newVal) => {
     if (newVal) {
-        initMatrix();
+        initMatrix(); // Load data
         nextTick(() => {
-            drawCanvas();
+            drawCanvas(); // Paint data to canvas
         });
     }
 });
 
 const openPfpEditor = () => {
   if (!isEditing.value) return; 
-  showPfpEditor.value = true; // This triggers the watcher above
+  showPfpEditor.value = true;
 }
 
 const drawCanvas = () => {
@@ -93,10 +116,10 @@ const drawCanvas = () => {
   if (!canvas) return;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   
-  // Clear previous frame
+  // Clear
   ctx.clearRect(0, 0, MATRIX_SIZE, MATRIX_SIZE);
 
-  // Paint pixels from state
+  // Paint pixels from the loaded editorState
   const pixels = editorState.value.matrix;
   for (let i = 0; i < pixels.length; i++) {
     if (pixels[i]) { 
@@ -113,7 +136,7 @@ const handleCanvasAction = (e) => {
   const canvas = pfpCanvasRef.value;
   const rect = canvas.getBoundingClientRect();
   
-  // Calculate relative position based on visual size vs actual 128px size
+  // Calculate scale (Visual Size / Logical 64px Size)
   const scaleX = MATRIX_SIZE / rect.width;
   const scaleY = MATRIX_SIZE / rect.height;
 
@@ -122,9 +145,9 @@ const handleCanvasAction = (e) => {
 
   if (x >= 0 && x < MATRIX_SIZE && y >= 0 && y < MATRIX_SIZE) {
     const index = y * MATRIX_SIZE + x;
-    editorState.value.matrix[index] = currentPaintColor.value;
+    editorState.value.matrix[index] = currentPaintColor.value; // Update State
     
-    // Draw immediately for performance
+    // Update Canvas Visual immediately
     const ctx = canvas.getContext('2d');
     if (currentPaintColor.value) {
         ctx.fillStyle = currentPaintColor.value;
@@ -139,36 +162,43 @@ const startPainting = (e) => { isPainting.value = true; handleCanvasAction(e); }
 const stopPainting = () => { isPainting.value = false; }
 
 const applyPfpChanges = () => {
+  // 1. Create High-Res Output (256x256) for the website display
   const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = MATRIX_SIZE;
-  tempCanvas.height = MATRIX_SIZE;
+  const OUTPUT_SIZE = 256;
+  tempCanvas.width = OUTPUT_SIZE; 
+  tempCanvas.height = OUTPUT_SIZE;
   const ctx = tempCanvas.getContext('2d');
+  
+  ctx.imageSmoothingEnabled = false; // Keep pixel art sharp
 
   // Draw Background
-  const grad = ctx.createLinearGradient(0, 0, MATRIX_SIZE, MATRIX_SIZE); 
+  const grad = ctx.createLinearGradient(0, 0, OUTPUT_SIZE, OUTPUT_SIZE); 
   editorState.value.bgColors.forEach((col, i) => {
     grad.addColorStop(i / (editorState.value.bgColors.length - 1 || 1), col);
   });
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, MATRIX_SIZE, MATRIX_SIZE);
+  ctx.fillRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
 
-  // Draw Pixels
+  // Draw Pixels Scaled Up
+  const scale = OUTPUT_SIZE / MATRIX_SIZE; 
   const pixels = editorState.value.matrix;
   for (let i = 0; i < pixels.length; i++) {
     if (pixels[i]) {
-      const x = i % MATRIX_SIZE;
-      const y = Math.floor(i / MATRIX_SIZE);
+      const x = (i % MATRIX_SIZE) * scale;
+      const y = Math.floor(i / MATRIX_SIZE) * scale;
       ctx.fillStyle = pixels[i];
-      ctx.fillRect(x, y, 1, 1);
+      ctx.fillRect(x, y, scale, scale);
     }
   }
 
-  // Update User Object
-  user.value.profilePic = tempCanvas.toDataURL('image/png'); // Visual Image
+  // 2. Save Visual Image (Base64)
+  user.value.profilePic = tempCanvas.toDataURL('image/png'); 
   
-  // ✅ SAVE THE RAW DATA for next edit
+  // 3. Compress & Save Data for DB
+  const compressedMatrix = packMatrix(editorState.value.matrix);
+  
   user.value.pfp_status = { 
-    matrix: [...editorState.value.matrix],
+    matrix: compressedMatrix,
     background: {
       colors: [...editorState.value.bgColors],
       angle: editorState.value.bgAngle
@@ -186,7 +216,7 @@ const clearMatrix = () => {
 };
 
 
-/* --- DESCRIPTION EDITOR STATE --- */
+/* --- DESCRIPTION EDITOR STATE (Legacy) --- */
 const containerColors = ref(['#1e293b', '#0f172a'])
 const containerAngle = ref(135)
 const blocks = ref([]) 
@@ -257,11 +287,12 @@ const fetchData = async () => {
       const data = await profileRes.json()
       user.value = data
       
-      // ✅ Ensure pfp_status exists for legacy users
+      // Ensure structure exists
       if (!user.value.pfp_status || typeof user.value.pfp_status !== 'object') {
           user.value.pfp_status = { matrix: [], background: { colors: ['#ffffff'], angle: 90 } };
       }
 
+      // Legacy Description Handler
       if (data.description && typeof data.description === 'object' && !Array.isArray(data.description) && data.description.blocks) {
         blocks.value = data.description.blocks || [];
         containerColors.value = data.description.container?.colors || ['#1e293b', '#0f172a'];
@@ -299,7 +330,7 @@ const saveProfile = async () => {
     const payload = {
       username: user.value.username,
       profilePic: user.value.profilePic, 
-      pfp_status: user.value.pfp_status, // ✅ SEND RAW DATA TO DB
+      pfp_status: user.value.pfp_status, 
       description: {
         container: { colors: containerColors.value, angle: containerAngle.value },
         blocks: blocks.value
@@ -357,9 +388,10 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
     <div v-if="showPfpEditor" class="modal-overlay">
       <div class="pfp-editor-modal glass-panel">
         <div class="modal-header">
-          <h3>Pixel Matrix (128x128)</h3>
+          <h3>Pixel Studio (64x64)</h3>
           <button @click="showPfpEditor = false" class="close-btn">×</button>
         </div>
+        
         <div class="editor-body">
           <div class="visual-section">
             <div 
@@ -368,8 +400,8 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
             >
               <canvas 
                 ref="pfpCanvasRef"
-                width="128" 
-                height="128"
+                width="64" 
+                height="64"
                 class="pixel-canvas"
                 @mousedown="startPainting"
                 @mousemove="handleCanvasAction"
@@ -377,21 +409,25 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
                 @mouseleave="stopPainting"
               ></canvas>
             </div>
-            <p class="hint">Draw on the matrix above.</p>
+            <p class="hint">Draw on the grid. It scales automatically.</p>
           </div>
+
           <div class="settings-section">
+            
             <div class="setting-group">
-              <label>Matrix Paint Color</label>
+              <label>Brush Color</label>
               <div class="color-picker-row">
+                <div class="color-preview" :style="{ backgroundColor: currentPaintColor || 'transparent' }"></div>
                 <input type="color" v-model="currentPaintColor" class="main-color-input" />
-                <span>{{ currentPaintColor }}</span>
-                <button @click="currentPaintColor = null" class="eraser-btn" title="Eraser (Transparent)">
+                <button @click="currentPaintColor = null" class="eraser-btn" :class="{ active: currentPaintColor === null }">
                   Eraser
                 </button>
               </div>
-              <button @click="clearMatrix" class="btn outline-btn tiny">Clear Matrix</button>
+              <button @click="clearMatrix" class="btn outline-btn tiny">Clear All</button>
             </div>
+
             <hr class="divider"/>
+
             <div class="setting-group">
               <label>Background Gradient</label>
               <div class="gradient-controls">
@@ -406,19 +442,20 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
                 <input type="range" v-model="editorState.bgAngle" min="0" max="360" class="full-range" />
               </div>
             </div>
+
             <div class="modal-actions">
               <button @click="showPfpEditor = false" class="btn outline-btn">Cancel</button>
-              <button @click="applyPfpChanges" class="btn primary-btn">Apply & Save PFP</button>
+              <button @click="applyPfpChanges" class="btn primary-btn">Apply & Save</button>
             </div>
           </div>
         </div>
       </div>
     </div>
-
     <div class="content-wrapper" v-if="!loading">
       
       <header class="profile-header glass-panel">
         <div class="header-inner">
+          
           <div class="identity-block">
             <div class="top-row">
               <div class="pfp-wrapper">
@@ -428,10 +465,12 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
                   @click="openPfpEditor"
                 >
                    <span v-if="!user.profilePic" class="initial">{{ user.username.charAt(0) }}</span>
+                   
                    <img v-else :src="user.profilePic" class="pfp-img" />
+                   
                    <div v-if="isEditing" class="pfp-overlay">
                      <span class="edit-icon">🎨</span>
-                     <span>Edit Matrix</span>
+                     <span>Edit Pixels</span>
                    </div>
                 </div>
               </div>
@@ -458,6 +497,7 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
             </div>
 
             <div class="bio-section">
+              
               <div v-if="isEditing" class="global-toolbar">
                 <span class="label">Box Style:</span>
                 <div class="gradient-controls">
@@ -652,47 +692,88 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
 .orb-2 { width: 30vw; height: 30vw; background: #a855f7; top: 20%; right: -5%; animation: float 12s infinite alternate-reverse; }
 .content-wrapper { position: relative; z-index: 1; width: 100%; display: flex; flex-direction: column; }
 
-/* MODAL STYLES */
+/* ================= PFP EDITOR MODAL STYLES ================= */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 999; display: flex; align-items: center; justify-content: center; padding: 20px; }
-.pfp-editor-modal { width: 100%; max-width: 800px; height: 80vh; background: #0f172a; border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; display: flex; flex-direction: column; overflow: hidden; }
-.modal-header { padding: 15px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center; }
-.close-btn { background: none; border: none; color: #fff; font-size: 1.5rem; cursor: pointer; }
+.pfp-editor-modal { width: 100%; max-width: 800px; height: 80vh; background: #0f172a; border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+
+.modal-header { padding: 15px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center; background: #1e293b; }
+.modal-header h3 { margin: 0; font-family: 'Cinzel', serif; color: #e2e8f0; }
+.close-btn { background: none; border: none; color: #94a3b8; font-size: 1.5rem; cursor: pointer; transition: 0.2s; }
+.close-btn:hover { color: #fff; }
+
 .editor-body { flex: 1; display: flex; overflow: hidden; }
 
-.visual-section { flex: 1; background: #020617; display: flex; flex-direction: column; align-items: center; justify-content: center; border-right: 1px solid rgba(255,255,255,0.1); }
-.matrix-container { width: 384px; height: 384px; border: 1px solid #334155; position: relative; cursor: crosshair; box-shadow: 0 0 30px rgba(0,0,0,0.5); }
-.pixel-canvas { width: 100%; height: 100%; image-rendering: pixelated; } 
-.hint { margin-top: 15px; color: #64748b; font-size: 0.9rem; }
+/* Visual Section (Left) */
+.visual-section { flex: 1; background: #020617; display: flex; flex-direction: column; align-items: center; justify-content: center; border-right: 1px solid rgba(255,255,255,0.1); position: relative; }
 
-.settings-section { width: 300px; padding: 20px; background: #1e293b; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+/* The Grid Container */
+.matrix-container { 
+  width: 384px; /* Display Size (64px * 6) */
+  height: 384px; 
+  border: 1px solid #334155; 
+  position: relative; 
+  cursor: crosshair; 
+  box-shadow: 0 0 30px rgba(0,0,0,0.5); 
+  background-size: cover;
+}
+
+/* The Canvas - CRITICAL for Sharpness */
+.pixel-canvas { 
+  width: 100%; 
+  height: 100%; 
+  image-rendering: pixelated;       /* Chrome/Edge/Safari */
+  image-rendering: crisp-edges;     /* Firefox */
+} 
+
+.hint { margin-top: 15px; color: #64748b; font-size: 0.8rem; font-style: italic; }
+
+/* Settings Section (Right) */
+.settings-section { width: 300px; padding: 20px; background: #0f172a; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+
 .setting-group { display: flex; flex-direction: column; gap: 10px; }
-.setting-group label { color: #94a3b8; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; }
-.color-picker-row { display: flex; align-items: center; gap: 10px; }
-.main-color-input { width: 40px; height: 40px; border: none; padding: 0; background: none; cursor: pointer; }
-.eraser-btn { padding: 6px 12px; font-size: 0.8rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px; cursor: pointer; }
-.divider { border: 0; border-top: 1px solid rgba(255,255,255,0.1); width: 100%; }
-.full-range { width: 100%; }
-.mt-2 { margin-top: 10px; }
-.modal-actions { margin-top: auto; display: flex; gap: 10px; }
-.tiny-del { width: 16px; height: 16px; font-size: 10px; display: flex; align-items: center; justify-content: center; }
+.setting-group label { color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
 
-/* HEADER & PFP */
+.color-picker-row { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.05); padding: 8px; border-radius: 8px; }
+.color-preview { width: 30px; height: 30px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2); }
+.main-color-input { flex: 1; height: 30px; border: none; padding: 0; background: none; cursor: pointer; }
+
+.eraser-btn { padding: 6px 12px; font-size: 0.8rem; background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #cbd5e1; border-radius: 4px; cursor: pointer; transition: 0.2s; }
+.eraser-btn:hover { background: rgba(255,255,255,0.1); color: white; }
+.eraser-btn.active { background: #3b82f6; border-color: #3b82f6; color: white; }
+
+.divider { border: 0; border-top: 1px solid rgba(255,255,255,0.1); width: 100%; margin: 0; }
+
+.gradient-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.color-wrap { position: relative; }
+.color-wrap input { width: 30px; height: 30px; border: 1px solid rgba(255,255,255,0.2); padding: 0; background: none; cursor: pointer; border-radius: 4px; }
+.tiny-del { position: absolute; top: -5px; right: -5px; background: #ef4444; color: white; border: none; width: 14px; height: 14px; font-size: 10px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+
+.add-color-btn { width: 30px; height: 30px; background: rgba(255,255,255,0.1); border: 1px dashed rgba(255,255,255,0.3); color: white; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: 0.2s; }
+.add-color-btn:hover { border-color: #3b82f6; color: #3b82f6; }
+
+.full-range { width: 100%; cursor: pointer; }
+.angle-wrap { display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: #94a3b8; }
+
+.modal-actions { margin-top: auto; display: flex; gap: 10px; padding-top: 20px; }
+.modal-actions button { flex: 1; }
+
+/* ================= MAIN PROFILE STYLES ================= */
 .profile-header { width: 100%; min-height: 45vh; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(25px); border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding: 3rem 5%; position: relative; display: flex; align-items: center; }
 .header-inner { width: 100%; max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 2rem; }
 .identity-block { width: 100%; display: flex; flex-direction: column; gap: 1.5rem; }
 
 .top-row { display: flex; align-items: center; gap: 2rem; }
 .pfp-wrapper { position: relative; }
-/* Updated PFP Circle to handle edit click */
 .pfp-circle { width: 120px; height: 120px; border-radius: 50%; background: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05)); border: 2px solid rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5); cursor: default; position: relative; }
-.pfp-circle.editable { cursor: pointer; border-color: #3b82f6; }
-.pfp-img { width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; } /* Pixelated for matrix art */
-.pfp-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.6); display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 0.9rem; opacity: 0; transition: 0.2s; color: white; gap: 5px; }
+.pfp-circle.editable { cursor: pointer; border-color: #3b82f6; transition: border-color 0.3s; }
+.pfp-circle.editable:hover { border-color: #60a5fa; }
+/* PFP Image rendering fix for pixel art */
+.pfp-img { width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; image-rendering: crisp-edges; }
+.pfp-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.6); display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 0.9rem; opacity: 0; transition: 0.2s; color: white; gap: 5px; backdrop-filter: blur(2px); }
 .pfp-circle.editable:hover .pfp-overlay { opacity: 1; }
 .edit-icon { font-size: 1.5rem; }
 .initial { font-size: 3.5rem; font-family: 'Cinzel', serif; color: white; }
 
-/* ... (Existing styles for verified badges, stats, bio, buttons etc. kept intact) ... */
 .name-col { display: flex; flex-direction: column; gap: 0.5rem; }
 .username-row { display: flex; align-items: center; gap: 1rem; }
 .username { font-family: 'Cinzel', serif; font-size: clamp(2rem, 4vw, 3.5rem); margin: 0; background: linear-gradient(to right, #fff, #94a3b8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
@@ -709,19 +790,13 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
 .lbl { text-transform: uppercase; font-size: 0.75rem; color: #94a3b8; letter-spacing: 1px; }
 .sep { color: #334155; }
 
-/* Bio Editor Styles (Kept) */
+/* Bio Editor Styles */
 .bio-section { width: 100%; margin-top: 1rem; }
 .global-toolbar { background: rgba(0,0,0,0.4); padding: 10px; border-radius: 8px 8px 0 0; border: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; gap: 15px; }
 .block-toolbar { background: #1e293b; padding: 10px; border: 1px solid rgba(255,255,255,0.1); border-top: none; display: flex; flex-wrap: wrap; gap: 15px; align-items: center; }
 .tool-group { display: flex; flex-direction: column; gap: 2px; }
 .tool-group.row { flex-direction: row; gap: 5px; margin-top: auto; }
 .tool-group label { font-size: 0.6rem; color: #94a3b8; text-transform: uppercase; }
-.gradient-controls { display: flex; align-items: center; gap: 8px; }
-.color-wrap, .mini-color { position: relative; display: flex; align-items: center; }
-.color-wrap input, .mini-color input { width: 28px; height: 28px; border: 1px solid rgba(255,255,255,0.2); padding: 0; background: none; cursor: pointer; border-radius: 4px; overflow: hidden; }
-.tiny-del, .x-tiny { position: absolute; top: -5px; right: -5px; background: #ef4444; color: white; border: none; width: 12px; height: 12px; font-size: 8px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
-.add-color-btn, .plus-tiny { width: 28px; height: 28px; background: rgba(255,255,255,0.1); border: 1px dashed rgba(255,255,255,0.3); color: white; border-radius: 4px; cursor: pointer; font-size: 1rem; display: flex; align-items: center; justify-content: center; }
-.angle-wrap { display: flex; align-items: center; gap: 5px; font-size: 0.8rem; color: #aaa; }
 .mini-range, .tiny-range { width: 60px; height: 4px; border-radius: 2px; }
 .mini-select, .mini-input { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: white; padding: 4px; border-radius: 4px; font-size: 0.8rem; }
 .mini-input { width: 50px; }
@@ -772,16 +847,11 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
   flex-direction: column;
   height: 320px; 
 }
-
-.project-card:hover { 
-  transform: translateY(-5px); 
-  border-color: rgba(59, 130, 246, 0.4); 
-  box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-}
+.project-card:hover { transform: translateY(-5px); border-color: rgba(59, 130, 246, 0.4); box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
 
 .card-thumb { height: 180px; width: 100%; background-size: cover; background-position: center; border-bottom: 1px solid rgba(255,255,255,0.05); position: relative; overflow: hidden; }
 
-/* OVERLAY STYLES */
+/* Overlay */
 .tags-overlay { position: absolute; inset: 0; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(5px); display: flex; align-items: center; justify-content: center; opacity: 0; transform: translateY(10px); transition: all 0.3s ease; padding: 15px; }
 .project-card:hover .tags-overlay { opacity: 1; transform: translateY(0); }
 .overlay-content { width: 100%; max-height: 100%; overflow-y: auto; text-align: center; }
@@ -794,14 +864,12 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
 
 .card-info { padding: 1.2rem; flex: 1; display: flex; flex-direction: column; justify-content: space-between; }
 .card-info h3 { margin: 0 0 0.5rem 0; font-size: 1.1rem; color: #f1f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-/* PREVIEW TAGS */
 .preview-tags { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; font-size: 0.8rem; color: #94a3b8; overflow: hidden; white-space: nowrap; }
 .text-tag { opacity: 0.8; }
 .more-tag { font-size: 0.7rem; background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; }
 .dot.warning { width: 8px; height: 8px; background: #ef4444; border-radius: 50%; display: inline-block; box-shadow: 0 0 5px rgba(239, 68, 68, 0.5); }
-
 .card-meta { display: flex; justify-content: space-between; font-size: 0.8rem; color: #94a3b8; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 10px; margin-top: auto; }
+.lang-tag { font-weight: 700; color: #cbd5e1; }
 .empty-state { text-align: center; color: #64748b; font-style: italic; padding: 3rem; border: 1px dashed rgba(255,255,255,0.1); border-radius: 12px; }
 
 @media (max-width: 900px) {
