@@ -3,30 +3,32 @@ import mongoose from "mongoose"
 
 const userSchema = new mongoose.Schema(
   {
+    // ... (Keep existing fields: email, username, password, userid, description, profilePic, pfp_status, etc.) ...
     email: { type: String, required: true, unique: true },
     username: { type: String, required: true },
     password: { type: String, required: true },
     userid: { type: String, unique: true },
-    
     description: { type: mongoose.Schema.Types.Mixed, default: {} }, 
     profilePic: { type: String, default: "" }, 
-    
-    // ✅ FIX: Change [String] to Array so it accepts Objects {i:1, c:'red'}
     pfp_status: { 
       matrix: { type: Array, default: [] }, 
-      background: {
-        colors: { type: [String], default: ['#ffffff'] },
-        angle: { type: Number, default: 90 }
-      }
+      background: { colors: { type: [String], default: ['#ffffff'] }, angle: { type: Number, default: 90 } }
     },
 
-    // ... (Keep existing fields: dob, age, verified, stats, etc.)
+    // ✅ NEW: Social Graph Arrays
+    // We store ObjectIds to easily populate lists later
+    followers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    following: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+
+    // ... (Keep demographics)
     dob: String,
     age: Number,
     country: String,
     state: String,
     city: String,
     verified: { type: String, enum: ['normal', 'chosen', 'verified', 'paid'], default: 'normal' },
+    
+    // ... (Keep stats - we will sync these numbers with the array lengths)
     followersCount: { type: Number, default: 0 },
     followingCount: { type: Number, default: 0 },
     rating: { type: Number, default: 0.0 },

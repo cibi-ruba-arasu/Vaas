@@ -14,6 +14,7 @@ import Publish from "@/components/Publish.vue"
 import Update from '../components/Update.vue'
 import Post from '@/components/Post.vue';
 import User from '@/components/User.vue'
+import Search from '@/components/Search.vue';
 
 const routes = [
   {
@@ -95,7 +96,13 @@ const routes = [
     name: "User",
     component: User,
     meta: { requiresAuth: true }
-  }
+  },
+  {
+    path: "/search",
+    name: "Search",
+    component: Search,
+    meta: { requiresAuth: true }
+  },
 ]
 
 const router = createRouter({

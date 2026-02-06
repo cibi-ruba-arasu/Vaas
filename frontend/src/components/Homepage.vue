@@ -6,6 +6,11 @@ const router = useRouter()
 const auraColor = ref("#0077ff") 
 const token = sessionStorage.getItem("token")
 
+const showNotifications = ref(false)
+const notifications = ref([])
+const unreadCount = ref(0)
+let notificationInterval
+
 // UI States
 const showSettings = ref(false)
 const showCustomize = ref(false)
@@ -15,6 +20,50 @@ const showSidebar = ref(false)
 const searchQuery = ref("")
 const searchResults = ref([])
 const isSearching = ref(false)
+
+const fetchNotifications = async () => {
+  try {
+    const res = await fetch("http://localhost:5000/notifications", {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (res.ok) {
+      const data = await res.json()
+      notifications.value = data.alerts
+      unreadCount.value = data.unreadCount
+    }
+  } catch (e) {
+    console.error("Omens silent...", e)
+  }
+}
+
+// --- ACTION: CLICK BELL ---
+const toggleNotifications = () => {
+  showNotifications.value = !showNotifications.value
+  if (showNotifications.value) {
+    markRead()
+  }
+}
+
+// --- ACTION: CLICK ALERT ---
+const handleNotificationClick = (alert) => {
+  showNotifications.value = false
+  if (alert.link) router.push(alert.link)
+}
+
+// --- ACTION: MARK READ ---
+const markRead = async () => {
+  if (unreadCount.value > 0) {
+    unreadCount.value = 0 // Instant UI update
+    try {
+      await fetch("http://localhost:5000/notifications/read", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}` }
+      })
+    } catch (e) {
+      console.error("Failed to mark read")
+    }
+  }
+}
 
 // Messages Array
 const messages = [
@@ -45,7 +94,8 @@ const handleSearch = async () => {
 
   isSearching.value = true
   try {
-    const res = await fetch(`http://localhost:5000/users/search?q=${searchQuery.value}`, {
+    // ✅ Updated Endpoint
+    const res = await fetch(`http://localhost:5000/search/suggestions?q=${searchQuery.value}`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) {
@@ -55,6 +105,22 @@ const handleSearch = async () => {
     console.error("Search failed", err)
   } finally {
     isSearching.value = false
+  }
+}
+
+const handleResultClick = (item) => {
+  if (item.type === 'user') {
+    router.push(`/user/${item.id}`)
+  } else {
+    router.push(`/post/${item.id}`)
+  }
+}
+
+const goToSearchPage = () => {
+  if (searchQuery.value.trim().length > 0) {
+    router.push({ name: 'Search', query: { q: searchQuery.value } })
+    // Clear dropdown
+    searchResults.value = [] 
   }
 }
 
@@ -74,7 +140,8 @@ onMounted(async () => {
     const data = await res.json()
     auraColor.value = data.themeColor || "#0077ff"
   }
-
+  fetchNotifications()
+  notificationInterval = setInterval(fetchNotifications, 30000) // Check every 30s
   // Rotate Messages
   let i = 0
   messageInterval = setInterval(() => {
@@ -83,7 +150,10 @@ onMounted(async () => {
   }, 6000)
 })
 
-onUnmounted(() => clearInterval(messageInterval))
+onUnmounted(() => {
+  clearInterval(messageInterval)
+  clearInterval(notificationInterval) // Clean up
+})
 
 const saveColor = async () => {
   await fetch("http://localhost:5000/user/theme", {
@@ -134,12 +204,54 @@ const saveColor = async () => {
           </svg>
         </button>
 
-        <button class="aura-btn" title="Omens">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.5">
-            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-          </svg>
-        </button>
+        <div class="notification-wrapper">
+          <button 
+            class="aura-btn bell-btn" 
+            :class="{ 'oscillating': unreadCount > 0 }"
+            @click="toggleNotifications" 
+            title="Omens"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.5">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+            </svg>
+            
+            <span v-if="unreadCount > 0" class="red-dot"></span>
+          </button>
+
+          <Transition name="fade-slide">
+            <div v-if="showNotifications" class="notifications-dropdown glass-panel">
+              <div class="notif-header">
+                <h3>Omens</h3>
+                <span v-if="notifications.length > 0" class="clear-all" @click="markRead">Mark all read</span>
+              </div>
+
+              <div v-if="notifications.length === 0" class="empty-notif">
+                <p>The winds are silent.</p>
+              </div>
+
+              <ul v-else class="notif-list">
+                <li 
+                  v-for="alert in notifications" 
+                  :key="alert._id" 
+                  class="notif-item" 
+                  :class="{ 'unread': !alert.isRead }"
+                  @click="handleNotificationClick(alert)"
+                >
+                  <div class="notif-avatar">
+                    <img v-if="alert.sender.profilePic" :src="alert.sender.profilePic" />
+                    <span v-else>{{ alert.sender.username.charAt(0) }}</span>
+                  </div>
+                  <div class="notif-content">
+                    <p>{{ alert.message }}</p>
+                    <span class="notif-time">{{ new Date(alert.createdAt).toLocaleDateString() }}</span>
+                  </div>
+                  <div v-if="!alert.isRead" class="unread-indicator"></div>
+                </li>
+              </ul>
+            </div>
+          </Transition>
+        </div>
 
         <button class="aura-btn" @click="router.push('/profile')" title="Your Essence">
           <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.5">
@@ -179,34 +291,50 @@ const saveColor = async () => {
     </nav>
     <div class="search-band">
       <div class="search-container">
+        
         <div class="input-wrapper">
           <span class="search-icon">🔍</span>
           <input 
             type="text" 
             v-model="searchQuery" 
-            placeholder="Seek..." 
+            placeholder="Seek the unknown..." 
             class="mystic-input"
+            @keyup.enter="goToSearchPage" 
           />
+          <button class="go-btn" @click="goToSearchPage" v-if="searchQuery.length > 0">→</button>
         </div>
 
         <Transition name="fade">
           <div v-if="searchResults.length > 0 || isSearching" class="search-results">
-            <div v-if="isSearching" class="search-item loading">Gazing into the void...</div>
+            
+            <div v-if="isSearching" class="search-loading">
+              <span class="tiny-spinner"></span> Searching the threads...
+            </div>
+            
             <div 
               v-else 
-              v-for="user in searchResults" 
-              :key="user._id" 
+              v-for="item in searchResults" 
+              :key="item.id" 
               class="search-item"
-              @click="router.push(`/user/${user.userid}`)"
+              :class="item.type"
+              @click="handleResultClick(item)"
             >
-              <div class="user-avatar-placeholder">
-                {{ user.username.charAt(0).toUpperCase() }}
+              
+              <div v-if="item.type === 'publish'" class="content-row">
+                 <div class="mini-thumb" :style="{ backgroundImage: item.image ? `url(${item.image})` : 'none', backgroundColor: '#111' }"></div>
+                 <div class="text-col">
+                   <span class="main-text">{{ item.mainText }}</span>
+                   <span class="sub-text">{{ item.subText }}</span>
+                 </div>
               </div>
-              <div class="user-info">
-                <span class="username">{{ user.username }}</span>
-                <span class="location" v-if="user.country">{{ user.country }}</span>
+
+              <div v-else class="content-row user-row">
+                 <span class="user-prefix">u/</span>
+                 <span class="main-text user-text">{{ item.mainText }}</span>
               </div>
+
             </div>
+
           </div>
         </Transition>
       </div>
@@ -428,9 +556,26 @@ const saveColor = async () => {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 50px;
-  padding: 0.5rem 1.2rem;
+  padding: 0.4rem 1rem; /* Compact padding */
   transition: all 0.3s ease;
+  position: relative;
 }
+
+.go-btn {
+  background: rgba(255,255,255,0.1);
+  border: none;
+  color: white;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 10px;
+  transition: 0.2s;
+}
+.go-btn:hover { background: var(--aura); }
 
 .input-wrapper:focus-within {
   background: rgba(255, 255, 255, 0.1);
@@ -460,68 +605,76 @@ const saveColor = async () => {
 /* --- Search Results Dropdown --- */
 .search-results {
   position: absolute;
-  top: 120%;
+  top: 115%; /* Slight gap from input */
   left: 0;
   width: 100%;
-  background: rgba(15, 15, 20, 0.95);
+  background: #0a0a0c; /* Solid dark background for readability */
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
-  padding: 0.5rem;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.8);
-  backdrop-filter: blur(20px);
-  max-height: 300px;
+  padding: 8px 0;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.9);
+  max-height: 450px; /* Space for ~10 items */
   overflow-y: auto;
 }
 
+/* --- LIST ITEMS --- */
 .search-item {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.8rem;
-  border-radius: 8px;
+  padding: 12px 18px; /* More breathing room */
   cursor: pointer;
-  transition: background 0.2s;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  transition: all 0.1s;
+}
+.search-item:last-child { border-bottom: none; }
+.search-item:hover { background: rgba(255,255,255,0.08); }
+
+.content-row { display: flex; align-items: center; gap: 14px; }
+
+/* --- PUBLISH STYLES (Aura Highlight) --- */
+.search-item.publish {
+  border-left: 3px solid var(--aura); /* Subtle Aura Highlight */
+  background: linear-gradient(90deg, rgba(255,255,255,0.02), transparent);
+}
+.search-item.publish:hover {
+  background: linear-gradient(90deg, rgba(255,255,255,0.1), transparent);
 }
 
-.search-item:hover {
-  background: rgba(255, 255, 255, 0.08);
+.mini-thumb {
+  width: 40px; /* Larger thumb */
+  height: 40px;
+  border-radius: 6px;
+  background-size: cover;
+  background-position: center;
+  border: 1px solid rgba(255,255,255,0.1);
 }
 
-.user-avatar-placeholder {
-  width: 35px;
-  height: 35px;
-  background: linear-gradient(135deg, var(--aura), #333);
-  border-radius: 50%;
+.text-col { display: flex; flex-direction: column; justify-content: center; }
+.main-text { font-size: 1rem; color: #eee; font-family: 'Inter', sans-serif; font-weight: 600; line-height: 1.2; }
+.sub-text { font-size: 0.75rem; color: #888; font-family: 'Inter', sans-serif; margin-top: 2px; }
+
+/* --- USER STYLES (Minimal & Larger) --- */
+.search-item.user {
+  padding-left: 24px; /* Slight indent to differentiate from highlighted projects */
+}
+.user-row { gap: 4px; align-items: baseline; }
+.user-prefix { color: #666; font-size: 0.9rem; font-family: 'Inter', sans-serif; font-weight: 700; }
+.user-text { color: #ccc; font-weight: 500; font-size: 1.05rem; } /* Slightly larger for users */
+
+.search-loading {
+  padding: 15px;
+  text-align: center;
+  font-size: 0.9rem;
+  color: #888;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: bold;
-  font-size: 1rem;
-  color: #fff;
-  text-shadow: 0 0 5px rgba(0,0,0,0.5);
+  gap: 10px;
 }
-
-.user-info {
-  display: flex;
-  flex-direction: column;
-}
-
-.username {
-  color: #eee;
-  font-size: 1rem;
-  font-family: 'Cinzel', serif;
-}
-
-.location {
-  font-size: 0.75rem;
-  color: #888;
-  font-family: 'Inter', sans-serif;
-}
-
-.loading {
-  justify-content: center;
-  color: #aaa;
-  font-style: italic;
+.tiny-spinner {
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,0.1);
+  border-top-color: var(--aura);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
 }
 
 /* --- SIDEBAR --- */
@@ -568,10 +721,93 @@ const saveColor = async () => {
   .sidebar { width: 100%; }
   .soul-container { width: 90vw; height: 90vw; }
   .inner-soul { width: 60%; height: 60%; }
+  
+  /* Mobile adjustments for Search Dropdown */
+  .search-results { max-height: 60vh; }
+  .search-item { padding: 14px 18px; } /* Larger touch targets */
+  .mini-thumb { width: 45px; height: 45px; }
+  .main-text { font-size: 1.1rem; }
+  .user-text { font-size: 1.15rem; }
 }
 @media (max-width: 400px) {
   .nav-actions { gap: 0.8rem; }
   .aura-btn svg { width: 22px; height: 22px; }
   .create-btn { width: 40px; height: 40px; }
+}
+.notification-wrapper { position: relative; }
+
+.bell-btn { position: relative; }
+.bell-btn.oscillating svg { animation: oscillate 2s ease-in-out infinite; transform-origin: top center; }
+
+.red-dot {
+  position: absolute; top: 6px; right: 8px;
+  width: 8px; height: 8px;
+  background-color: #ef4444;
+  border-radius: 50%;
+  box-shadow: 0 0 5px #ef4444;
+}
+
+/* OSCILLATION ANIMATION */
+@keyframes oscillate {
+  0% { transform: rotate(0deg); }
+  10% { transform: rotate(15deg); }
+  20% { transform: rotate(-10deg); }
+  30% { transform: rotate(5deg); }
+  40% { transform: rotate(-5deg); }
+  50% { transform: rotate(0deg); }
+  100% { transform: rotate(0deg); } /* Long pause */
+}
+
+/* DROPDOWN */
+.notifications-dropdown {
+  position: absolute; top: 120%; right: -50px;
+  width: 320px; max-height: 400px;
+  background: rgba(10, 10, 15, 0.95);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+}
+
+.notif-header {
+  padding: 12px 15px;
+  background: rgba(255,255,255,0.03);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.notif-header h3 { margin: 0; font-size: 0.9rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
+.clear-all { font-size: 0.7rem; color: #3b82f6; cursor: pointer; }
+
+.notif-list { list-style: none; padding: 0; margin: 0; overflow-y: auto; }
+
+.notif-item {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 12px 15px;
+  border-bottom: 1px solid rgba(255,255,255,0.02);
+  cursor: pointer; transition: background 0.2s;
+}
+.notif-item:hover { background: rgba(255,255,255,0.05); }
+.notif-item.unread { background: rgba(59, 130, 246, 0.05); }
+
+.notif-avatar {
+  width: 36px; height: 36px; border-radius: 50%; overflow: hidden;
+  background: #1e293b; display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; font-size: 1rem; color: #fff; font-family: 'Cinzel';
+}
+.notif-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.notif-content p { margin: 0; font-size: 0.85rem; color: #e2e8f0; line-height: 1.4; font-family: 'Inter', sans-serif; }
+.notif-time { font-size: 0.7rem; color: #64748b; margin-top: 4px; display: block; }
+
+.unread-indicator {
+  width: 6px; height: 6px; background: #3b82f6; border-radius: 50%; margin-top: 6px;
+}
+
+.empty-notif { padding: 2rem; text-align: center; color: #64748b; font-style: italic; font-size: 0.9rem; }
+
+/* Mobile Adjustment */
+@media (max-width: 500px) {
+  .notifications-dropdown { right: -20px; width: 300px; }
 }
 </style>

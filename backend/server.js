@@ -16,6 +16,7 @@ import crypto from "crypto"
 import { translate } from "@vitalets/google-translate-api";
 import pLimit from "p-limit";
 import Publish from "./schema/Publish.js"
+import Notification from "./schema/Notification.js"
 
 dotenv.config()
 
@@ -410,6 +411,115 @@ app.post("/forgot-password/reset", async (req, res) => {
 
   res.json({ success: true })
 })
+
+app.post("/user/follow/:targetId", authMiddleware, async (req, res) => {
+  const { mongoId } = req.user; // Me
+  const { targetId } = req.params; // The person I want to follow
+
+  if (mongoId === targetId) return res.status(400).json({ message: "Cannot follow yourself" });
+
+  try {
+    const me = await User.findById(mongoId);
+    const target = await User.findById(targetId);
+
+    if (!target) return res.status(404).json({ message: "User not found" });
+
+    // Check if already following
+    const isFollowing = me.following.includes(targetId);
+
+    if (isFollowing) {
+      // UNFOLLOW LOGIC
+      me.following = me.following.filter(id => id.toString() !== targetId);
+      target.followers = target.followers.filter(id => id.toString() !== mongoId);
+      
+      // Update counts
+      me.followingCount = Math.max(0, me.followingCount - 1);
+      target.followersCount = Math.max(0, target.followersCount - 1);
+
+      await me.save();
+      await target.save();
+
+      res.json({ success: true, isFollowing: false, followersCount: target.followersCount });
+
+    } else {
+      // FOLLOW LOGIC
+      me.following.push(targetId);
+      target.followers.push(mongoId);
+      
+      // Update counts
+      me.followingCount += 1;
+      target.followersCount += 1;
+
+      await me.save();
+      await target.save();
+
+      // 🔔 NOTIFICATION: Tell target they have a new follower
+      await Notification.create({
+        recipient: targetId,
+        sender: mongoId,
+        type: 'follow',
+        message: `${me.username} started following you.`,
+        link: `/user/${me.userid}`
+      });
+
+      res.json({ success: true, isFollowing: true, followersCount: target.followersCount });
+    }
+
+  } catch (err) {
+    console.error("Follow error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/* ===== SOCIAL: GET MY NETWORK (Populated Lists) ===== */
+app.get("/user/network", authMiddleware, async (req, res) => {
+  try {
+    // Only fetch for the logged-in user (Privacy Requirement)
+    const user = await User.findById(req.user.mongoId)
+      .populate("followers", "username userid profilePic") // Only get necessary fields
+      .populate("following", "username userid profilePic");
+      
+    res.json({
+      followers: user.followers,
+      following: user.following
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Error fetching network" });
+  }
+});
+
+/* ===== NOTIFICATIONS: GET ALL ===== */
+app.get("/notifications", authMiddleware, async (req, res) => {
+  try {
+    const alerts = await Notification.find({ recipient: req.user.mongoId })
+      .populate("sender", "username profilePic") // Show who sent it
+      .sort({ createdAt: -1 }) // Newest first
+      .limit(20); // Don't overload
+    
+    // Count unread
+    const unreadCount = await Notification.countDocuments({ 
+      recipient: req.user.mongoId, 
+      isRead: false 
+    });
+
+    res.json({ alerts, unreadCount });
+  } catch (err) {
+    res.status(500).json({ message: "Error fetching notifications" });
+  }
+});
+
+/* ===== NOTIFICATIONS: MARK READ ===== */
+app.put("/notifications/read", authMiddleware, async (req, res) => {
+  try {
+    await Notification.updateMany(
+      { recipient: req.user.mongoId, isRead: false },
+      { $set: { isRead: true } }
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ message: "Error updating notifications" });
+  }
+});
 
 app.post("/forgot-password/send-otp", async (req, res) => {
   const { email } = req.body
@@ -874,22 +984,100 @@ app.get("/user/me", authMiddleware, async (req, res) => {
 // Add this route near your other user routes (e.g., before app.listen)
 
 /* ===== USER SEARCH ===== */
-app.get("/users/search", authMiddleware, async (req, res) => {
+app.get("/search/unified", authMiddleware, async (req, res) => {
   const { q } = req.query;
 
-  if (!q || q.length < 1) return res.json([]);
+  if (!q || q.length < 2) return res.json([]);
 
   try {
-    // Search for username, case-insensitive, limit to 10 results
-    const users = await User.find({
-      username: { $regex: q, $options: "i" }
-    })
-    .select("username userid country") // Return specific fields
-    .limit(10);
+    const regex = new RegExp(q, "i");
 
-    res.json(users);
+    // 1. Search Published Projects (Limit 5)
+    // We prioritize these by fetching them first and putting them at the top
+    const projects = await Publish.find({ name: regex })
+      .select("name _id authorName thumbnail")
+      .limit(5)
+      .lean();
+
+    // 2. Search Users (Limit 5)
+    const users = await User.find({ username: regex })
+      .select("username userid")
+      .limit(5)
+      .lean();
+
+    // 3. Format Results
+    // Add a 'type' field to help the frontend distinguish them
+    const formattedProjects = projects.map(p => ({
+        type: 'project',
+        id: p._id,
+        title: p.name,
+        subtitle: `by ${p.authorName}`,
+        image: p.thumbnail
+    }));
+
+    const formattedUsers = users.map(u => ({
+        type: 'user',
+        id: u.userid, // Custom UserID for routing
+        title: `u/${u.username}`, // Add u/ prefix here or on frontend
+        subtitle: 'Weaver'
+    }));
+
+    // Combine: Projects first, then Users
+    res.json([...formattedProjects, ...formattedUsers]);
+
   } catch (err) {
     console.error("Search error:", err);
+    res.status(500).json({ message: "Search failed" });
+  }
+});
+
+/* ===== UNIFIED SEARCH SUGGESTIONS ===== */
+app.get("/search/suggestions", authMiddleware, async (req, res) => {
+  const { q } = req.query;
+  if (!q || q.length < 2) return res.json([]);
+
+  try {
+    const regex = new RegExp(q, "i");
+
+    // 1. Search Published Projects (Priority)
+    // ✅ CHANGED: Added 'description.blocks.content' to the $or array
+    const publishes = await Publish.find({
+        $or: [
+            { name: { $regex: regex } },                  // Match Name
+            { customCategories: { $regex: regex } },      // Match Custom Tags
+            { 'description.blocks.content': { $regex: regex } } // Match Text inside Description Blocks
+        ]
+      })
+      .select("name _id projectId authorName thumbnail")
+      .limit(8); 
+
+    // 2. Search Users
+    const users = await User.find({ username: { $regex: regex } })
+      .select("username userid _id")
+      .limit(5);
+
+    // 3. Format & Combine (Projects First)
+    const formattedPublishes = publishes.map(p => ({
+      type: 'publish',
+      id: p._id, 
+      mainText: p.name,
+      subText: `by ${p.authorName}`,
+      image: p.thumbnail
+    }));
+
+    const formattedUsers = users.map(u => ({
+      type: 'user',
+      id: u.userid, 
+      mainText: u.username,
+      subText: null
+    }));
+
+    // Combine
+    const results = [...formattedPublishes, ...formattedUsers].slice(0, 12);
+
+    res.json(results);
+  } catch (err) {
+    console.error("Search Error:", err);
     res.status(500).json({ message: "Search failed" });
   }
 });
@@ -897,37 +1085,38 @@ app.get("/users/search", authMiddleware, async (req, res) => {
 /* ===== GET PUBLIC USER PROFILE (By Custom UserID) ===== */
 app.get("/users/:userid", authMiddleware, async (req, res) => {
   const { userid } = req.params;
+  const requesterId = req.user.mongoId; // ID of the person looking
 
   try {
-    // 1. Find User by their custom 'userid' (not _id)
-    // Exclude sensitive info like password and email
     const user = await User.findOne({ userid }).select("-password -email");
 
     if (!user) {
       return res.status(404).json({ message: "Weaver not found in this timeline." });
     }
 
-    // 2. Find all Publishes by this user's Mongo ID
     const publishes = await Publish.find({ authorId: user._id }).sort({ publishedAt: -1 });
 
-    // 3. Return combined data
+    // ✅ CHECK: Am I following this user?
+    const isFollowing = user.followers.includes(requesterId);
+
     res.json({
       user: {
         _id: user._id,
         username: user.username,
         userid: user.userid,
-        description: user.description, // Rich text object
+        description: user.description,
         profilePic: user.profilePic,
         country: user.country,
-        verified: user.verified, // 'normal', 'verified', etc.
+        verified: user.verified,
         stats: {
           followers: user.followersCount || 0,
           following: user.followingCount || 0,
           rating: user.rating || 0.0,
-          weaves: publishes.length // Dynamic count
+          weaves: publishes.length
         }
       },
-      projects: publishes
+      projects: publishes,
+      isFollowing // ✅ Send this flag to frontend
     });
 
   } catch (err) {
@@ -936,73 +1125,59 @@ app.get("/users/:userid", authMiddleware, async (req, res) => {
   }
 });
 
-/* ===== PUBLISH PROJECT (Creating the Snapshot) ===== */
 app.post("/publish", authMiddleware, async (req, res) => {
   const { 
-    id, // This is the Project ID
-    name, 
-    titleFont, 
-    description, 
-    language, 
-    categories, 
-    customCategories, 
-    warnings, 
-    isThumbnailNSFW, 
-    monetization, 
-    thumbnail 
+    id, name, titleFont, description, language, categories, 
+    customCategories, warnings, isThumbnailNSFW, monetization, thumbnail 
   } = req.body;
 
   const { mongoId } = req.user;
 
   try {
+    // ... (Existing validation logic remains the same) ...
     if (monetization && monetization.isPaid) {
       return res.status(400).json({ message: "This route currently only supports Free projects." });
     }
 
-    // 1. Fetch Author
-    const author = await User.findById(mongoId).select("username");
+    const author = await User.findById(mongoId).select("username followers"); // ✅ Fetch followers
     if (!author) return res.status(404).json({ message: "Author not found" });
 
-    // 2. FETCH THE LIVE CANVAS STATE (The Snapshot)
-    // We use .lean() to get a plain JavaScript object we can modify/store easily
     const liveCanvasState = await CanvasState.findOne({ projectId: id }).lean();
+    if (!liveCanvasState) return res.status(400).json({ message: "No content found." });
 
-    if (!liveCanvasState) {
-      return res.status(400).json({ message: "Cannot publish: No content found in the editor." });
-    }
-
-    // Optional: Clean up the snapshot (remove Mongo specific IDs from the copy if needed)
     delete liveCanvasState._id;
     delete liveCanvasState.__v;
-    // We keep projectId inside the snapshot just in case, but it's nested now.
 
-    // 3. Prepare Publish Data
     const publishData = {
-      projectId: id, // Keeps the link so "Update" knows where to look
+      projectId: id,
       authorId: mongoId,
       authorName: author.username,
-      name, 
-      titleFont, 
-      description, 
-      language, 
-      categories, 
-      customCategories, 
-      warnings, 
-      isThumbnailNSFW, 
-      monetization, 
-      thumbnail,
-      canvasState: liveCanvasState, // ✅ SAVING THE SNAPSHOT HERE
+      name, titleFont, description, language, categories, customCategories, warnings, 
+      isThumbnailNSFW, monetization, thumbnail,
+      canvasState: liveCanvasState,
       publishedAt: new Date()
     };
 
-    // 4. Upsert (Insert or Update) into Publish Collection
     const result = await Publish.findOneAndUpdate(
       { projectId: id }, 
       publishData,
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
 
-    console.log(`🚀 Snapshot Created: ${name} by ${author.username}`);
+    /* 🔔 NEW: NOTIFY FOLLOWERS 🔔 */
+    if (author.followers && author.followers.length > 0) {
+      const notifications = author.followers.map(followerId => ({
+        recipient: followerId,
+        sender: mongoId,
+        type: 'publish',
+        message: `${author.username} published a new weave: "${name}"`,
+        link: `/post/${result._id}`
+      }));
+      
+      // Batch insert for performance
+      await Notification.insertMany(notifications);
+      console.log(`🔔 Sent notifications to ${author.followers.length} followers.`);
+    }
 
     res.json({ 
       success: true, 

@@ -9,6 +9,39 @@ const loading = ref(true)
 const isEditing = ref(false)
 const isSaving = ref(false)
 
+const showNetworkModal = ref(false)
+const networkType = ref('followers') // 'followers' or 'following'
+const networkList = ref({ followers: [], following: [] })
+const isNetworkLoading = ref(false)
+
+const fetchNetwork = async () => {
+  if (isNetworkLoading.value) return
+  isNetworkLoading.value = true
+  try {
+    const res = await fetch("http://localhost:5000/user/network", {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (res.ok) {
+      networkList.value = await res.json()
+    }
+  } catch (e) {
+    console.error("Network fetch failed", e)
+  } finally {
+    isNetworkLoading.value = false
+  }
+}
+
+const openNetwork = (type) => {
+  networkType.value = type
+  showNetworkModal.value = true
+  fetchNetwork() // Refresh data when opening
+}
+
+const goToUser = (userid) => {
+  showNetworkModal.value = false
+  router.push(`/user/${userid}`)
+}
+
 const user = ref({
   username: "Weaver",
   description: { blocks: [], container: { colors: ['transparent'], angle: 135 } },
@@ -451,6 +484,34 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
         </div>
       </div>
     </div>
+    <div v-if="showNetworkModal" class="modal-overlay" @click.self="showNetworkModal = false">
+      <div class="network-modal glass-panel">
+        <div class="modal-header">
+          <h3>{{ networkType === 'followers' ? 'Followers' : 'Following' }}</h3>
+          <button @click="showNetworkModal = false" class="close-btn">×</button>
+        </div>
+
+        <div class="network-body">
+          <div v-if="isNetworkLoading" class="center-msg">
+             <div class="spinner"></div>
+          </div>
+
+          <div v-else-if="networkList[networkType].length === 0" class="empty-list">
+             <p>No souls found in this realm.</p>
+          </div>
+
+          <ul v-else class="user-list">
+            <li v-for="u in networkList[networkType]" :key="u._id" class="user-row" @click="goToUser(u.userid)">
+               <div class="mini-pfp">
+                  <img v-if="u.profilePic" :src="u.profilePic" />
+                  <span v-else>{{ u.username.charAt(0) }}</span>
+               </div>
+               <span class="list-username">{{ u.username }}</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
     <div class="content-wrapper" v-if="!loading">
       
       <header class="profile-header glass-panel">
@@ -485,12 +546,14 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
                   </div>
                 </div>
                 <div class="stats-row">
-                  <div class="stat"><span class="val">{{ user.stats.followers }}</span> <span class="lbl">Followers</span></div>
-                  <div class="sep">•</div>
-                  <div class="stat"><span class="val">{{ user.stats.following }}</span> <span class="lbl">Following</span></div>
-                  <div class="sep">•</div>
-                  <div class="stat"><span class="val">{{ user.stats.rating }} ★</span> <span class="lbl">Rating</span></div>
-                  <div class="sep">•</div>
+                  <div class="stat clickable" @click="openNetwork('followers')">
+                      <span class="val">{{ user.stats.followers }}</span> 
+                      <span class="lbl">Followers</span>
+                  </div>
+                  <div class="stat clickable" @click="openNetwork('following')">
+                      <span class="val">{{ user.stats.following }}</span> 
+                      <span class="lbl">Following</span>
+                  </div>
                   <div class="stat"><span class="val">{{ user.stats.weaves }}</span> <span class="lbl">Publishes</span></div>
                 </div>
               </div>
@@ -695,7 +758,35 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
 /* ================= PFP EDITOR MODAL STYLES ================= */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 999; display: flex; align-items: center; justify-content: center; padding: 20px; }
 .pfp-editor-modal { width: 100%; max-width: 800px; height: 80vh; background: #0f172a; border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+.network-modal { 
+  width: 100%; max-width: 400px; height: 60vh; 
+  background: #0f172a; border: 1px solid rgba(255,255,255,0.1); 
+  border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; 
+}
 
+.network-body { flex: 1; overflow-y: auto; padding: 10px; }
+
+.user-list { list-style: none; padding: 0; margin: 0; }
+.user-row { 
+  display: flex; align-items: center; gap: 15px; 
+  padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); 
+  cursor: pointer; transition: background 0.2s; 
+}
+.mini-pfp { 
+  width: 40px; height: 40px; border-radius: 50%; overflow: hidden; 
+  background: #1e293b; display: flex; align-items: center; justify-content: center; 
+  border: 1px solid rgba(255,255,255,0.1); font-family: 'Cinzel'; color: #fff;
+}
+.mini-pfp img { width: 100%; height: 100%; object-fit: cover; }
+
+.list-username { font-size: 1rem; color: #e2e8f0; font-family: 'Inter', sans-serif; }
+.empty-list { text-align: center; color: #64748b; padding: 2rem; font-style: italic; }
+
+/* Update Stat Cursor */
+.stat.clickable { cursor: pointer; transition: transform 0.2s; }
+.stat.clickable:hover .val { color: #3b82f6; }
+.stat.clickable:hover { transform: translateY(-2px); }
+.user-row:hover { background: rgba(255,255,255,0.05); }
 .modal-header { padding: 15px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center; background: #1e293b; }
 .modal-header h3 { margin: 0; font-family: 'Cinzel', serif; color: #e2e8f0; }
 .close-btn { background: none; border: none; color: #94a3b8; font-size: 1.5rem; cursor: pointer; transition: 0.2s; }
