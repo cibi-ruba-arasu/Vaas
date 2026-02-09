@@ -435,14 +435,14 @@ const rootNodeId = ref(null)
 const processLogicNode = (nodeStatus) => {
    // 1. SET VARIABLE LOGIC
    if (nodeStatus.node_type === 'Set Variables') {
-       // FIX: Use loose equality (==)
+       // ... [Existing Set Variable Logic - Keep Content] ...
+       // (No changes needed inside the logic blocks, just ensuring the function structure matches)
        const targetVar = globalVariables.value.find(v => v.id == nodeStatus.varId);
        
        if (targetVar) {
            if (targetVar.type === 'integer') {
                let operand = nodeStatus.varValue;
                if (nodeStatus.varValueType === 'variable') {
-                   // FIX: Use loose equality (==)
                    const sourceVar = globalVariables.value.find(v => v.id == nodeStatus.varValue);
                    operand = sourceVar ? sourceVar.value : 0;
                }
@@ -463,7 +463,6 @@ const processLogicNode = (nodeStatus) => {
                if (nodeStatus.varOperator === '=') {
                    let newVal = nodeStatus.varValue;
                    if (nodeStatus.varValueType === 'variable') {
-                        // FIX: Use loose equality (==)
                         const sourceVar = globalVariables.value.find(v => v.id == nodeStatus.varValue);
                         newVal = sourceVar ? sourceVar.value : "";
                    }
@@ -482,7 +481,7 @@ const processLogicNode = (nodeStatus) => {
    
    // 2. IF-ELSE LOGIC
    else if (nodeStatus.node_type === 'If-Else') {
-       // FIX: Use loose equality (==)
+       // ... [Existing If-Else Logic - Keep Content] ...
        const variable = globalVariables.value.find(v => v.id == nodeStatus.varId);
        if (!variable) return nodeStatus.NextFalse; 
 
@@ -490,11 +489,10 @@ const processLogicNode = (nodeStatus) => {
        let rightVal = nodeStatus.compareValue;
 
        if (nodeStatus.compareValueType === 'variable') {
-           // FIX: Use loose equality (==)
            const rightVar = globalVariables.value.find(v => v.id == nodeStatus.compareValue);
            rightVal = rightVar ? rightVar.value : 0;
        }
-       // ... [Rest of function matches existing] ...
+
        if (variable.type === 'integer') {
            leftVal = Number(leftVal);
            rightVal = Number(rightVal);
@@ -514,6 +512,11 @@ const processLogicNode = (nodeStatus) => {
        }
        console.log(`[If-Else] Result: ${result}`);
        return result ? nodeStatus.NextTrue : nodeStatus.NextFalse;
+   }
+   
+   // 3. GIFT NODE (Treat as Visual Node - Return null to stop logic loop and show popup)
+   else if (nodeStatus.node_type === 'Gift') {
+       return null; 
    }
    
    return null; 
@@ -1954,7 +1957,7 @@ const openPopup = node => {
          setVarStringPrefix.value = nodeStatus.stringPrefix || ""
          setVarStringSuffix.value = nodeStatus.stringSuffix || ""
     } 
-    // --- LOGIC: IF-ELSE (FIXED) ---
+    // --- LOGIC: IF-ELSE ---
     else if (nodeStatus.node_type === 'If-Else') {
          viewMode.value = 'ifElse'
          ifElseVarId.value = nodeStatus.varId || ""
@@ -1962,6 +1965,11 @@ const openPopup = node => {
          ifElseValueType.value = nodeStatus.compareValueType || "constant"
          ifElseValue.value = nodeStatus.compareValue || ""
     } 
+    // --- NEW: GIFT NODE (SEPARATE EDITOR) ---
+    else if (nodeStatus.node_type === 'Gift') {
+         viewMode.value = 'gift'
+         // Future: Initialize gift-specific data here
+    }
     // --- GENERAL SCENES ---
     else {
          viewMode.value = 'scenes'
@@ -1980,7 +1988,7 @@ const openPopup = node => {
          }
     }
 
-    // Load Audio
+    // Load Audio (applies to General, maybe Gift in future)
     if (nodeStatus.audio) {
         sequenceAudio.value = { ...nodeStatus.audio }
     } else {
@@ -1988,7 +1996,7 @@ const openPopup = node => {
     }
 
   } else {
-    // New/Empty Node
+    // Fallback for brand new nodes (should rarely happen via click)
     editingNodeName.value = `Node ${node.id}`
     nodeScenes.value = []
     sequenceAudio.value = null
@@ -2038,6 +2046,8 @@ const closePopup = () => {
   // Commit changes to Canvas_Status before closing
   if (popupNode.value) {
       const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
+      
+      // Save Logic based on Type
       if (status && status.node_type === 'Set Variables') {
           status.varId = setVarId.value
           status.varOperator = setVarOperator.value
@@ -2050,11 +2060,16 @@ const closePopup = () => {
           status.operator = ifElseOperator.value
           status.compareValueType = ifElseValueType.value
           status.compareValue = ifElseValue.value
+      } else if (status && status.node_type === 'Gift') {
+          // Future: Save Gift specific data here
       }
   }
 
   stopEditorVideos()
-  updateNodeOptionsInStatus()
+  // Only update options if we were in a scene-based node
+  if (viewMode.value === 'scenes' || viewMode.value === 'sceneDetails') {
+      updateNodeOptionsInStatus()
+  }
 
   popupAnimation.value = false
   isDraggingComponent.value = false
@@ -2078,12 +2093,9 @@ const closePopup = () => {
     editingNodeName.value = "" 
     sequenceAudio.value = null 
 
-    // --- FIX: Trigger Deferred Auto-Save ---
-    // If the timer ran out while we were working, save now that we are safe on the main canvas.
     if (hasUnsavedChanges.value && autoSaveTimer.value <= 0) {
          saveProjectData(true);
     }
-    // ---------------------------------------
 
   }, 300) 
 }
@@ -2898,7 +2910,6 @@ const arrowHit = (n, wx, wy) => {
           return { node: n, side: "right-false", x: falseX, y: falseY }
       }
       
-      // Still need left input
       const leftAy = n.y - NODE_H / 2 + HEADER_H / 2
       const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
       if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) return { node: n, side: "left", x: leftAx, y: leftAy }
@@ -2935,7 +2946,9 @@ const arrowHit = (n, wx, wy) => {
       if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) 
           return { node: n, side: "left", x: leftAx, y: leftAy }
 
-  } else if (status && status.node_type === 'Set Variables') {
+  } 
+  // --- UPDATED: Allow Right Output for 'Set Variables' OR 'Gift' ---
+  else if (status && (status.node_type === 'Set Variables' || status.node_type === 'Gift')) {
       const rightAy = n.y - NODE_H / 2 + HEADER_H / 2
       const rightAx = n.x + NODE_W / 2 - ARROW_OFFSET
       if (Math.hypot(wx - rightAx, wy - rightAy) < ARROW_HIT_R) 
@@ -3073,11 +3086,15 @@ const drawNodes = () => {
     const grad = ctx.createLinearGradient(x - NODE_W / 2, y - currentH / 2, x + NODE_W / 2, y - currentH / 2)
     
     const nodeType = status ? status.node_type : "General"
+    
     if (nodeType === 'If-Else') {
          grad.addColorStop(0, "#eab308") 
          grad.addColorStop(1, "#000")
     } else if (nodeType === 'Set Variables') {
          grad.addColorStop(0, "#8b5cf6") 
+         grad.addColorStop(1, "#000")
+    } else if (nodeType === 'Gift') {  /* --- NEW: GIFT COLOR --- */
+         grad.addColorStop(0, "#ec4899") // Pink/Rose Color
          grad.addColorStop(1, "#000")
     } else {
          grad.addColorStop(0, "#ff2a2a") 
@@ -3110,6 +3127,7 @@ const drawNodes = () => {
     
     ctx.fillText(label, x, y - currentH / 2 + HEADER_H / 2)
 
+    // Left Input Arrow (Always present)
     const leftAy = y - currentH / 2 + HEADER_H / 2
     const leftAx = x - NODE_W / 2 + ARROW_OFFSET
     
@@ -3131,7 +3149,7 @@ const drawNodes = () => {
          ctx.fillText("F", x + NODE_W / 2 - 25, y + 20)
          ctx.fillText("▷", x + NODE_W / 2 - ARROW_OFFSET, y + 20)
          
-    } else if (nodeType === 'Set Variables') {
+    } else if (nodeType === 'Set Variables' || nodeType === 'Gift') { /* --- NEW: DRAW GIFT OUTPUT ARROW --- */
          const rightAy = y - currentH / 2 + HEADER_H / 2
          const rightAx = x + NODE_W / 2 - ARROW_OFFSET
          ctx.fillStyle = "#fff"
@@ -3139,7 +3157,14 @@ const drawNodes = () => {
          ctx.textAlign = "center"
          ctx.fillText("▷", rightAx, rightAy)
          
+         // Optional: Add a small icon for the Gift node
+         if (nodeType === 'Gift') {
+             ctx.font = "14px sans-serif"
+             ctx.fillText("🎁", x + NODE_W / 2 - 30, y - currentH / 2 + HEADER_H / 2)
+         }
+
     } else if (hasOptions) {
+        // ... [Existing Options Drawing Logic] ...
         const startY = y - currentH / 2 + HEADER_H + 20;
         
         status.options.forEach((opt, idx) => {
@@ -3382,6 +3407,7 @@ const onMouseUp = e => {
   isPanning = false
   draggingNode = null
 
+  // 1. HANDLE CONNECTION DROPPING
   if (outputDragging) {
     const w = screenToWorld(e.clientX, e.clientY)
     const targetNode = nodes.value.find(nd => {
@@ -3417,15 +3443,25 @@ const onMouseUp = e => {
     outputDragging = null
   }
 
+  // 2. HANDLE NEW NODE DROPPING (FROM MENU)
   if (menuDragging) {
-    // --- FIX START: Calculate ID based on Max ID instead of Length ---
+    // A. Calculate Global Internal ID (Must remain unique across ALL nodes for the engine)
     const maxId = nodes.value.length > 0 ? Math.max(...nodes.value.map(n => n.id)) : -1
     const id = maxId + 1
-    // --- FIX END ---
 
     const x = mouseWorld.x
     const y = mouseWorld.y
     nodes.value.push({ id, x, y })
+    
+    // B. Calculate Visual Name (The Fix)
+    let finalName = `${draggedType} Node ${id}` // Default fallback (e.g. General Node 11)
+
+    // Specific logic for Gift Nodes to have their own counter (0, 1, 2...)
+    if (draggedType === 'Gift') {
+        const typeCount = Canvas_Status.value.filter(n => n.node_type === 'Gift').length
+        finalName = `Gift Node ${typeCount}`
+    }
+
     Canvas_Status.value.push({ 
       index: id, 
       x, 
@@ -3437,8 +3473,9 @@ const onMouseUp = e => {
       scenes: [],
       audio: null,
       options: [],
-      Node_name: `${draggedType} Node ${id}` 
+      Node_name: finalName // <--- Uses the new independent name
     })
+    
     selectedNodeId.value = id
     menuDragging = false
     draggedType = "General" 
@@ -4476,6 +4513,14 @@ const onPreviewWheel = (e) => {
           <div class="menu-node-header" style="background: linear-gradient(to right, #8b5cf6, #000);">
             <span>▷</span>
             <span class="menu-node-title">Set Variables</span>
+            <span>▷</span>
+          </div>
+        </div>
+
+        <div class="menu-node" @mousedown.prevent="menuDragging = true; draggedType = 'Gift'">
+          <div class="menu-node-header" style="background: linear-gradient(to right, #ec4899, #000);">
+            <span>🎁</span>
+            <span class="menu-node-title">Gift Node</span>
             <span>▷</span>
           </div>
         </div>
@@ -5698,6 +5743,35 @@ const onPreviewWheel = (e) => {
                             <div style="text-align:center; color: #ff2a2a;">
                                 <div>False</div>
                                 <div style="font-size:20px;">↓</div>
+                            </div>
+                        </div>
+
+                     </div>
+                </div>
+            </template>
+
+            <template v-else-if="viewMode === 'gift'">
+                <div class="set-variable-view">
+                     <div class="logic-editor-container" style="border-color: #ec4899; box-shadow: 0 10px 30px rgba(236, 72, 153, 0.2);">
+                        <div class="logic-header">
+                            <h3 style="color: #ec4899;">Gift Node 🎁</h3>
+                            <p>Reward & Achievement System</p>
+                        </div>
+
+                        <div style="padding: 40px; display: flex; flex-direction: column; align-items: center; gap: 20px; text-align: center;">
+                            <div style="font-size: 80px; filter: drop-shadow(0 0 20px rgba(236, 72, 153, 0.5)); animation: float 3s ease-in-out infinite;">
+                                🎁
+                            </div>
+                            
+                            <h2 style="color: #fff; margin: 0; font-size: 2rem;">Coming Soon</h2>
+                            
+                            <p style="color: #cbd5e1; max-width: 400px; line-height: 1.6; font-size: 1.1rem;">
+                                We are wrapping up something special! <br>
+                                This node will soon allow you to configure rewards, unlockables, and special items for your players.
+                            </p>
+                            
+                            <div style="margin-top: 20px; padding: 10px 20px; background: rgba(236, 72, 153, 0.1); border-radius: 8px; border: 1px dashed rgba(236, 72, 153, 0.4); color: #fce7f3; font-size: 0.9rem;">
+                                🚧 Development in Progress
                             </div>
                         </div>
 
@@ -8045,5 +8119,16 @@ const onPreviewWheel = (e) => {
     background: rgba(59, 130, 246, 0.1);
     border-color: rgba(59, 130, 246, 0.2);
     color: #94a3b8;
+}
+@keyframes float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-15px); }
+  100% { transform: translateY(0px); }
+}
+
+/* Optional: Polish for the Gift Editor Text */
+.set-variable-view .logic-editor-container h2 {
+    text-shadow: 0 0 10px rgba(236, 72, 153, 0.5);
+    margin-bottom: 10px;
 }
 </style>
