@@ -117,7 +117,19 @@ const NodeSchema = new mongoose.Schema({
     id: Number,
     text: String,
     next: Number
-  }]
+  }],
+
+  // --- NEW: GIFT NODE PROPERTIES ---
+  giftMode: String, // 'pfp' or 'badge'
+  giftName: String,
+  giftFont: String,
+  // Using Mixed for pixelData because it is a 2D array of strings/nulls
+  pixelData: mongoose.Schema.Types.Mixed, 
+  giftAudio: {
+    name: String,
+    url: String,
+    duration: Number
+  }
 }, { _id: false });
 
 const GlobalVarSchema = new mongoose.Schema({
