@@ -17,6 +17,9 @@ import { translate } from "@vitalets/google-translate-api";
 import pLimit from "p-limit";
 import Publish from "./schema/Publish.js"
 import Notification from "./schema/Notification.js"
+import axios from "axios";
+import Razorpay from "razorpay";
+import PayoutRecipient from "./schema/PayoutRecipient.js";
 
 dotenv.config()
 
@@ -31,7 +34,64 @@ const TARGET_LANGUAGES = [
     'en', 'es', 'fr', 'de', 'zh-cn', 'ja', 'ko', 'ru', 'pt', 'hi'
 ];
 
+const ENCRYPTION_KEY = Buffer.from(process.env.PAYOUT_ENC_KEY || '', 'hex'); 
+const IV_LENGTH = 16; // AES block size
+
+function encrypt(text) {
+  if (!text) return text;
+  try {
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+    let encrypted = cipher.update(text);
+    encrypted = Buffer.concat([encrypted, cipher.final()]);
+    return iv.toString('hex') + ':' + encrypted.toString('hex');
+  } catch (e) {
+    console.error("Encryption Error:", e);
+    return null;
+  }
+}
+
+// (Optional) Add this if you build an admin panel later to read the data
+function decrypt(text) {
+  if (!text) return text;
+  try {
+    const textParts = text.split(':');
+    const iv = Buffer.from(textParts.shift(), 'hex');
+    const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+    let decrypted = decipher.update(encryptedText);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    return decrypted.toString();
+  } catch (e) {
+    console.error("Decryption Error:", e);
+    return null;
+  }
+}
+
+const WISE_API_URL = process.env.WISE_API_URL || "https://api.transferwise.com";
+const WISE_API_KEY = process.env.WISE_API_KEY;
+let _cachedProfileId = null;
 const limit = pLimit(5); 
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
+
+const getWiseProfileId = async () => {
+    if (_cachedProfileId) return _cachedProfileId;
+    try {
+        const res = await axios.get(`${WISE_API_URL}/v1/profiles`, {
+            headers: { Authorization: `Bearer ${WISE_API_KEY}` }
+        });
+        // We look for the 'business' profile. If not found, use the first one.
+        const profile = res.data.find(p => p.type === "business") || res.data[0];
+        if (profile) _cachedProfileId = profile.id;
+        return _cachedProfileId;
+    } catch (err) {
+        console.error("Wise Profile Error:", err.response?.data || err.message);
+        return null;
+    }
+};
 
 /* ===== GOOGLE CLOUD STORAGE SETUP ===== */
 const storage = new Storage({
@@ -966,8 +1026,8 @@ app.get("/projects/details/:projectId", authMiddleware, async (req, res) => {
 
 app.get("/user/me", authMiddleware, async (req, res) => {
   try {
-    // req.user.mongoId is populated by your authMiddleware
-    const user = await User.findById(req.user.mongoId).select("email username country");
+    // ✅ ADD 'age' to the select string
+    const user = await User.findById(req.user.mongoId).select("email username country age");
     
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -1283,6 +1343,114 @@ app.post("/posts/:id/play", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("Play tracking error:", err);
     res.status(500).json({ message: "Error tracking play" });
+  }
+});
+
+/* 1. DYNAMIC REQUIREMENTS ROUTE */
+app.get("/payouts/requirements", authMiddleware, async (req, res) => {
+    const { currency } = req.query;
+    
+    if (!currency) return res.status(400).json({ message: "Currency required" });
+
+    try {
+        // We assume YOU (the platform) hold funds in a standard currency like USD or GBP.
+        // Wise needs to know "Source" (You) and "Target" (User).
+        const sourceCurrency = "INR"; 
+
+        const response = await axios.get(`${WISE_API_URL}/v1/account-requirements`, {
+            params: {
+                source: sourceCurrency,
+                target: currency,
+                sourceAmount: 100 // Arbitrary amount to trigger validation rules
+            },
+            headers: { Authorization: `Bearer ${WISE_API_KEY}` }
+        });
+
+        // Wise returns an array of "types" (e.g., for USD: 'aba' (local) and 'swift' (international)).
+        // We send this full list to the frontend.
+        res.json(response.data);
+
+    } catch (err) {
+        console.error("Wise Req Error:", err.response?.data || err.message);
+        res.status(500).json({ message: "Failed to fetch bank requirements" });
+    }
+});
+
+/* 2. CREATE RECIPIENT ROUTE (Generic) */
+app.post("/payouts/wise/create-recipient", authMiddleware, async (req, res) => {
+    const { currency, accountHolderName, type, details } = req.body;
+
+    try {
+        const profileId = await getWiseProfileId();
+        
+        const payload = {
+            currency,
+            type, 
+            profile: profileId,
+            accountHolderName,
+            legalType: "PRIVATE", 
+            details: details 
+        };
+
+        const wiseRes = await axios.post(`${WISE_API_URL}/v1/accounts`, payload, {
+            headers: { Authorization: `Bearer ${WISE_API_KEY}` }
+        });
+
+        console.log(`✅ Wise Recipient Created: ${wiseRes.data.id}`);
+        res.json({ success: true, recipientId: wiseRes.data.id });
+
+    } catch (err) {
+        console.error("Wise Create Error:", err.response?.data || err.message);
+        const msg = err.response?.data?.errors?.map(e => e.message).join(", ") || "Invalid bank details";
+        res.status(400).json({ message: msg });
+    }
+});
+
+app.post("/payouts/razorpay/create-recipient", authMiddleware, async (req, res) => {
+  const { name, email, phone, accountNumber, ifsc, upiId } = req.body;
+
+  try {
+    // 1. Encrypt Sensitive Data
+    const encAccount = encrypt(accountNumber);
+    const encIfsc = encrypt(ifsc); // Optional, but good practice
+    const encUpi = encrypt(upiId);
+
+    // 2. Check/Update Logic (We search by userId now, not accountNumber since it's encrypted differently every time)
+    let recipient = await PayoutRecipient.findOne({ 
+      userId: req.user.mongoId,
+      currency: 'INR'
+    });
+
+    if (recipient) {
+      recipient.accountHolderName = name;
+      recipient.phone = phone;
+      recipient.accountNumber = encAccount;
+      recipient.ifsc = encIfsc;
+      recipient.upiId = encUpi;
+      recipient.updatedAt = new Date();
+      await recipient.save();
+    } else {
+      recipient = new PayoutRecipient({
+        userId: req.user.mongoId,
+        currency: 'INR',
+        accountHolderName: name,
+        email,
+        phone,
+        accountNumber: encAccount,
+        ifsc: encIfsc,
+        upiId: encUpi,
+        method: 'manual_inr'
+      });
+      await recipient.save();
+    }
+
+    console.log(`✅ Secured Manual Payout Details: ${recipient._id}`);
+    
+    res.json({ success: true, recipientId: recipient._id.toString() });
+
+  } catch (err) {
+    console.error("Manual Save Error:", err);
+    res.status(500).json({ message: "Failed to save details locally." });
   }
 });
 

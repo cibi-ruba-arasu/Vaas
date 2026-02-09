@@ -11,12 +11,12 @@ const project = ref(null);
 const loading = ref(true);
 const isUploading = ref(false);
 const isPublishing = ref(false);
-const fetchError = ref(null); // Added for error state
+const fetchError = ref(null);
 
 const localName = ref("");
 const titleFont = ref("Cinzel"); 
 
-/* --- UNHEALTHY AMOUNT OF FONTS --- */
+/* --- FONTS --- */
 const FONT_OPTIONS = [
   "Cinzel", "Playfair Display", "Merriweather", "Lora", "Libre Baskerville", "Cormorant Garamond", "EB Garamond",
   "Inter", "Roboto", "Open Sans", "Lato", "Montserrat", "Poppins", "Raleway", "Oswald", "Quicksand",
@@ -38,6 +38,51 @@ const SUPPORTED_LANGUAGES = [
   { code: "id", name: "Indonesian" }, { code: "sv", name: "Swedish" }, { code: "fil", name: "Filipino" },
   { code: "ms", name: "Malay" }, { code: "uk", name: "Ukrainian" }, { code: "el", name: "Greek" },
   { code: "he", name: "Hebrew" }
+];
+
+/* --- PAYOUT CURRENCIES --- */
+const PAYOUT_CURRENCIES = [
+  { code: "INR", name: "Indian Rupee (Manual/UPI)" }, // Manual Flow
+  { code: "USD", name: "United States Dollar" },
+  { code: "EUR", name: "Euro" },
+  { code: "GBP", name: "British Pound" },
+  { code: "AUD", name: "Australian Dollar" },
+  { code: "CAD", name: "Canadian Dollar" },
+  { code: "SGD", name: "Singapore Dollar" },
+  { code: "NZD", name: "New Zealand Dollar" },
+  { code: "AED", name: "Emirati Dirham" },
+  { code: "BGN", name: "Bulgarian Lev" },
+  { code: "BRL", name: "Brazilian Real" },
+  { code: "CHF", name: "Swiss Franc" },
+  { code: "CNY", name: "Chinese Yuan" },
+  { code: "CZK", name: "Czech Koruna" },
+  { code: "DKK", name: "Danish Krone" },
+  { code: "EGP", name: "Egyptian Pound" },
+  { code: "HKD", name: "Hong Kong Dollar" },
+  { code: "HUF", name: "Hungarian Forint" },
+  { code: "IDR", name: "Indonesian Rupiah" },
+  { code: "ILS", name: "Israeli Shekel" },
+  { code: "JPY", name: "Japanese Yen" },
+  { code: "KES", name: "Kenyan Shilling" },
+  { code: "KRW", name: "South Korean Won" },
+  { code: "LKR", name: "Sri Lankan Rupee" },
+  { code: "MAD", name: "Moroccan Dirham" },
+  { code: "MXN", name: "Mexican Peso" },
+  { code: "MYR", name: "Malaysian Ringgit" },
+  { code: "NGN", name: "Nigerian Naira" },
+  { code: "NOK", name: "Norwegian Krone" },
+  { code: "NPR", name: "Nepalese Rupee" },
+  { code: "PEN", name: "Peruvian Sol" },
+  { code: "PHP", name: "Philippine Peso" },
+  { code: "PKR", name: "Pakistani Rupee" },
+  { code: "PLN", name: "Polish Zloty" },
+  { code: "RON", name: "Romanian Leu" },
+  { code: "SEK", name: "Swedish Krona" },
+  { code: "THB", name: "Thai Baht" },
+  { code: "TRY", name: "Turkish Lira" },
+  { code: "UAH", name: "Ukrainian Hryvnia" },
+  { code: "VND", name: "Vietnamese Dong" },
+  { code: "ZAR", name: "South African Rand" }
 ];
 
 /* --- CATEGORY DATA --- */
@@ -88,7 +133,7 @@ const WARNING_OPTIONS = [
   "Hate Speech / Discrimination", "Misogyny / Sexism", "Racism", 
   "Homophobia / Transphobia", "Religious Iconography / Cults",
   "Claustrophobia", "Arachnophobia (Spiders)", "Thalassophobia (Deep Water)", 
-  "Trypophobia (Holes)", "Emetic / Vomiting"
+  "Trypophobia (Holes)", "Emetic / Vomiting", "Others"
 ];
 
 const toggleWarning = (warn) => {
@@ -107,10 +152,190 @@ const setSafeContent = () => {
   }
 };
 
-/* --- MONETIZATION STATE --- */
+/* --- MONETIZATION & BANKING STATE --- */
 const isPaid = ref(false);
 const hasDemo = ref(false);
 const demoNodeLimit = ref(10);
+const payoutCurrency = ref("USD");
+const wiseRecipientId = ref(null);
+
+const showCurrencyModal = ref(false);
+const showBankConfirmation = ref(false);
+const isLoadingRequirements = ref(false);
+const isProcessingBank = ref(false);
+
+// WISE Logic
+const transferOptions = ref([]); 
+const selectedTransferType = ref(null); 
+const bankDetails = ref({}); 
+
+// RAZORPAY / MANUAL INR Logic
+const isRazorpayFlow = computed(() => payoutCurrency.value === "INR");
+const razorpayForm = ref({
+  accountHolderName: "",
+  accountNumber: "",
+  confirmAccountNumber: "",
+  ifsc: "",
+  phone: "",
+  upiId: "" // ✅ Added UPI
+});
+
+// Shared Logic
+const accountHolderName = ref(""); // Synced for Wise, separate for Razorpay via obj
+
+/* 1. FETCH REQUIREMENTS (Wise Only) */
+const fetchRequirements = async (currency) => {
+  if (currency === "INR") return;
+
+  isLoadingRequirements.value = true;
+  transferOptions.value = [];
+  selectedTransferType.value = null;
+  bankDetails.value = {};
+  
+  try {
+    const res = await fetch(`http://localhost:5000/payouts/requirements?currency=${currency}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const data = await res.json();
+    
+    if (Array.isArray(data) && data.length > 0) {
+      transferOptions.value = data;
+      selectTransferMethod(data[0]);
+    } else {
+      alert("No payout methods available for this currency via Wise.");
+    }
+  } catch (e) {
+    console.error("Wise Req Error", e);
+  } finally {
+    isLoadingRequirements.value = false;
+  }
+};
+
+/* 2. SELECT TRANSFER METHOD (Wise) */
+const selectTransferMethod = (option) => {
+  selectedTransferType.value = option;
+  bankDetails.value = {}; 
+};
+
+/* 3. OPEN MODAL & INIT */
+const handlePaidClick = () => {
+  isPaid.value = true;
+  showCurrencyModal.value = true;
+  if (payoutCurrency.value !== "INR") {
+    fetchRequirements(payoutCurrency.value);
+  }
+};
+
+/* 4. PRE-SUBMIT: TRIGGER CONFIRMATION */
+const triggerBankConfirmation = () => {
+  
+  if (isRazorpayFlow.value) {
+    // Manual INR Validation
+    const rf = razorpayForm.value;
+    if (!rf.accountHolderName || !rf.phone) {
+      return alert("Name and Phone are required.");
+    }
+    // Require EITHER Bank OR UPI
+    if (!rf.upiId && (!rf.accountNumber || !rf.ifsc)) {
+      return alert("Please provide either Bank Details OR UPI ID.");
+    }
+    if (rf.accountNumber && rf.accountNumber !== rf.confirmAccountNumber) {
+      return alert("Account numbers do not match.");
+    }
+  } else {
+    // Wise Validation
+    if (!accountHolderName.value) return alert("Please enter the account holder name");
+    
+    if (selectedTransferType.value) {
+      const requiredFields = selectedTransferType.value.fields.map(f => f.group[0].key);
+      for (const field of requiredFields) {
+        if (!bankDetails.value[field]) return alert(`Please fill in all fields`);
+      }
+    }
+  }
+
+  showCurrencyModal.value = false;
+  showBankConfirmation.value = true;
+};
+
+/* 5. FINAL SUBMIT TO SERVER */
+const finalizeBankSubmission = async () => {
+  isProcessingBank.value = true;
+
+  try {
+    let url, body;
+
+    if (isRazorpayFlow.value) {
+      // --- MANUAL INR PAYLOAD ---
+      url = "http://localhost:5000/payouts/razorpay/create-recipient";
+      body = {
+        name: razorpayForm.value.accountHolderName,
+        email: "user@loomart.io",
+        phone: razorpayForm.value.phone,
+        accountNumber: razorpayForm.value.accountNumber,
+        ifsc: razorpayForm.value.ifsc.toUpperCase(),
+        upiId: razorpayForm.value.upiId // ✅ Sending UPI
+      };
+    } else {
+      // --- WISE PAYLOAD ---
+      url = "http://localhost:5000/payouts/wise/create-recipient";
+      body = {
+        currency: payoutCurrency.value,
+        accountHolderName: accountHolderName.value,
+        type: selectedTransferType.value.type,
+        details: bankDetails.value
+      };
+    }
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body)
+    });
+
+    const data = await res.json();
+    
+    if (data.success) {
+      wiseRecipientId.value = data.recipientId; 
+      alert("✅ Bank Details Secured!");
+      showBankConfirmation.value = false; 
+      await saveProject(null); 
+    } else {
+      alert("Error: " + data.message);
+      showBankConfirmation.value = false;
+      showCurrencyModal.value = true;
+    }
+  } catch (e) {
+    alert("Connection failed");
+  } finally {
+    isProcessingBank.value = false;
+  }
+};
+
+const cancelPaidSelection = () => {
+  showCurrencyModal.value = false;
+  // If no ID exists, revert to free
+  if (!wiseRecipientId.value) {
+    isPaid.value = false;
+  }
+};
+
+const backToEditBank = () => {
+  showBankConfirmation.value = false;
+  showCurrencyModal.value = true;
+};
+
+const switchToFree = () => {
+  isPaid.value = false;
+  hasDemo.value = false;
+};
+
+/* --- HELPER TO WATCH CURRENCY CHANGE --- */
+watch(payoutCurrency, (newVal) => {
+  if (newVal !== "INR") {
+    fetchRequirements(newVal);
+  }
+});
 
 /* --- ADVANCED DESCRIPTION STATE --- */
 const containerColors = ref(["#1e293b", "#0f172a"]);
@@ -145,8 +370,10 @@ const Publish_Status = computed(() => {
     monetization: {
       isPaid: isPaid.value,
       hasDemo: hasDemo.value,
-      demoNodeLimit: demoNodeLimit.value
-    }
+      demoNodeLimit: demoNodeLimit.value,
+      payoutCurrency: payoutCurrency.value
+    },
+    wiseRecipientId: wiseRecipientId.value
   }
 });
 
@@ -160,6 +387,7 @@ const isFormValid = computed(() => {
   if (selectedCategories.value.length === 0) return false;
   if (!isSafeContent.value && selectedWarnings.value.length === 0) return false;
   if (blocks.value.length === 0) return false;
+  if (isPaid.value && !wiseRecipientId.value) return false; // Must have bank linked if paid
   return true;
 });
 
@@ -239,6 +467,13 @@ const fetchProjectDetails = async () => {
         isPaid.value = project.value.monetization.isPaid || false;
         hasDemo.value = project.value.monetization.hasDemo || false;
         demoNodeLimit.value = project.value.monetization.demoNodeLimit || 10;
+        if (project.value.monetization.payoutCurrency) {
+          payoutCurrency.value = project.value.monetization.payoutCurrency;
+        }
+      }
+      
+      if (project.value.wiseRecipientId) {
+        wiseRecipientId.value = project.value.wiseRecipientId;
       }
 
       try {
@@ -278,11 +513,8 @@ const updateThumbnail = async (base64) => {
 };
 
 const publishProject = async () => {
-  // ❌ REMOVE THIS LINE: This was overwriting your Project DB
-  // await saveProject(null); 
-
-  if (isPaid.value) {
-    alert("Paid publishing is coming soon! Only Free projects can be published right now.");
+  if (isPaid.value && !wiseRecipientId.value) {
+    showCurrencyModal.value = true; // Force setup
     return;
   }
 
@@ -294,7 +526,6 @@ const publishProject = async () => {
         "Content-Type": "application/json", 
         Authorization: `Bearer ${token}` 
       },
-      // This sends the data ONLY to the Publish database
       body: JSON.stringify(Publish_Status.value) 
     });
 
@@ -329,10 +560,11 @@ const saveProject = async (newThumbnail = null) => {
       monetization: { 
         isPaid: isPaid.value,
         hasDemo: hasDemo.value,
-        demoNodeLimit: demoNodeLimit.value
+        demoNodeLimit: demoNodeLimit.value,
+        payoutCurrency: payoutCurrency.value
       },
-      thumbnail: newThumbnail || project.value.thumbnail,
-      titleFont: titleFont.value // Added to ensure font is saved
+      wiseRecipientId: wiseRecipientId.value,
+      thumbnail: newThumbnail || project.value.thumbnail
     };
     const res = await fetch(`http://localhost:5000/projects/${projectId}`, {
       method: "PUT",
@@ -400,6 +632,12 @@ const activeBlock = computed(() => {
               {{ isPaid ? 'Premium / Paid' : 'Free to Play' }}
             </span>
           </div>
+          
+          <div v-if="isPaid" class="dash-meta-row">
+            <span class="meta-label">Currency:</span>
+            <span class="meta-val">{{ payoutCurrency }}</span>
+          </div>
+
           <div v-if="isPaid && hasDemo" class="dash-meta-row">
             <span class="meta-label">Demo:</span>
             <span class="meta-val">Enabled ({{ demoNodeLimit }} Nodes)</span>
@@ -673,14 +911,14 @@ const activeBlock = computed(() => {
               <button 
                 class="tag-chip" 
                 :class="{ selected: !isPaid }" 
-                @click="isPaid = false"
+                @click="switchToFree"
               >
                 🎁 Free to Play
               </button>
               <button 
                 class="tag-chip" 
                 :class="{ selected: isPaid }" 
-                @click="isPaid = true"
+                @click="handlePaidClick"
               >
                 💎 Paid / Premium
               </button>
@@ -705,6 +943,20 @@ const activeBlock = computed(() => {
                   <span class="limit-desc">Users can play up to {{ demoNodeLimit }} nodes.</span>
                 </div>
               </div>
+              
+              <div class="currency-display" @click="showCurrencyModal = true">
+                 <span class="label">Payout Currency:</span>
+                 <span class="val">{{ payoutCurrency }} (Click to Change)</span>
+              </div>
+              
+              <div v-if="wiseRecipientId" class="bank-connected">
+                 <span>✅ Payouts Active ({{ isRazorpayFlow ? 'Manual' : 'Wise' }})</span>
+                 <button class="text-btn" @click="showCurrencyModal = true">Update Bank</button>
+               </div>
+               <div v-else class="bank-connected warning">
+                 <span>⚠️ You must setup payouts to publish</span>
+                 <button class="text-btn" @click="showCurrencyModal = true">Setup Now</button>
+               </div>
             </div>
 
           </div>
@@ -712,6 +964,184 @@ const activeBlock = computed(() => {
 
       </div>
     </div>
+
+    <div v-if="showCurrencyModal" class="modal-overlay">
+      <div class="currency-modal">
+        <div class="modal-header">
+          <h3 class="modal-title">Payout Settings</h3>
+          <button @click="cancelPaidSelection" class="close-x">×</button>
+        </div>
+
+        <div class="top-controls">
+          <div class="currency-strip">
+            <label>I want to receive:</label>
+            <select v-model="payoutCurrency" @change="fetchRequirements(payoutCurrency)" class="currency-select">
+               <option v-for="c in PAYOUT_CURRENCIES" :key="c.code" :value="c.code">{{ c.code }} - {{ c.name }}</option>
+            </select>
+          </div>
+
+          <div v-if="!isRazorpayFlow && selectedTransferType && transferOptions.length > 1" class="tabs-row">
+            <button 
+              v-for="opt in transferOptions" 
+              :key="opt.type"
+              class="tab-btn"
+              :class="{ active: selectedTransferType.type === opt.type }"
+              @click="selectTransferMethod(opt)"
+            >
+              {{ opt.title }}
+            </button>
+          </div>
+        </div>
+
+        <div class="form-scroll-container">
+          
+          <div v-if="!isRazorpayFlow && isLoadingRequirements" class="loading-state-modal">
+            <div class="spinner small"></div>
+            <span>Fetching Wise requirements...</span>
+          </div>
+
+          <div v-else-if="isRazorpayFlow" class="dynamic-form">
+             <div class="input-group">
+              <label>Beneficiary Name</label>
+              <input v-model="razorpayForm.accountHolderName" placeholder="As per Bank Records" class="std-input" />
+            </div>
+            
+            <div class="input-group">
+              <label>Phone Number</label>
+              <input v-model="razorpayForm.phone" type="tel" placeholder="Required for alerts" class="std-input" />
+            </div>
+
+            <div class="input-group">
+              <label>Account Number</label>
+              <input v-model="razorpayForm.accountNumber" type="password" class="std-input" />
+            </div>
+
+            <div class="input-group">
+              <label>Confirm Account Number</label>
+              <input v-model="razorpayForm.confirmAccountNumber" class="std-input" />
+            </div>
+
+            <div class="input-group">
+              <label>IFSC Code</label>
+              <input v-model="razorpayForm.ifsc" placeholder="e.g. HDFC0001234" class="std-input" style="text-transform: uppercase;" />
+            </div>
+
+            <div class="input-group">
+              <label>UPI ID (Recommended)</label>
+              <input v-model="razorpayForm.upiId" placeholder="username@bank" class="std-input" />
+            </div>
+          </div>
+
+          <div v-else-if="selectedTransferType" class="dynamic-form">
+            <div class="input-group">
+              <label>Account Holder Name</label>
+              <input v-model="accountHolderName" placeholder="Full Legal Name" class="std-input" />
+            </div>
+
+            <div v-for="field in selectedTransferType.fields" :key="field.name" class="input-group">
+              <label>{{ field.name }}</label>
+              
+              <select 
+                v-if="field.group[0].type === 'select'"
+                v-model="bankDetails[field.group[0].key]"
+                class="std-input"
+              >
+                <option disabled value="">Select {{ field.name }}</option>
+                <option 
+                  v-for="opt in (field.group[0].valuesAllowed || field.group[0].values || [])" 
+                  :key="opt.key" 
+                  :value="opt.key"
+                >
+                  {{ opt.name }}
+                </option>
+                <option v-if="!(field.group[0].valuesAllowed || field.group[0].values || []).length" disabled>
+                  Empty (Check Console)
+                </option>
+              </select>
+
+              <input 
+                v-else 
+                v-model="bankDetails[field.group[0].key]"
+                :placeholder="field.group[0].example || ''"
+                class="std-input"
+              />
+            </div>
+          </div>
+          
+          <div v-else class="empty-state-modal">
+             Select a currency to see requirements.
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button @click="triggerBankConfirmation" class="save-btn full-width">
+            Verify & Save Details
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <div v-if="showBankConfirmation" class="modal-overlay">
+      <div class="currency-modal confirmation-size">
+        <div class="modal-header">
+          <h3 class="modal-title warning-text">⚠️ Confirm Bank Details</h3>
+          <button @click="backToEditBank" class="close-x">×</button>
+        </div>
+
+        <div class="form-scroll-container">
+          <div class="confirmation-box">
+            <p class="confirm-intro">
+              Please review your details carefully. 
+              <strong>Incorrect information will cause payouts to fail</strong> and funds may be delayed or returned.
+              <br><br>
+              <span v-if="isRazorpayFlow" style="font-size: 0.85rem; color: #94a3b8;">
+                Note: Manual payouts are processed within 24-48 hours.
+              </span>
+            </p>
+
+            <div v-if="isRazorpayFlow" class="summary-list">
+              <div class="summary-item"><span class="s-label">Method:</span><span class="s-val">Manual (India)</span></div>
+              <div class="summary-item"><span class="s-label">Name:</span><span class="s-val">{{ razorpayForm.accountHolderName }}</span></div>
+              <div class="summary-item"><span class="s-label">Phone:</span><span class="s-val">{{ razorpayForm.phone }}</span></div>
+              <div v-if="razorpayForm.accountNumber" class="summary-item"><span class="s-label">Account:</span><span class="s-val">{{ razorpayForm.accountNumber }}</span></div>
+              <div v-if="razorpayForm.ifsc" class="summary-item"><span class="s-label">IFSC:</span><span class="s-val">{{ razorpayForm.ifsc }}</span></div>
+              <div v-if="razorpayForm.upiId" class="summary-item"><span class="s-label">UPI:</span><span class="s-val">{{ razorpayForm.upiId }}</span></div>
+            </div>
+
+            <div v-else class="summary-list">
+              <div class="summary-item">
+                <span class="s-label">Currency:</span>
+                <span class="s-val">{{ payoutCurrency }}</span>
+              </div>
+              <div class="summary-item">
+                <span class="s-label">Name:</span>
+                <span class="s-val">{{ accountHolderName }}</span>
+              </div>
+              
+              <div v-for="(val, key) in bankDetails" :key="key" class="summary-item">
+                <span class="s-label">{{ key }}:</span>
+                <span class="s-val">{{ val }}</span>
+              </div>
+            </div>
+
+            <div class="confirm-warning">
+              I confirm that these banking details are accurate and belong to me.
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <div class="dual-actions">
+            <button @click="backToEditBank" class="cancel-btn">Edit</button>
+            <button @click="finalizeBankSubmission" class="save-btn" :disabled="isProcessingBank">
+              {{ isProcessingBank ? 'Securing...' : 'Confirm & Save' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -852,9 +1282,9 @@ input[type="range"] { width: 100%; height: 4px; background: rgba(255,255,255,0.2
 .safe-mode:hover { background: rgba(34, 197, 94, 0.1); color: white; }
 .safe-mode.selected { background: #22c55e; color: black; box-shadow: 0 4px 15px rgba(34, 197, 94, 0.4); }
 
-/* NSFW TOGGLE ROW (Shared Style for Monetization too) */
+/* NSFW TOGGLE ROW */
 .nsfw-toggle-row { display: flex; justify-content: space-between; align-items: center; background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2); padding: 20px; border-radius: 12px; }
-.nsfw-toggle-row.no-border { border: none; background: transparent; padding: 0; margin-bottom: 20px; } /* For demo toggle */
+.nsfw-toggle-row.no-border { border: none; background: transparent; padding: 0; margin-bottom: 20px; }
 .nsfw-label { font-weight: 700; color: #fca5a5; font-size: 1rem; }
 .nsfw-desc { margin: 5px 0 0 0; color: #94a3b8; font-size: 0.85rem; }
 
@@ -866,6 +1296,15 @@ input[type="range"] { width: 100%; height: 4px; background: rgba(255,255,255,0.2
 .demo-num-input { width: 80px; padding: 8px; border-radius: 8px; background: #0f172a; border: 1px solid #334155; color: white; outline: none; }
 .limit-desc { font-size: 0.85rem; color: #64748b; }
 .mb-0 { margin-bottom: 0; }
+.currency-display { margin-top: 20px; padding: 12px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; transition: 0.2s; }
+.currency-display:hover { background: rgba(59, 130, 246, 0.2); border-color: #3b82f6; }
+.currency-display .label { color: #93c5fd; font-weight: 600; }
+.currency-display .val { color: white; font-weight: 700; }
+
+.bank-connected { margin-top: 15px; display: flex; justify-content: space-between; align-items: center; background: rgba(34, 197, 94, 0.1); border: 1px dashed #22c55e; padding: 12px 15px; border-radius: 10px; font-size: 0.9rem; color: #86efac; }
+.bank-connected.warning { background: rgba(234, 179, 8, 0.1); border-color: #eab308; color: #fde047; }
+.text-btn { background: none; border: none; color: inherit; text-decoration: underline; cursor: pointer; font-size: 0.85rem; font-weight: 600; opacity: 0.9; }
+.text-btn:hover { opacity: 1; }
 
 /* TOGGLE SWITCH */
 .toggle-switch { position: relative; display: inline-block; width: 50px; height: 26px; }
@@ -875,7 +1314,98 @@ input[type="range"] { width: 100%; height: 4px; background: rgba(255,255,255,0.2
 input:checked + .slider { background-color: #ef4444; }
 input:checked + .slider:before { transform: translateX(24px); }
 
+/* REFACTORED CURRENCY MODAL - FLEX COLUMN STRUCTURE */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); display: flex; justify-content: center; align-items: center; z-index: 200; }
+
+/* 1. Modal Container */
+.currency-modal { 
+  background: #0f172a; 
+  border: 1px solid #334155; 
+  width: 500px; 
+  border-radius: 16px; 
+  box-shadow: 0 20px 50px rgba(0,0,0,0.7); 
+  display: flex; 
+  flex-direction: column; 
+  max-height: 80vh; /* Limits total height */
+}
+
+.currency-modal.confirmation-size {
+  max-width: 450px;
+}
+
+/* 2. Header (Fixed) */
+.modal-header { 
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center; 
+  padding: 20px 30px 10px; 
+  border-bottom: 1px solid transparent; 
+}
+.modal-title { margin: 0; color: white; font-size: 1.5rem; }
+.warning-text { color: #fde047; }
+.close-x { background: transparent; border: none; color: #64748b; font-size: 1.5rem; cursor: pointer; }
+
+/* 3. Top Controls (Fixed) */
+.top-controls {
+  padding: 0 30px;
+  margin-top: 10px;
+}
+.currency-strip { margin-bottom: 15px; display: flex; flex-direction: column; gap: 8px; }
+.currency-select { background: #1e293b; border: 1px solid #475569; color: white; padding: 12px; border-radius: 8px; font-size: 1rem; cursor: pointer; width: 100%; box-sizing: border-box; }
+.tabs-row { display: flex; gap: 10px; border-bottom: 1px solid #334155; padding-bottom: 10px; margin-bottom: 10px; }
+.tab-btn { background: transparent; border: none; color: #94a3b8; padding: 5px 10px; cursor: pointer; font-size: 0.9rem; }
+.tab-btn.active { color: #3b82f6; font-weight: 700; border-bottom: 2px solid #3b82f6; }
+
+/* 4. Scrollable Content Area */
+.form-scroll-container {
+  flex-grow: 1; /* Takes up remaining space */
+  overflow-y: auto; /* Enables scrolling */
+  padding: 10px 30px;
+  min-height: 0; /* Crucial for flex child scrolling */
+}
+
+.loading-state-modal { text-align: center; color: #94a3b8; padding: 40px; font-style: italic; }
+.empty-state-modal { text-align: center; color: #64748b; padding: 40px; font-style: italic; }
+
+.input-group { margin-bottom: 15px; display: flex; flex-direction: column; gap: 6px; }
+.input-group label { color: #cbd5e1; font-size: 0.85rem; font-weight: 600; }
+.std-input { background: #1e293b; border: 1px solid #334155; padding: 12px; border-radius: 8px; color: white; width: 100%; box-sizing: border-box; font-size: 1rem; }
+.std-input:focus { border-color: #3b82f6; outline: none; }
+
+/* CONFIRMATION BOX STYLES */
+.confirmation-box { padding: 10px 0; }
+.confirm-intro { color: #cbd5e1; font-size: 0.95rem; line-height: 1.5; margin-bottom: 20px; }
+.confirm-intro strong { color: #fca5a5; }
+
+.summary-list { background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 15px; margin-bottom: 20px; }
+.summary-item { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 0.9rem; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 8px; }
+.summary-item:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+.s-label { color: #94a3b8; }
+.s-val { color: white; font-weight: 600; text-align: right; max-width: 60%; word-break: break-word; }
+
+.confirm-warning { font-size: 0.8rem; color: #fde047; text-align: center; font-style: italic; background: rgba(234, 179, 8, 0.1); padding: 10px; border-radius: 8px; border: 1px dashed rgba(234, 179, 8, 0.3); }
+
+/* 5. Footer (Fixed) */
+.modal-footer {
+  padding: 20px 30px;
+  border-top: 1px solid rgba(255,255,255,0.1);
+  background: #0f172a; /* Covers content scrolling behind */
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+}
+
+.save-btn.full-width { width: 100%; padding: 14px; font-size: 1rem; background: #22c55e; color: #022c22; border: none; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s; }
+.save-btn.full-width:hover { background: #4ade80; }
+.save-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+
+.dual-actions { display: flex; gap: 10px; }
+.dual-actions .cancel-btn { flex: 1; padding: 14px; border: 1px solid rgba(255,255,255,0.1); background: transparent; color: #94a3b8; border-radius: 8px; cursor: pointer; }
+.dual-actions .cancel-btn:hover { color: white; border-color: white; }
+.dual-actions .save-btn { flex: 2; background: #22c55e; color: #022c22; border: none; padding: 14px; border-radius: 8px; font-weight: 700; cursor: pointer; }
+.dual-actions .save-btn:hover { background: #4ade80; }
+
 .spinner { width: 30px; height: 30px; border: 3px solid rgba(255,255,255,0.1); border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; }
+.spinner.small { width: 20px; height: 20px; border-width: 2px; display: inline-block; margin-right: 10px; vertical-align: middle; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 900px) {
