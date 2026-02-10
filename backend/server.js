@@ -236,10 +236,9 @@ const processProjectAssets = async (nodes, userId, projectId) => {
       usedFilePaths.add(result.path);
       return result.url;
     }
-    return null; // Keep original if upload fails
+    return null; 
   };
 
-  // Helper to track existing GCS URLs
   const trackExistingUrl = (url) => {
     if (url && url.includes(bucketName)) {
       const urlParts = url.split(`${bucketName}/`);
@@ -250,14 +249,26 @@ const processProjectAssets = async (nodes, userId, projectId) => {
   // 1. Iterate Nodes
   for (const node of nodes) {
     
-    // --- A. Process Node Audio ---
+    // --- A. Process Standard Node Audio ---
     if (node.audio && node.audio.url) {
       if (node.audio.url.startsWith("data:")) {
         console.log(`[Audio] Found new audio for Node ${node.index}`);
         const newUrl = await processAsset(node.audio.url, "audio");
-        if (newUrl) node.audio.url = newUrl; // Only update on success
+        if (newUrl) node.audio.url = newUrl; 
       } else {
         trackExistingUrl(node.audio.url);
+      }
+    }
+
+    // --- NEW: Process Gift Node Audio ---
+    if (node.giftAudio && node.giftAudio.url) {
+      if (node.giftAudio.url.startsWith("data:")) {
+        console.log(`[Gift] Found new audio for Gift Node ${node.index}`);
+        // Upload with a specific prefix 'gift_audio'
+        const newUrl = await processAsset(node.giftAudio.url, "gift_audio");
+        if (newUrl) node.giftAudio.url = newUrl; 
+      } else {
+        trackExistingUrl(node.giftAudio.url);
       }
     }
 
@@ -266,7 +277,6 @@ const processProjectAssets = async (nodes, userId, projectId) => {
       for (const scene of node.scenes) {
         if (scene.components) {
           for (const comp of scene.components) {
-            
             if (comp.type === "image" || comp.type === "video") {
               if (comp.url && comp.url.startsWith("data:")) {
                 const safeName = comp.name ? comp.name.replace(/[^a-z0-9]/gi, '_') : 'asset';
@@ -276,7 +286,6 @@ const processProjectAssets = async (nodes, userId, projectId) => {
                 trackExistingUrl(comp.url);
               }
             }
-            
           }
         }
       }
@@ -285,6 +294,7 @@ const processProjectAssets = async (nodes, userId, projectId) => {
 
   return { updatedNodes: nodes, usedFilePaths };
 };
+
 /* ===== HELPER: CLEANUP ORPHANED FILES ===== */
 const cleanupOrphanedFiles = async (userId, projectId, usedFilePaths) => {
   const prefix = `users/${userId}/projects/${projectId}/`;
