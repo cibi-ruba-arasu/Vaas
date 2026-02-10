@@ -42,6 +42,10 @@ const giftAudioInputRef = ref(null)
 const isSaving = ref(false) // <--- NEW STATE
 const currentTip = ref("")  // <--- NEW STATE
 
+const previewGiftMode = ref(false)
+const previewGiftData = ref(null) // Stores current gift node data
+const previewGiftCanvasRef = ref(null) // Reference to the canvas in preview
+
 const tips = [
     "⚠️ Important: For the best experience, please create and edit your project on a single device to avoid sync conflicts.",
     "💡 Pro Tip: Use the 'Preview' mode often to test your logic flows before publishing.",
@@ -214,6 +218,104 @@ const handleGiftAudioUpload = (event) => {
     
     reader.readAsDataURL(file)
     event.target.value = ''
+}
+
+const showRewardNotification = ref(false)
+const rewardNotificationData = ref({
+    title: "",
+    name: "",
+    font: "Roboto"
+})
+
+// Audio for Gift Preview
+const previewGiftAudio = ref(null)
+
+const playGiftNode = (node) => {
+    // 1. Setup Data
+    previewGiftMode.value = true
+    previewGiftData.value = node
+    
+    // 2. Play Audio
+    if (node.giftAudio && node.giftAudio.url) {
+        if (previewGiftAudio.value) previewGiftAudio.value.pause()
+        previewGiftAudio.value = new Audio(node.giftAudio.url)
+        previewGiftAudio.value.volume = 0.5
+        previewGiftAudio.value.play().catch(e => console.warn("Audio play blocked", e))
+    }
+
+    // 3. Trigger Notification (Slide Down)
+    const typeLabel = node.giftMode === 'badge' ? "You earned a new badge" : "You just received a new pfp"
+    rewardNotificationData.value = {
+        title: typeLabel,
+        name: node.giftName,
+        font: node.giftFont
+    }
+    
+    showRewardNotification.value = true
+    
+    // Slide back up after 4 seconds
+    setTimeout(() => {
+        showRewardNotification.value = false
+    }, 4000)
+
+    // 4. Render Pixel Art (Next Tick to ensure Canvas exists)
+    nextTick(() => {
+        renderPreviewGiftCanvas(node.pixelData, node.giftMode)
+    })
+}
+
+const renderPreviewGiftCanvas = (pixelData, mode) => {
+    if (!previewGiftCanvasRef.value || !pixelData) return
+    const ctx = previewGiftCanvasRef.value.getContext('2d')
+    const w = previewGiftCanvasRef.value.width
+    const h = previewGiftCanvasRef.value.height
+    const cellSize = w / 64
+
+    ctx.clearRect(0, 0, w, h)
+
+    // Draw pixels
+    for (let y = 0; y < 64; y++) {
+        for (let x = 0; x < 64; x++) {
+            const color = pixelData[y][x]
+            if (color) {
+                ctx.fillStyle = color
+                ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize)
+            }
+        }
+    }
+}
+
+const closeGiftAndContinue = () => {
+    if (!previewGiftData.value) return
+
+    // Stop Audio
+    if (previewGiftAudio.value) {
+        previewGiftAudio.value.pause()
+        previewGiftAudio.value = null
+    }
+
+    // Get the next node ID
+    const nextNodeId = previewGiftData.value.Next
+    
+    // Close the Overlay
+    previewGiftMode.value = false
+    previewGiftData.value = null
+    
+    // --- NAVIGATION LOGIC ---
+    if (nextNodeId !== null && nextNodeId !== undefined) {
+        const nextNode = Canvas_Status.value.find(n => n.index === nextNodeId)
+        
+        if (nextNode) {
+            // Call the main loader to move to the next node
+            loadNodeForPreview(nextNodeId) 
+        } else {
+            // If connected to nothing, exit
+            exitPreview() 
+        }
+    } else {
+        // If no output connection, exit
+        exitPreview()
+    }
 }
 
 const removeGiftAudio = () => {
@@ -4428,7 +4530,7 @@ const loadNodeForPreview = (targetNodeId) => {
     let safetyCounter = 0;
 
     // --- SEAMLESS LOGIC LOOP ---
-    // Keep processing and jumping until we hit a visual node (General) or stop
+    // Keep processing and jumping until we hit a visual node or stop
     while (currentStatus && (currentStatus.node_type === 'Set Variables' || currentStatus.node_type === 'If-Else')) {
         
         if (safetyCounter > 100) {
@@ -4441,7 +4543,7 @@ const loadNodeForPreview = (targetNodeId) => {
         const nextId = processLogicNode(currentStatus);
 
         if (nextId === null || nextId === undefined) {
-            // Flow ends here (e.g. end of a branch)
+            // Flow ends here
             exitPreview();
             return;
         }
@@ -4452,14 +4554,21 @@ const loadNodeForPreview = (targetNodeId) => {
         safetyCounter++;
     }
 
-    // If we are here, 'currentStatus' is a General Node (Visual)
+    // Check if node exists
     if (!currentStatus) {
         alert("Error: Target node data not found.");
         exitPreview();
         return;
     }
 
-    // --- SETUP VISUAL PREVIEW ---
+    // --- CRITICAL FIX: CHECK FOR GIFT NODE HERE ---
+    if (currentStatus.node_type === 'Gift') {
+        playGiftNode(currentStatus); // Trigger the Overlay & Audio
+        return; // Stop here, do not load standard scenes
+    }
+    // ----------------------------------------------
+
+    // --- SETUP VISUAL PREVIEW (GENERAL NODES) ---
     isPreviewMode.value = true;
 
     stopAllVideos();
@@ -4509,7 +4618,6 @@ const loadNodeForPreview = (targetNodeId) => {
         }
     });
 }
-
 const hexToRgba = (hex, alpha) => {
     let c;
     if (/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)) {
@@ -6184,6 +6292,39 @@ const onPreviewWheel = (e) => {
     </transition>
 
   </div>
+  <transition name="fade">
+      <div v-if="previewGiftMode" class="gift-preview-overlay" @click="closeGiftAndContinue">
+          <div class="reward-display-container">
+              <canvas 
+                  ref="previewGiftCanvasRef" 
+                  width="512" 
+                  height="512" 
+                  class="reward-canvas"
+              ></canvas>
+              
+              <div class="click-to-continue-hint">
+                  <span>Click anywhere to continue ▷</span>
+              </div>
+          </div>
+      </div>
+  </transition>
+
+  <transition name="slide-down">
+      <div v-if="showRewardNotification" class="reward-notification-bar">
+          <div class="notification-icon">
+              {{ rewardNotificationData.title.includes('badge') ? '🏅' : '👤' }}
+          </div>
+          
+          <div class="notification-content">
+              <div class="notification-title">{{ rewardNotificationData.title }}</div>
+              <div class="notification-name" :style="{ fontFamily: rewardNotificationData.font }">
+                  {{ rewardNotificationData.name }}
+              </div>
+          </div>
+          
+          <div class="notification-shine"></div>
+      </div>
+  </transition>
 </template>
 
 <style scoped>
@@ -6860,4 +7001,146 @@ const onPreviewWheel = (e) => {
 .loom-particles span:nth-child(2) { animation: shoot 1.5s infinite 0.4s; transform: rotate(90deg); }
 .loom-particles span:nth-child(3) { animation: shoot 1.5s infinite 0.8s; transform: rotate(180deg); }
 .loom-particles span:nth-child(4) { animation: shoot 1.5s infinite 1.2s; transform: rotate(270deg); }
+.fade-enter-active, .fade-leave-active { transition: opacity 0.5s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+
+/* Slide Down Animation with Bouncy physics */
+.slide-down-enter-active {
+    transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.slide-down-leave-active {
+    transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+.slide-down-enter-from, .slide-down-leave-to {
+    transform: translate(-50%, -150%) !important; /* Start above screen */
+    opacity: 0;
+}
+
+/* 2. Full Screen Overlay (The Stage) */
+.gift-preview-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    /* Radial gradient for depth */
+    background: radial-gradient(circle at center, #0f172a 0%, #000000 100%);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.reward-display-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 30px;
+    animation: float 6s ease-in-out infinite; /* Floating effect */
+}
+
+/* The Pixel Art Display */
+.reward-canvas {
+    width: 320px;
+    height: 320px;
+    /* CRITICAL: Keeps pixels crisp when scaled up */
+    image-rendering: pixelated; 
+    /* Blue Glow Effect */
+    filter: drop-shadow(0 0 30px rgba(59, 130, 246, 0.4));
+    background: transparent;
+}
+
+.click-to-continue-hint {
+    color: #94a3b8;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9rem;
+    animation: pulse 2s infinite;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    background: rgba(0,0,0,0.5);
+    padding: 8px 16px;
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+
+/* 3. Notification Bar (Dark Blue & Black Theme) */
+.reward-notification-bar {
+    position: fixed;
+    top: 30px;
+    left: 50%;
+    /* Centered base position */
+    transform: translate(-50%, 0); 
+    width: 90%;
+    max-width: 450px;
+    height: 80px;
+    
+    /* Theme: Deep Black to Dark Blue Gradient */
+    background: linear-gradient(135deg, #000000 0%, #172554 100%);
+    
+    /* Borders and Shadows */
+    border: 1px solid rgba(59, 130, 246, 0.3); /* Subtle blue border */
+    border-radius: 12px;
+    box-shadow:
+        0 10px 30px rgba(0, 0, 0, 0.8),
+        0 0 20px rgba(37, 99, 235, 0.2); /* Blue ambient glow */
+        
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 20px;
+    z-index: 10000;
+    overflow: hidden; /* For the shine effect */
+}
+
+.notification-icon {
+    font-size: 2.5rem;
+    filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.3));
+}
+
+.notification-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.notification-title {
+    color: #93c5fd; /* Light Blue Text */
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.notification-name {
+    color: #ffffff;
+    font-size: 1.4rem;
+    line-height: 1.2;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    /* Font family is applied dynamically via inline style in template */
+}
+
+/* 4. Shine Animation Effect */
+.notification-shine {
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.1),
+        transparent
+    );
+    transform: skewX(-20deg);
+    animation: shine-sweep 3s infinite;
+}
+
+@keyframes shine-sweep {
+    0% { left: -100%; }
+    20% { left: 200%; }
+    100% { left: 200%; }
+}
 </style>
