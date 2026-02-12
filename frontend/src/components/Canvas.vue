@@ -231,19 +231,31 @@ const rewardNotificationData = ref({
 const previewGiftAudio = ref(null)
 
 const playGiftNode = (node) => {
-    // 1. Setup Data
+    // 1. GUARD CLAUSE: Prevent Double-Triggering
+    // If we are already in Gift Mode AND looking at the exact same node ID, stop here.
+    if (previewGiftMode.value === true && previewGiftData.value && previewGiftData.value.index === node.index) {
+        console.warn("Blocked duplicate Gift Node trigger");
+        return;
+    }
+
+    // 2. Setup Data
     previewGiftMode.value = true
     previewGiftData.value = node
     
-    // 2. Play Audio
+    // 3. Play Audio (Only if not already playing or different source)
     if (node.giftAudio && node.giftAudio.url) {
-        if (previewGiftAudio.value) previewGiftAudio.value.pause()
+        // Stop any previous gift audio just in case
+        if (previewGiftAudio.value) {
+            previewGiftAudio.value.pause()
+            previewGiftAudio.value = null
+        }
+        
         previewGiftAudio.value = new Audio(node.giftAudio.url)
         previewGiftAudio.value.volume = 0.5
         previewGiftAudio.value.play().catch(e => console.warn("Audio play blocked", e))
     }
 
-    // 3. Trigger Notification (Slide Down)
+    // 4. Trigger Notification (Slide Down)
     const typeLabel = node.giftMode === 'badge' ? "You earned a new badge" : "You just received a new pfp"
     rewardNotificationData.value = {
         title: typeLabel,
@@ -258,12 +270,11 @@ const playGiftNode = (node) => {
         showRewardNotification.value = false
     }, 4000)
 
-    // 4. Render Pixel Art (Next Tick to ensure Canvas exists)
+    // 5. Render Pixel Art (Next Tick to ensure Canvas exists)
     nextTick(() => {
         renderPreviewGiftCanvas(node.pixelData, node.giftMode)
     })
 }
-
 const renderPreviewGiftCanvas = (pixelData, mode) => {
     if (!previewGiftCanvasRef.value || !pixelData) return
     const ctx = previewGiftCanvasRef.value.getContext('2d')
@@ -271,12 +282,25 @@ const renderPreviewGiftCanvas = (pixelData, mode) => {
     const h = previewGiftCanvasRef.value.height
     const cellSize = w / 64
 
+    // 1. Clear previous frame
     ctx.clearRect(0, 0, w, h)
 
-    // Draw pixels
+    // 2. APPLY BACKGROUND BASED ON MODE
+    if (mode === 'pfp') {
+        // PFP: Needs solid background so it looks like a full card/avatar
+        ctx.fillStyle = '#ffffff' 
+        ctx.fillRect(0, 0, w, h)
+    } 
+    // Badge: Stays transparent (we do nothing here)
+
+    // 3. Draw User Pixels (Overlays the background)
     for (let y = 0; y < 64; y++) {
         for (let x = 0; x < 64; x++) {
             const color = pixelData[y][x]
+            
+            // Draw if color exists. 
+            // Since we filled PFP with white above, 'null' pixels effectively stay white.
+            // For Badge, 'null' pixels stay transparent.
             if (color) {
                 ctx.fillStyle = color
                 ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize)
@@ -2197,7 +2221,6 @@ const updateNodeName = () => {
 const openPopup = node => {
   popupNode.value = node
   
-  // Reset Defaults
   setVarId.value = ""
   setVarOperator.value = "="
   setVarValueType.value = "constant"
@@ -2216,7 +2239,9 @@ const openPopup = node => {
   const nodeStatus = Canvas_Status.value.find(s => s.index === node.id)
 
   if (nodeStatus) {
-    if (!nodeStatus.Node_name) nodeStatus.Node_name = `Node ${node.id}`
+    if (!nodeStatus.Node_name) {
+      nodeStatus.Node_name = `Node ${node.id}`
+    }
     editingNodeName.value = nodeStatus.Node_name
 
     if (nodeStatus.node_type === 'Set Variables') {
@@ -2237,7 +2262,6 @@ const openPopup = node => {
     } 
     // --- GIFT NODE LOADING ---
     else if (nodeStatus.node_type === 'Gift') {
-         // If data missing (or new node), force Setup Mode
          if (!nodeStatus.giftMode) {
              viewMode.value = 'gift-setup' 
              giftMode.value = null
@@ -2251,10 +2275,12 @@ const openPopup = node => {
              giftRewardName.value = nodeStatus.giftName || "" 
              giftRewardFont.value = nodeStatus.giftFont || "Roboto"
              giftAudio.value = nodeStatus.giftAudio || null
-             initializePixelGrid(nodeStatus.pixelData)
+             
+             // FIX: Load a CLONE of the data to prevent accidental editing of other nodes
+             const safePixels = nodeStatus.pixelData ? JSON.parse(JSON.stringify(nodeStatus.pixelData)) : null
+             initializePixelGrid(safePixels)
          }
     }
-    // --- GENERAL NODE ---
     else {
          viewMode.value = 'scenes'
          if (nodeStatus.scenes) {
@@ -2262,16 +2288,21 @@ const openPopup = node => {
                 ...s,
                 components: s.components ? [...s.components] : [] 
             }))
-            nodeScenes.value.forEach((scene) => {
+            
+            nodeScenes.value.forEach((scene, index) => {
                 if (!scene.name) scene.name = `Scene ${scene.id}`
                 if (!scene.backgroundColor) scene.backgroundColor = '#000000'
             })
          } else {
             nodeScenes.value = []
          }
-         if (nodeStatus.audio) sequenceAudio.value = { ...nodeStatus.audio }
-         else sequenceAudio.value = null
+         if (nodeStatus.audio) {
+            sequenceAudio.value = { ...nodeStatus.audio }
+         } else {
+            sequenceAudio.value = null
+         }
     }
+
   } else {
     editingNodeName.value = `Node ${node.id}`
     nodeScenes.value = []
@@ -2315,8 +2346,11 @@ const startRenderLoop = () => {
 }
 
 const closePopup = () => {
-  if (selectedScene.value) updateSceneDetails()
+  if (selectedScene.value) {
+    updateSceneDetails()
+  }
   
+  // Commit changes to Canvas_Status
   if (popupNode.value) {
       const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
       
@@ -2335,13 +2369,16 @@ const closePopup = () => {
               status.compareValueType = ifElseValueType.value
               status.compareValue = ifElseValue.value
           } 
-          // --- GIFT DATA SAVING ---
+          // --- GIFT DATA SAVING (CRITICAL FIX) ---
           else if (status.node_type === 'Gift') {
-              // Ensure we don't save empty state if user just opened & closed setup
               if (giftMode.value) { 
                   status.giftMode = giftMode.value
                   status.giftAudio = giftAudio.value
-                  status.pixelData = giftPixelData.value 
+                  
+                  // FIX: DEEP CLONE THE PIXEL DATA
+                  // This breaks the reference link so nodes don't share pixels
+                  status.pixelData = JSON.parse(JSON.stringify(giftPixelData.value))
+                  
                   status.giftName = giftRewardName.value
                   status.giftFont = giftRewardFont.value
               }
@@ -2379,6 +2416,7 @@ const closePopup = () => {
     if (hasUnsavedChanges.value && autoSaveTimer.value <= 0) {
          saveProjectData(true);
     }
+
   }, 300) 
 }
 
@@ -2931,7 +2969,9 @@ const drawRoundedRectPaths = (ctx, x, y, w, h, r) => {
 }
 
 const checkOptionsTimeout = () => {
-    if (!isPreviewMode.value || !nodeScenes.value) return;
+    // NEW CHECK: "|| isSceneExiting.value"
+    // If we are already animating out, do NOT trigger a timeout
+    if (!isPreviewMode.value || !nodeScenes.value || isSceneExiting.value) return;
 
     const scene = nodeScenes.value[currentPreviewSceneIndex.value];
     if (!scene || !scene.components) return;
@@ -2942,7 +2982,6 @@ const checkOptionsTimeout = () => {
         
         if (comp.type === 'options' && comp.hasTimeLimit) {
 
-            // FIX: Check runtime flag instead of modifying permanent setting
             if (comp._timerTriggered) return;
 
             const now = Date.now();
@@ -2953,7 +2992,6 @@ const checkOptionsTimeout = () => {
             if (elapsed >= duration) {
                 console.log("Time limit reached for options!");
                 
-                // FIX: Set runtime flag to prevent loop
                 comp._timerTriggered = true; 
                 
                 let targetOptionId = null;
@@ -2967,7 +3005,6 @@ const checkOptionsTimeout = () => {
                     if (comp.timeoutTargetId) {
                         targetOptionId = comp.timeoutTargetId;
                     } else {
-                        // Fallback if manual ID is invalid/deleted: pick first
                         if (comp.optionsList.length > 0) targetOptionId = comp.optionsList[0].id;
                     }
                 }
@@ -2975,7 +3012,7 @@ const checkOptionsTimeout = () => {
                 if (targetOptionId) {
                     handleOptionNavigation(comp.id, targetOptionId);
                 } else {
-                    exitPreview(); // Fail safe
+                    exitPreview(); 
                 }
             }
         }
@@ -4478,6 +4515,15 @@ const handleOptionNavigation = (compId, optionId) => {
     // 1. Check if we are already exiting to prevent double clicks
     if (isSceneExiting.value) return;
 
+    // --- NEW: INSTANTLY DISABLE TIMER FOR THIS COMPONENT ---
+    // This prevents the background loop from firing a "Timeout" event while waiting for exit
+    const scene = nodeScenes.value[currentPreviewSceneIndex.value];
+    if (scene && scene.components) {
+        const comp = scene.components.find(c => c.id === compId);
+        if (comp) comp._timerTriggered = true; 
+    }
+    // -------------------------------------------------------
+
     const currentStatus = Canvas_Status.value.find(s => s.index === popupNode.value.id);
     if (!currentStatus || !currentStatus.options) {
         exitPreview();
@@ -4490,26 +4536,21 @@ const handleOptionNavigation = (compId, optionId) => {
     const nextNodeId = (optStatus && optStatus.next != null) ? optStatus.next : null;
     
     if (!nextNodeId) {
-        exitPreview(); // End if no link
+        exitPreview(); 
         return;
     }
 
     // CASE 2: OPTIONS EXIT ANIMATION
-    // Determine wait time (Exit duration + a little buffer for the "Slower" effect)
-    const scene = nodeScenes.value[currentPreviewSceneIndex.value];
     const components = scene.components || [];
     let maxExitDuration = 0;
     
     components.forEach(c => {
-        // Find options component to ensure we include its duration
         const duration = c.exitAnimationDuration || 0.5;
         if (duration > maxExitDuration) maxExitDuration = duration;
     });
 
-    // Store where we are going
     pendingNavigationTargetId.value = nextNodeId;
     
-    // Trigger Exit State
     isSceneExiting.value = true;
     sceneExitStartTime.value = Date.now();
 
