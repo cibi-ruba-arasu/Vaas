@@ -1308,11 +1308,11 @@ const addVariableComponent = () => {
         height: 40,
         rotation: 0,
         
-        variableId: '', // ID of the global variable to display
+        variableId: '',
         
-        // Styles similar to text
+        // Styles
         fontSize: 24,
-        fontFamily: 'sans-serif',
+        fontFamily: 'Roboto', // UPDATED TO GOOGLE FONT
         fontWeight: 'bold',
         fontStyle: 'normal',
         textDecoration: 'none',
@@ -1330,7 +1330,6 @@ const addVariableComponent = () => {
         animationDuration: 1.0 
     }
     
-    // Insert before options if exists
     const optionsIndex = sceneComponents.value.findIndex(c => c.type === 'options');
     if (optionsIndex !== -1) {
         sceneComponents.value.splice(optionsIndex, 0, newVar);
@@ -1360,7 +1359,7 @@ const addInputComponent = () => {
         borderWidth: 1,
         textColor: '#000000',
         
-        fontFamily: 'sans-serif',
+        fontFamily: 'Roboto', // UPDATED TO GOOGLE FONT
         fontSize: 16,
         fontWeight: 'normal',
         fontStyle: 'normal',
@@ -1437,7 +1436,7 @@ const addOptionsComponent = () => {
         borderWidth: 1,
         borderRadius: 4,
         fontSize: 16,
-        fontFamily: 'sans-serif'
+        fontFamily: 'Roboto' // UPDATED TO GOOGLE FONT
     };
 
     const newOption = {
@@ -1478,7 +1477,6 @@ const addOptionsComponent = () => {
         scrollY: 0, 
         animationType: 'fade', 
         animationDuration: 1.0,
-        // --- NEW EXIT DEFAULTS ---
         exitAnimationType: 'fade',
         exitAnimationDuration: 0.5 
     }
@@ -1538,7 +1536,7 @@ const addTextComponent = () => {
     width: 200, 
     height: 50,
     fontSize: 24,
-    fontFamily: 'sans-serif',
+    fontFamily: 'Roboto', // UPDATED TO GOOGLE FONT
     fontWeight: 'normal',
     fontStyle: 'normal',
     textDecoration: 'none',
@@ -1555,7 +1553,6 @@ const addTextComponent = () => {
     autoRender: false,
     animationType: 'fade', 
     animationDuration: 1.0,
-    // --- NEW EXIT DEFAULTS ---
     exitAnimationType: 'fade', 
     exitAnimationDuration: 0.5 
   }
@@ -2810,7 +2807,9 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         ctx.fillText(comp.placeholderText || "Type here...", -(comp.width/2) + 10, 0);
-        ctx.font = `bold 14px sans-serif`;
+        
+        // FIX: Ensure Button uses the Google Font as well instead of hardcoded sans-serif
+        ctx.font = `bold 14px ${comp.fontFamily || 'Roboto'}`;
         const btnTextWidth = ctx.measureText(comp.buttonText).width;
         const btnWidth = Math.max(60, btnTextWidth + 30); 
         const btnX = (comp.width/2) - btnWidth;
@@ -5305,12 +5304,10 @@ const onPreviewWheel = (e) => {
                             
                             <div class="detail-section">
                                 <label class="detail-label">Font Family:</label>
-                                <select v-model="activeComponent.fontFamily" class="detail-input" @change="drawComponents">
-                                    <option value="sans-serif">Sans Serif</option>
-                                    <option value="serif">Serif</option>
-                                    <option value="monospace">Monospace</option>
-                                    <option value="cursive">Cursive</option>
-                                    <option value="fantasy">Fantasy</option>
+                                <select v-model="activeComponent.fontFamily" class="detail-input" @change="drawComponents" style="font-family: inherit;">
+                                    <option v-for="font in googleFonts" :key="font" :value="font" :style="{ fontFamily: font }">
+                                        {{ font }}
+                                    </option>
                                 </select>
                             </div>
                             <div class="detail-section">
@@ -5380,10 +5377,10 @@ const onPreviewWheel = (e) => {
                                 </div>
                                 <div class="detail-section">
                                     <label class="detail-label">Font Family:</label>
-                                    <select v-model="activeComponent.fontFamily" class="detail-input" @change="drawComponents">
-                                        <option value="sans-serif">Sans Serif</option>
-                                        <option value="serif">Serif</option>
-                                        <option value="monospace">Monospace</option>
+                                    <select v-model="activeComponent.fontFamily" class="detail-input" @change="drawComponents" style="font-family: inherit;">
+                                        <option v-for="font in googleFonts" :key="font" :value="font" :style="{ fontFamily: font }">
+                                            {{ font }}
+                                        </option>
                                     </select>
                                 </div>
                                 <div class="detail-section">
@@ -5517,25 +5514,6 @@ const onPreviewWheel = (e) => {
                         </div>
 
                         <div class="separator"></div>
-                        <div class="detail-section" v-if="activeComponent.animationType && activeComponent.animationType !== 'none'">
-                            <label class="detail-label">Animation Duration (sec):</label>
-                            <div class="input-row">
-                                <input 
-                                type="range" 
-                                v-model.number="activeComponent.animationDuration" 
-                                min="0.1" max="10" step="0.1"
-                                class="range-input" 
-                                />
-                                <input 
-                                type="number" 
-                                v-model.number="activeComponent.animationDuration" 
-                                class="number-input" 
-                                min="0.1" max="10" step="0.1"
-                                />
-                            </div>
-                            </div>
-
-                            <div class="separator"></div>
 
                             <div class="detail-section">
                                 <label class="detail-label">Exit Animation:</label>
@@ -5714,7 +5692,14 @@ const onPreviewWheel = (e) => {
                                 <label class="detail-label">Border Radius:</label>
                                 <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderRadius" class="detail-input" @input="drawComponents" />
                             </div>
-                            
+                            <div class="detail-section">
+                                <label class="detail-label">Font Family:</label>
+                                <select v-model="activeComponent.styles[activeStyleState].fontFamily" class="detail-input" @change="drawComponents" style="font-family: inherit;">
+                                    <option v-for="font in googleFonts" :key="font" :value="font" :style="{ fontFamily: font }">
+                                        {{ font }}
+                                    </option>
+                                </select>
+                            </div>
                             <div class="detail-section">
                                 <label class="detail-label">Font Size:</label>
                                 <input type="number" v-model.number="activeComponent.styles[activeStyleState].fontSize" class="detail-input" @input="drawComponents" />
@@ -5864,12 +5849,10 @@ const onPreviewWheel = (e) => {
 
                         <div class="detail-section">
                             <label class="detail-label">Font Family:</label>
-                            <select v-model="activeComponent.fontFamily" class="detail-input" @change="updateActiveComponentPosition">
-                            <option value="sans-serif">Sans Serif</option>
-                            <option value="serif">Serif</option>
-                            <option value="monospace">Monospace</option>
-                            <option value="cursive">Cursive</option>
-                            <option value="fantasy">Fantasy</option>
+                            <select v-model="activeComponent.fontFamily" class="detail-input" @change="updateActiveComponentPosition" style="font-family: inherit;">
+                                <option v-for="font in googleFonts" :key="font" :value="font" :style="{ fontFamily: font }">
+                                    {{ font }}
+                                </option>
                             </select>
                         </div>
                         <div class="detail-section">
@@ -7183,5 +7166,10 @@ const onPreviewWheel = (e) => {
     0% { left: -100%; }
     20% { left: 200%; }
     100% { left: 200%; }
+}
+
+.detail-input option {
+    font-size: 1rem;
+    padding: 10px;
 }
 </style>
