@@ -51,7 +51,8 @@ const tips = [
     "💡 Pro Tip: Use the 'Preview' mode often to test your logic flows before publishing.",
     "🎨 You can customize individual component animations in the editor panel.",
     "🔌 Check your disconnected options in Project Settings before finishing!",
-    "💾 Weaving your digital tapestry..."
+    "💾 Weaving your digital tapestry...",
+    "🔄 Autosave is triggered everytime you exit the Scene editor, but you can also manually save anytime!",
 ]
 
 const notification = ref({
@@ -5018,12 +5019,12 @@ const onPreviewWheel = (e) => {
               />
             </div>
             
-            <div v-if="viewMode !== 'setVariables' && viewMode !== 'ifElse'" class="audio-status-display">
+            <div v-if="viewMode !== 'setVariables' && viewMode !== 'ifElse' && viewMode !== 'gift-setup' && viewMode !== 'gift-editor'" class="audio-status-display">
                 <span class="audio-label">Sequence Audio:</span>
                 <span class="audio-value">{{ sequenceAudio?.name || 'Not selected yet' }}</span>
             </div>
 
-            <button v-if="viewMode !== 'setVariables' && viewMode !== 'ifElse'" class="preview-btn" @click="startPreview">
+            <button v-if="viewMode !== 'setVariables' && viewMode !== 'ifElse' && viewMode !== 'gift-setup' && viewMode !== 'gift-editor'" class="preview-btn" @click="startPreview">
                 ▶ Preview Scene
              </button>
           </div>
@@ -6120,10 +6121,10 @@ const onPreviewWheel = (e) => {
 
             <template v-else-if="viewMode === 'gift-editor'">
                 <div class="set-variable-view">
-                     <div class="logic-editor-container" style="border-color: #ec4899; box-shadow: 0 10px 30px rgba(236, 72, 153, 0.2); max-width: 900px; flex-direction: column;">
+                     <div class="logic-editor-container" style="border-color: #ec4899; box-shadow: 0 10px 30px rgba(236, 72, 153, 0.2); max-width: 900px; max-height: 85vh; overflow-y: auto; flex-direction: column;">
                         
-                        <div style="display: flex; gap: 20px; width: 100%; align-items: flex-start; border-bottom: 1px solid rgba(236, 72, 153, 0.2); padding-bottom: 20px; margin-bottom: 10px;">
-                            <div style="flex: 1;">
+                        <div style="display: flex; gap: 20px; width: 100%; align-items: flex-start; border-bottom: 1px solid rgba(236, 72, 153, 0.2); padding-bottom: 20px; margin-bottom: 10px; flex-wrap: wrap;">
+                            <div style="flex: 1; min-width: 250px;">
                                 <div class="logic-header" style="text-align: left; margin-bottom: 15px;">
                                     <h3 style="color: #ec4899; margin: 0;">
                                         {{ giftMode === 'pfp' ? '👤 Avatar Reward' : '🏅 Badge Reward' }}
@@ -6131,12 +6132,12 @@ const onPreviewWheel = (e) => {
                                     <p style="font-size: 0.8rem; color: #9ca3af;">Design the pixel art and configure the reward details.</p>
                                 </div>
 
-                                <div style="display: flex; gap: 15px;">
-                                    <div style="flex: 1;">
+                                <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                                    <div style="flex: 1; min-width: 150px;">
                                         <label class="detail-label" style="color: #fce7f3;">Reward Name</label>
                                         <input v-model="giftRewardName" class="detail-input" placeholder="e.g. Cyber Helmet" style="border-color: rgba(236, 72, 153, 0.3);" />
                                     </div>
-                                    <div style="flex: 1;">
+                                    <div style="flex: 1; min-width: 150px;">
                                         <label class="detail-label" style="color: #fce7f3;">Font Style</label>
                                         <select v-model="giftRewardFont" class="detail-input" style="border-color: rgba(236, 72, 153, 0.3);">
                                             <option v-for="font in googleFonts" :key="font" :value="font" :style="{ fontFamily: font }">
@@ -6147,63 +6148,63 @@ const onPreviewWheel = (e) => {
                                 </div>
                             </div>
 
-                            <div style="width: 200px; height: 100px; background: rgba(0,0,0,0.3); border: 1px dashed #ec4899; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 10px;">
+                            <div style="width: 200px; height: 100px; background: rgba(0,0,0,0.3); border: 1px dashed #ec4899; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 10px; flex-shrink: 0;">
                                 <span style="font-size: 0.7rem; color: #ec4899; margin-bottom: 5px; text-transform: uppercase;">Preview</span>
-                                <div :style="{ fontFamily: giftRewardFont, fontSize: '1.4rem', color: '#fff' }">
+                                <div :style="{ fontFamily: giftRewardFont, fontSize: '1.4rem', color: '#fff' }" style="max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                                     {{ giftRewardName || 'Reward Name' }}
                                 </div>
                             </div>
                         </div>
 
-                        <div style="display: flex; flex-direction: row; align-items: flex-start; gap: 20px; width: 100%;">
+                        <div style="display: flex; flex-direction: row; align-items: flex-start; gap: 20px; width: 100%; flex-wrap: wrap;">
                             
-                            <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 10px;">
-                                <div class="pixel-canvas-wrapper" style="border: 2px solid #374151; background: #000; cursor: crosshair; line-height: 0;">
+                            <div style="flex: 1; min-width: 300px; display: flex; flex-direction: column; align-items: center; gap: 10px;">
+                                <div class="pixel-canvas-wrapper" style="border: 2px solid #374151; background: #000; cursor: crosshair; line-height: 0; max-width: 100%; overflow: hidden;">
                                     <canvas 
                                         ref="pixelCanvasRef" 
                                         width="512" 
                                         height="512" 
-                                        style="width: 350px; height: 350px; image-rendering: pixelated;"
+                                        style="width: 100%; max-width: 350px; height: auto; aspect-ratio: 1/1; image-rendering: pixelated;"
                                         @mousedown="startDrawing"
                                         @mousemove="drawMove"
                                         @mouseup="stopDrawing"
                                         @mouseleave="stopDrawing"
                                     ></canvas>
                                 </div>
-                                <div style="font-size: 0.75rem; color: #6b7280;">64x64 Grid • {{ giftMode === 'badge' ? 'Transparent Background' : 'Solid Background' }}</div>
+                                <div style="font-size: 0.75rem; color: #6b7280; text-align: center;">64x64 Grid • {{ giftMode === 'badge' ? 'Transparent Background' : 'Solid Background' }}</div>
                             </div>
 
-                            <div style="width: 280px; display: flex; flex-direction: column; gap: 20px; border-left: 1px solid rgba(255,255,255,0.1); padding-left: 20px;">
+                            <div style="flex: 1; min-width: 250px; max-width: 320px; display: flex; flex-direction: column; gap: 20px; border-left: 1px solid rgba(255,255,255,0.1); padding-left: 20px; box-sizing: border-box;">
                                 
-                                <div class="detail-section">
+                                <div class="detail-section" style="width: 100%; box-sizing: border-box;">
                                     <label class="detail-label" style="color: #fce7f3;">Drawing Tools</label>
-                                    <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                                    <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
                                         <button class="style-tab-btn" :class="{ active: drawTool === 'pencil' }" @click="drawTool = 'pencil'" title="Pencil">✏️</button>
                                         <button class="style-tab-btn" :class="{ active: drawTool === 'eraser' }" @click="drawTool = 'eraser'" title="Eraser">🧹</button>
                                         <button class="style-tab-btn" :class="{ active: drawTool === 'fill' }" @click="drawTool = 'fill'" title="Flood Fill">🪣</button>
                                     </div>
                                     
                                     <label class="detail-label" style="color: #fce7f3;">Color</label>
-                                    <div class="color-picker-container">
+                                    <div class="color-picker-container" style="width: 100%;">
                                         <input type="color" v-model="currentDrawColor" class="color-input" style="width: 100%; height: 40px;" />
                                     </div>
                                 </div>
 
                                 <div class="separator" style="background: rgba(236, 72, 153, 0.2);"></div>
 
-                                <div class="detail-section">
+                                <div class="detail-section" style="width: 100%; box-sizing: border-box;">
                                     <label class="detail-label" style="color: #fce7f3;">Reward Sound (Max 10s)</label>
 
-                                    <div v-if="!giftAudio" class="audio-upload-placeholder" @click="triggerGiftAudioUpload" style="border-color: #ec4899; color: #fce7f3; background: rgba(236, 72, 153, 0.05); padding: 10px;">
+                                    <div v-if="!giftAudio" class="audio-upload-placeholder" @click="triggerGiftAudioUpload" style="border-color: #ec4899; color: #fce7f3; background: rgba(236, 72, 153, 0.05); padding: 10px; width: 100%; box-sizing: border-box;">
                                          <span style="font-size: 1.2rem;">🎵 Upload</span>
                                     </div>
 
-                                    <div v-else class="audio-file-display" style="background: rgba(236, 72, 153, 0.15); border: 1px solid rgba(236, 72, 153, 0.4); padding: 8px;">
-                                         <div class="audio-info">
-                                             <div class="audio-filename" style="color: #fff; font-size: 0.85rem;">{{ giftAudio.name }}</div>
+                                    <div v-else class="audio-file-display" style="background: rgba(236, 72, 153, 0.15); border: 1px solid rgba(236, 72, 153, 0.4); padding: 8px; width: 100%; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; overflow: hidden;">
+                                         <div class="audio-info" style="flex: 1; overflow: hidden; min-width: 0;">
+                                             <div class="audio-filename" style="color: #fff; font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 10px;">{{ giftAudio.name }}</div>
                                              <div style="font-size: 0.7rem; color: #fbcfe8;">{{ giftAudio.duration.toFixed(1) }}s</div>
                                          </div>
-                                         <button class="remove-audio-btn" @click="removeGiftAudio">✕</button>
+                                         <button class="remove-audio-btn" @click="removeGiftAudio" style="flex-shrink: 0;">✕</button>
                                     </div>
 
                                     <input
