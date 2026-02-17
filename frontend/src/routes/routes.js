@@ -15,6 +15,7 @@ import Update from '../components/Update.vue'
 import Post from '@/components/Post.vue';
 import User from '@/components/User.vue'
 import Search from '@/components/Search.vue';
+import Console from '@/components/Console.vue';
 
 const routes = [
   {
@@ -101,6 +102,12 @@ const routes = [
     path: "/search",
     name: "Search",
     component: Search,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: "/console",
+    name: "Console",
+    component: Console,
     meta: { requiresAuth: true }
   },
 ]

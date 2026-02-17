@@ -9,6 +9,8 @@ const postId = route.params.id
 const token = sessionStorage.getItem("token")
 let currentUserId = null
 
+const inConsole = ref(false)
+
 if (token) {
   try {
     const payload = JSON.parse(atob(token.split('.')[1]))
@@ -27,6 +29,8 @@ const getGradient = (colors, angle) => {
   if (colors.length === 1) return colors[0];
   return `linear-gradient(${angle}deg, ${colors.join(', ')})`;
 };
+
+
 
 const formatDate = (date) => {
   if (!date) return 'Unknown Date';
@@ -100,6 +104,12 @@ const fetchPost = async () => {
           post.value.visits = data.stats.visits
           post.value.plays = data.stats.plays
       }
+
+      // NEW: Assign console status
+      if (data.inConsole !== undefined) {
+          inConsole.value = data.inConsole // <--- CRASHED HERE
+      }
+
     } else {
       error.value = "The scroll you seek has crumbled to dust."
     }
@@ -113,28 +123,36 @@ const fetchPost = async () => {
 
 const handlePlay = async () => {
   if (isAuthor.value) {
-    alert("Creators cannot play their own published instance for stats. Use Preview in Create mode.")
+    alert("Creators cannot add their own project to the console. Use Preview in Create mode.")
+    return
+  }
+
+  // NEW: If already in console, just take them there instead of re-adding
+  if (inConsole.value) {
+    router.push('/console')
     return
   }
 
   try {
-    await fetch(`http://localhost:5000/posts/${postId}/play`, {
+    const res = await fetch(`http://localhost:5000/console/add/${postId}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` }
     })
-    if(post.value.plays !== undefined) post.value.plays++
-  } catch (e) { console.error("Play tracking failed") }
-
-  if (post.value.monetization.isPaid) {
-    alert("Payment Gateway initializing...")
-  } else {
-    alert("Entering the Loom... (Game Engine Loading)")
+    
+    if (res.ok) {
+        inConsole.value = true // Update UI instantly
+        alert("Added to your Console! 🎮")
+    } else {
+        alert("Failed to add to console.")
+    }
+  } catch (e) { 
+      console.error("Add to Console failed") 
   }
 }
-
 onMounted(() => {
   fetchPost()
 })
+
 </script>
 
 <template>
@@ -229,9 +247,16 @@ onMounted(() => {
           <span class="text">Update Project</span>
         </button>
 
-        <button v-else class="action-btn play" @click="handlePlay">
-          <span class="icon">▶</span>
-          <span class="text">{{ post.monetization.isPaid ? 'Purchase Access' : 'Enter World' }}</span>
+        <button 
+          v-else 
+          class="action-btn play" 
+          @click="handlePlay"
+          :style="inConsole ? 'background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);' : ''"
+        >
+          <span class="icon" v-if="inConsole">✔️</span>
+          <span class="icon" v-else>🎮</span>
+          <span class="text" v-if="inConsole">Open in Console</span>
+          <span class="text" v-else>{{ post.monetization.isPaid ? 'Purchase Access' : 'Add to Console' }}</span>
         </button>
       </div>
 

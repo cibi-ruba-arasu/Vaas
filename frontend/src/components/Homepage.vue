@@ -357,6 +357,15 @@ onUnmounted(() => {
       </div>
 
       <div class="nav-actions">
+        <button class="aura-btn" @click="router.push('/console')" title="My Console">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+             <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+             <line x1="6" y1="12" x2="10" y2="12"></line>
+             <line x1="8" y1="10" x2="8" y2="14"></line>
+             <line x1="15" y1="13" x2="15.01" y2="13"></line>
+             <line x1="18" y1="11" x2="18.01" y2="11"></line>
+          </svg>
+        </button>
         <button class="aura-btn" title="Whispers">
           <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.5">
             <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />

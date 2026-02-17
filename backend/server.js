@@ -20,6 +20,7 @@ import Notification from "./schema/Notification.js"
 import axios from "axios";
 import Razorpay from "razorpay";
 import PayoutRecipient from "./schema/PayoutRecipient.js";
+import ConsoleDB from "./schema/Console.js";
 
 dotenv.config()
 
@@ -620,6 +621,28 @@ app.get("/user/theme", authMiddleware, async (req, res) => {
   res.json({ themeColor: pref.themeColor })
 })
 
+// 2. Get User's Console Items
+app.get("/console", authMiddleware, async (req, res) => {
+  try {
+    const { mongoId } = req.user;
+    
+    const userConsole = await ConsoleDB.findOne({ userId: mongoId })
+      .populate("savedPosts"); 
+      
+    if (!userConsole || !userConsole.savedPosts) {
+        return res.json([]);
+    }
+    
+    // FIX: Filter out null values in case a published post was deleted by its author
+    const validPosts = userConsole.savedPosts.filter(post => post !== null);
+    
+    res.json(validPosts);
+  } catch (err) {
+    console.error("Console Fetch Error:", err);
+    res.status(500).json({ message: "Failed to fetch console" });
+  }
+});
+
 app.post("/user/theme", authMiddleware, async (req, res) => {
   const { mongoId } = req.user
   const { color } = req.body
@@ -680,30 +703,33 @@ app.get("/user/publishes", authMiddleware, async (req, res) => {
   }
 });
 
-/* ===== GET SINGLE POST BY ID (For Post.vue) ===== */
-app.get("/posts/:id", authMiddleware, async (req, res) => {
-  const { id } = req.params;
-
+app.post("/console/add/:postId", authMiddleware, async (req, res) => {
   try {
-    // 1. Find the published document
-    const post = await Publish.findById(id);
-    
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
+    const { mongoId } = req.user;
+    const { postId } = req.params;
+
+    // Find user's console or create one if it doesn't exist
+    let userConsole = await ConsoleDB.findOne({ userId: mongoId });
+    if (!userConsole) {
+      userConsole = new ConsoleDB({ userId: mongoId, savedPosts: [] });
     }
 
-    // 2. Increment Views (Simple counter)
-    // Using findOneAndUpdate to be atomic and avoid race conditions
-    await Publish.findByIdAndUpdate(id, { $inc: { views: 1 } });
+    // FIX: Convert ObjectId to string before comparing
+    const isAlreadyAdded = userConsole.savedPosts.some(id => id.toString() === postId);
+    
+    if (!isAlreadyAdded) {
+      userConsole.savedPosts.push(postId);
+      await userConsole.save();
+    }
 
-    // 3. Return the post data
-    res.json(post);
-
+    res.json({ success: true, message: "Added to Console" });
   } catch (err) {
-    console.error("Error fetching post:", err);
-    res.status(500).json({ message: "Server error fetching post" });
+    console.error("Console Add Error:", err);
+    res.status(500).json({ message: "Failed to add to console" });
   }
 });
+
+
 
 /* ===== UPDATE USER PROFILE ===== */
 app.put("/user/profile", authMiddleware, async (req, res) => {
@@ -963,41 +989,6 @@ app.get("/canvas/load/:projectId", authMiddleware, async (req, res) => {
   }
 });
 
-app.get("/projects", authMiddleware, async (req, res) => {
-  const { mongoId } = req.user
-
-  // 1. Fetch User's Project Bucket
-  const bucket = await Project.findOne({ userId: mongoId })
-  if (!bucket) return res.json([])
-
-  // 2. Convert Mongoose Docs to JS Objects
-  const projectsRaw = bucket.projects.toObject();
-
-  // 3. Attach Stats & Check Published Status
-  const projectsWithData = await Promise.all(projectsRaw.map(async (p) => {
-      // ✅ Check Publish DB: Does this project exist in Publish collection?
-      const isPublished = await Publish.exists({ projectId: p._id });
-
-      // ✅ Check Canvas Stats (Fixed variable name to 'state' to avoid conflict)
-      // Note: We query the 'CanvasState' model, NOT 'Project'
-      const state = await CanvasState.findOne({ projectId: p._id });
-      
-      let stats = { disconnected: 0, hasGeneralNode: false, totalNodes: 0 };
-      if (state) {
-          stats.disconnected = state.disconnectedOptionsCount || 0;
-          stats.hasGeneralNode = state.nodes ? state.nodes.some(n => n.node_type === 'General') : false;
-      }
-
-      return {
-          ...p, // Returns name, description from Project DB
-          stats,
-          isPublished: !!isPublished // Converts result to true/false
-      };
-  }));
-
-  const sorted = projectsWithData.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
-  res.json(sorted)
-})
 
 app.get("/projects/details/:projectId", authMiddleware, async (req, res) => {
   const { mongoId } = req.user;
@@ -1198,44 +1189,54 @@ app.get("/users/:userid", authMiddleware, async (req, res) => {
 app.post("/publish", authMiddleware, async (req, res) => {
   const { 
     id, name, titleFont, description, language, categories, 
-    customCategories, warnings, isThumbnailNSFW, monetization, thumbnail 
+    customCategories, warnings, isThumbnailNSFW, monetization, thumbnail,
+    updateCanvas // 👈 Catch the toggle from frontend
   } = req.body;
 
   const { mongoId } = req.user;
 
   try {
-    // ... (Existing validation logic remains the same) ...
     if (monetization && monetization.isPaid) {
       return res.status(400).json({ message: "This route currently only supports Free projects." });
     }
 
-    const author = await User.findById(mongoId).select("username followers"); // ✅ Fetch followers
+    const author = await User.findById(mongoId).select("username followers"); 
     if (!author) return res.status(404).json({ message: "Author not found" });
 
-    const liveCanvasState = await CanvasState.findOne({ projectId: id }).lean();
-    if (!liveCanvasState) return res.status(400).json({ message: "No content found." });
+    // 1. Check if it's already published
+    const existingPublish = await Publish.findOne({ projectId: id });
 
-    delete liveCanvasState._id;
-    delete liveCanvasState.__v;
-
+    // 2. Prepare Base Metadata
     const publishData = {
       projectId: id,
       authorId: mongoId,
       authorName: author.username,
       name, titleFont, description, language, categories, customCategories, warnings, 
       isThumbnailNSFW, monetization, thumbnail,
-      canvasState: liveCanvasState,
       publishedAt: new Date()
     };
 
+    // 3. Conditional Engine Content Overwrite
+    // Always grab canvas if it's new OR if the user explicitly clicked the Update Canvas toggle
+    if (!existingPublish || updateCanvas) {
+      const liveCanvasState = await CanvasState.findOne({ projectId: id }).lean();
+      if (!liveCanvasState) return res.status(400).json({ message: "No content found to publish." });
+      
+      delete liveCanvasState._id;
+      delete liveCanvasState.__v;
+      
+      publishData.canvasState = liveCanvasState; // Inject it into the update payload
+    }
+
+    // 4. Save to Database using $set (prevents deleting existing canvasState if omitted)
     const result = await Publish.findOneAndUpdate(
       { projectId: id }, 
-      publishData,
+      { $set: publishData },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
 
-    /* 🔔 NEW: NOTIFY FOLLOWERS 🔔 */
-    if (author.followers && author.followers.length > 0) {
+    /* 🔔 NOTIFY FOLLOWERS (Only if it's a first-time publish) 🔔 */
+    if (!existingPublish && author.followers && author.followers.length > 0) {
       const notifications = author.followers.map(followerId => ({
         recipient: followerId,
         sender: mongoId,
@@ -1244,20 +1245,18 @@ app.post("/publish", authMiddleware, async (req, res) => {
         link: `/post/${result._id}`
       }));
       
-      // Batch insert for performance
       await Notification.insertMany(notifications);
-      console.log(`🔔 Sent notifications to ${author.followers.length} followers.`);
     }
 
     res.json({ 
       success: true, 
-      message: "Project published successfully!",
+      message: updateCanvas ? "Project and Content updated!" : "Metadata updated successfully!",
       publishedAt: result.publishedAt 
     });
 
   } catch (err) {
     console.error("Publish Error:", err);
-    res.status(500).json({ message: "Failed to publish project" });
+    res.status(500).json({ message: "Failed to publish/update project" });
   }
 });
 
@@ -1272,6 +1271,7 @@ app.get("/publish/:projectId", authMiddleware, async (req, res) => {
   }
 });
 
+/* ===== GET SINGLE POST BY ID (For Post.vue) ===== */
 app.get("/posts/:id", authMiddleware, async (req, res) => {
   const { id } = req.params;
   const { mongoId } = req.user; 
@@ -1306,14 +1306,23 @@ app.get("/posts/:id", authMiddleware, async (req, res) => {
       if (incUpdate.views) post.views = (post.views || 0) + 1;
     }
 
-    // ✅ SEND NESTED STRUCTURE TO MATCH FRONTEND
+    // --- CONSOLE CHECK FIX ---
+    let inConsole = false;
+    const userConsole = await ConsoleDB.findOne({ userId: mongoId });
+    
+    // FIX: Safely map ObjectIds to strings to ensure it flips to TRUE
+    if (userConsole && userConsole.savedPosts && userConsole.savedPosts.some(savedId => savedId.toString() === id)) {
+        inConsole = true;
+    }
+
     res.json({
         post,
         stats: {
             views: post.views,
             visits: post.visits,
             plays: post.plays
-        }
+        },
+        inConsole // Sends true/false properly now
     });
 
   } catch (err) {
@@ -1353,6 +1362,25 @@ app.post("/posts/:id/play", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("Play tracking error:", err);
     res.status(500).json({ message: "Error tracking play" });
+  }
+});
+
+app.delete("/console/remove/:postId", authMiddleware, async (req, res) => {
+  try {
+    const { mongoId } = req.user;
+    const { postId } = req.params;
+
+    let userConsole = await ConsoleDB.findOne({ userId: mongoId });
+    if (userConsole) {
+      // Filter out the game ID
+      userConsole.savedPosts = userConsole.savedPosts.filter(id => id.toString() !== postId);
+      await userConsole.save();
+    }
+
+    res.json({ success: true, message: "Removed from Console" });
+  } catch (err) {
+    console.error("Console Remove Error:", err);
+    res.status(500).json({ message: "Failed to remove from console" });
   }
 });
 
@@ -1461,6 +1489,30 @@ app.post("/payouts/razorpay/create-recipient", authMiddleware, async (req, res) 
   } catch (err) {
     console.error("Manual Save Error:", err);
     res.status(500).json({ message: "Failed to save details locally." });
+  }
+});
+
+app.get("/console", authMiddleware, async (req, res) => {
+  try {
+    const { mongoId } = req.user;
+    
+    const userConsole = await ConsoleDB.findOne({ userId: mongoId })
+      .populate({
+          path: "savedPosts",
+          select: "-canvasState" // ⚡ EXCLUDE heavy canvas data for the library view
+      }); 
+      
+    if (!userConsole || !userConsole.savedPosts) {
+        return res.json([]);
+    }
+    
+    // Filter out null values in case a published post was deleted by its author
+    const validPosts = userConsole.savedPosts.filter(post => post !== null);
+    
+    res.json(validPosts);
+  } catch (err) {
+    console.error("Console Fetch Error:", err);
+    res.status(500).json({ message: "Failed to fetch console" });
   }
 });
 

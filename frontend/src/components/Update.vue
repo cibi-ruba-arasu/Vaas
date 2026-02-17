@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed, nextTick, watch } from "vue";
+import { ref, onMounted, computed, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 const route = useRoute();
@@ -15,7 +15,6 @@ const fetchError = ref(null);
 const form = ref({
   name: "",
   titleFont: "Cinzel",
-  // ✅ RICH EDITOR STRUCTURE
   description: { 
     blocks: [], 
     container: { colors: ['#1e293b', '#0f172a'], angle: 135 } 
@@ -26,7 +25,6 @@ const form = ref({
   customCategories: [],
   warnings: [],
   isThumbnailNSFW: false,
-  // ✅ MONETIZATION (Locked View)
   monetization: { isPaid: false, hasDemo: false, demoNodeLimit: 10, payoutCurrency: 'USD' },
   
   // ✅ THE CRITICAL TOGGLE
@@ -52,7 +50,6 @@ const GENRES = [
     "Slice of Life", "Comedy", "Drama", "Thriller", "Sports", 
     "Music", "Educational", "Puzzle", "Idle",
 
-    // --- SUB-GENRES & SETTINGS ---
     "Cyberpunk", "Steampunk", "Dieselpunk", "Solarpunk",
     "Dystopian", "Post-Apocalyptic", "Space Opera", "Mecha",
     "Noir", "Neo-Noir", "Western", "Historical", "Alternate History",
@@ -60,19 +57,16 @@ const GENRES = [
     "Supernatural", "Paranormal", "Magic Realism", "Mythology", "Folklore",
     "Superhero", "Martial Arts", "Military", "War", "Espionage",
 
-    // --- NARRATIVE STYLES ---
     "Visual Novel", "Interactive Fiction", "Kinetic Novel", 
     "Dating Sim", "Otome", "Galge", "Text-Based", "Point & Click",
     "Choice Matters", "Multiple Endings", "Episodic",
 
-    // --- THEMES & MOODS ---
     "Psychological", "Philosophical", "Surreal", "Abstract",
     "Cozy", "Wholesome", "Relaxing", "Atmospheric", 
     "Tragedy", "Satire", "Parody", "Memes", "Dark Humor",
     "Coming of Age", "School Life", "Workplace", "Medical", "Legal", "Crime",
     "Detective", "Survival", "Battle Royale", "Time Travel",
 
-    // --- MATURE & SPECIFIC ---
     "18+ (NSFW)", "Violence", "Gore", "Body Horror", 
     "LGBTQ+", "BL (Boys' Love)", "GL (Girls' Love)", "Harem",
     "Vampire", "Werewolf", "Zombies", "Lovecraftian", "Gothic"
@@ -119,7 +113,6 @@ const addBlock = async () => {
   });
   activeBlockId.value = id;
   await nextTick();
-  // Auto-focus new block
   if (blockRefs.value[id]) blockRefs.value[id].focus();
 };
 
@@ -139,7 +132,6 @@ const autoResize = (el) => {
 
 const checkContent = (block, event) => {
   if (event && event.target) autoResize(event.target);
-  // Simple GIF detection
   const gifRegex = /^https?:\/\/.*\.(gif|webp|png|jpg|jpeg)($|\?)/i;
   block.type = gifRegex.test(block.content) ? 'gif' : 'text';
 };
@@ -148,8 +140,6 @@ const checkContent = (block, event) => {
 const fetchPublishedData = async () => {
   loading.value = true;
   try {
-    // We fetch from the PUBLISH collection to see what is currently live
-    // Note: Assuming /publish/project/:id fetches by projectId, otherwise use publishId logic
     const res = await fetch(`http://localhost:5000/publish/${projectId}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
@@ -157,7 +147,6 @@ const fetchPublishedData = async () => {
     if (res.ok) {
       const data = await res.json();
       
-      // Populate Form with LIVE data
       form.value.name = data.name;
       form.value.titleFont = data.titleFont || "Cinzel";
       form.value.language = data.language || "en";
@@ -167,22 +156,26 @@ const fetchPublishedData = async () => {
       form.value.warnings = data.warnings || [];
       form.value.isThumbnailNSFW = data.isThumbnailNSFW || false;
       
-      // Monetization (Locked - Reading Only)
-      if (data.monetization) {
-        form.value.monetization = data.monetization;
-      }
+      if (data.monetization) form.value.monetization = data.monetization;
 
-      // Description Hydration (Handle Legacy String vs New Object)
-      if (data.description && data.description.blocks) {
-        form.value.description = data.description;
-      } else {
-        // Convert old string description to Block format
-        form.value.description = {
-          container: { colors: ['#1e293b', '#0f172a'], angle: 135 },
-          blocks: typeof data.description === 'string' 
-            ? [{ id: 1, type: 'text', content: data.description, fontSize: 16, textColors: ['#cbd5e1'], bgColors: ['transparent'], fontFamily: 'Inter', align: 'left' }]
-            : []
-        };
+      // ✅ FIX: Robust Hydration Logic
+      if (data.description) {
+        if (data.description.blocks && Array.isArray(data.description.blocks)) {
+            // Standard New Object Format
+            form.value.description = data.description;
+        } else if (Array.isArray(data.description)) {
+            // Mid-Legacy Array Format
+            form.value.description = {
+                container: { colors: ['#1e293b', '#0f172a'], angle: 135 },
+                blocks: data.description
+            };
+        } else if (typeof data.description === 'string') {
+            // Oldest String Format
+            form.value.description = {
+                container: { colors: ['#1e293b', '#0f172a'], angle: 135 },
+                blocks: [{ id: 1, type: 'text', content: data.description, fontSize: 16, textColors: ['#cbd5e1'], bgColors: ['transparent'], fontFamily: 'Inter', align: 'left' }]
+            };
+        }
       }
     } else {
       fetchError.value = "This project hasn't been published yet. Please use the Publish page first.";
@@ -202,11 +195,10 @@ const handleUpdate = async () => {
   
   try {
     const payload = {
-      id: projectId, // Identify the project
-      ...form.value  // Send all form data including 'updateCanvas'
+      id: projectId,
+      ...form.value 
     };
 
-    // We reuse the POST /publish endpoint which handles upserts (updating existing)
     const res = await fetch("http://localhost:5000/publish", { 
       method: "POST",
       headers: { 
@@ -219,7 +211,7 @@ const handleUpdate = async () => {
     const data = await res.json();
     
     if (res.ok) {
-      alert("✅ Update Successful!");
+      alert(form.value.updateCanvas ? "✅ Project & Content Updated!" : "✅ Metadata Updated Successfully!");
       router.push(`/post/${data.publishedAt ? projectId : ''}`); 
     } else {
       alert(data.message || "Update failed");
@@ -372,91 +364,123 @@ onMounted(() => {
 
         <div class="desc-col">
           
-          <div class="editor-toolbar glass-panel">
-            <span>Background Style:</span>
-            <div class="color-group">
-              <div v-for="(c, i) in form.description.container.colors" :key="i" class="mini-color">
-                <input type="color" v-model="form.description.container.colors[i]" />
-                <span v-if="form.description.container.colors.length > 1" @click="removeColor(form.description.container.colors, i)" class="del">×</span>
+          <div class="desc-box-container">
+            <div class="desc-header">
+              <span class="header-label">Canvas Background</span>
+              <div class="gradient-controls">
+                <div v-for="(color, idx) in form.description.container.colors" :key="idx" class="color-wrap">
+                  <input type="color" v-model="form.description.container.colors[idx]" />
+                  <button v-if="form.description.container.colors.length > 1" @click="removeColor(form.description.container.colors, idx)" class="tiny-del">×</button>
+                </div>
+                <button class="add-color-btn" @click="addColor(form.description.container.colors)">+</button>
+                <div class="angle-slider-wrap">
+                  <label>Angle</label>
+                  <input type="range" v-model="form.description.container.angle" min="0" max="360" />
+                </div>
               </div>
-              <button @click="addColor(form.description.container.colors)">+</button>
             </div>
-            <input type="range" v-model="form.description.container.angle" min="0" max="360" class="angle-slider" title="Gradient Angle"/>
-          </div>
 
-          <div v-if="activeBlock && activeBlock.type !== 'gif'" class="block-tools glass-panel">
-             <div class="tool-row">
-               <select v-model="activeBlock.fontFamily" class="mini-select font">
-                 <option v-for="f in FONT_OPTIONS" :key="f" :value="f">{{ f }}</option>
-               </select>
-               <input type="number" v-model="activeBlock.fontSize" class="mini-input size" placeholder="Size" />
-             </div>
-             
-             <div class="tool-row">
-               <div class="color-group">
-                 <span class="lbl">Text:</span>
-                 <div v-for="(c, i) in activeBlock.textColors" :key="'t'+i" class="mini-color">
-                   <input type="color" v-model="activeBlock.textColors[i]" />
-                   <span v-if="activeBlock.textColors.length > 1" @click="removeColor(activeBlock.textColors, i)" class="del">×</span>
-                 </div>
-                 <button @click="addColor(activeBlock.textColors)">+</button>
-               </div>
-             </div>
-
-             <div class="tool-row">
-               <button :class="{active: activeBlock.isBold}" @click="activeBlock.isBold = !activeBlock.isBold"><b>B</b></button>
-               <button :class="{active: activeBlock.isItalic}" @click="activeBlock.isItalic = !activeBlock.isItalic"><i>I</i></button>
-               <div class="sep"></div>
-               <button :class="{active: activeBlock.align === 'left'}" @click="activeBlock.align = 'left'">⇠</button>
-               <button :class="{active: activeBlock.align === 'center'}" @click="activeBlock.align = 'center'">⇿</button>
-               <button :class="{active: activeBlock.align === 'right'}" @click="activeBlock.align = 'right'">⇢</button>
-             </div>
-          </div>
-
-          <div class="desc-canvas" :style="containerStyle" @click.self="activeBlockId = null">
-            <div 
-              v-for="(block, index) in form.description.blocks" 
-              :key="block.id" 
-              class="desc-block"
-              :class="{ active: activeBlockId === block.id }"
-              @click="activeBlockId = block.id"
-              :style="{
-                textAlign: block.align,
-                background: getGradient(block.bgColors, block.bgAngle),
-                padding: '10px', borderRadius: '4px'
-              }"
-            >
-              <div class="block-actions">
-                <button @click.stop="removeBlock(index)" class="delete-btn">×</button>
+            <div class="desc-toolbar" v-if="activeBlock && activeBlock.type !== 'gif'">
+              <div class="toolbar-section">
+                <label>Text Color</label>
+                <div class="gradient-controls small">
+                  <div v-for="(c, i) in activeBlock.textColors" :key="'t'+i" class="color-wrap">
+                     <input type="color" v-model="activeBlock.textColors[i]" />
+                     <button v-if="activeBlock.textColors.length > 1" @click="removeColor(activeBlock.textColors, i)" class="tiny-del">×</button>
+                  </div>
+                  <button class="add-color-btn" @click="addColor(activeBlock.textColors)">+</button>
+                  <input type="range" v-model="activeBlock.textAngle" min="0" max="360" title="Angle" class="mini-slider" />
+                </div>
               </div>
               
-              <div v-if="block.type === 'gif'" class="gif-wrapper">
-                 <img :src="block.content" />
-                 <button class="edit-link-btn" @click.stop="block.type='text'">Edit Link</button>
+              <div class="vertical-sep"></div>
+
+              <div class="toolbar-section">
+                <label>Font Style</label>
+                <select v-model="activeBlock.fontFamily" class="font-select mini">
+                   <option v-for="f in FONT_OPTIONS" :key="f" :value="f" :style="{ fontFamily: f }">{{ f }}</option>
+                </select>
               </div>
 
-              <textarea 
-                v-else
-                :ref="el => blockRefs[block.id] = el"
-                v-model="block.content"
-                @input="checkContent(block, $event)"
-                class="block-input"
-                rows="1"
-                placeholder="Type here..."
-                :style="{
-                  fontFamily: block.fontFamily,
-                  fontSize: block.fontSize + 'px',
-                  fontWeight: block.isBold ? 'bold' : 'normal',
-                  fontStyle: block.isItalic ? 'italic' : 'normal',
-                  color: block.textColors.length > 1 ? 'transparent' : block.textColors[0],
-                  backgroundImage: block.textColors.length > 1 ? getGradient(block.textColors, block.textAngle) : 'none',
-                  webkitBackgroundClip: block.textColors.length > 1 ? 'text' : 'unset',
-                  backgroundClip: block.textColors.length > 1 ? 'text' : 'unset'
-                }"
-              ></textarea>
+              <div class="vertical-sep"></div>
+
+              <div class="toolbar-section">
+                <label>Block Background</label>
+                <div class="gradient-controls small">
+                  <div v-for="(c, i) in activeBlock.bgColors" :key="'b'+i" class="color-wrap">
+                     <input type="color" v-model="activeBlock.bgColors[i]" />
+                     <button v-if="activeBlock.bgColors.length > 1" @click="removeColor(activeBlock.bgColors, i)" class="tiny-del">×</button>
+                  </div>
+                  <button class="add-color-btn" @click="addColor(activeBlock.bgColors)">+</button>
+                  <input type="range" v-model="activeBlock.bgAngle" min="0" max="360" title="Angle" class="mini-slider" />
+                </div>
+              </div>
+
+              <div class="vertical-sep"></div>
+
+              <div class="toolbar-section style-group">
+                 <div class="size-control">
+                   <label>Size</label>
+                   <input type="number" v-model="activeBlock.fontSize" class="size-input" @click.stop />
+                 </div>
+                <button :class="{ active: activeBlock.isBold }" @click="activeBlock.isBold = !activeBlock.isBold"><b>B</b></button>
+                <button :class="{ active: activeBlock.isItalic }" @click="activeBlock.isItalic = !activeBlock.isItalic"><i>I</i></button>
+                <div class="align-group">
+                  <button :class="{ active: activeBlock.align === 'left' }" @click="activeBlock.align = 'left'">⇠</button>
+                  <button :class="{ active: activeBlock.align === 'center' }" @click="activeBlock.align = 'center'">⇿</button>
+                  <button :class="{ active: activeBlock.align === 'right' }" @click="activeBlock.align = 'right'">⇢</button>
+                </div>
+              </div>
             </div>
 
-            <button class="add-block-btn" @click="addBlock">+ Add Content Block</button>
+            <div class="desc-toolbar empty" v-else>
+              <span>Select a text block to edit styles</span>
+            </div>
+
+            <div class="desc-canvas" :style="containerStyle" @click.self="activeBlockId = null">
+              <div 
+                v-for="(block, index) in form.description.blocks" 
+                :key="block.id" 
+                class="desc-block-row"
+                :class="{ active: activeBlockId === block.id }"
+                @click="activeBlockId = block.id"
+                :style="{
+                  background: getGradient(block.bgColors, block.bgAngle),
+                  borderRadius: '6px' 
+                }"
+              >
+                <button class="row-del-btn" @click.stop="removeBlock(index)">×</button>
+                
+                <div v-if="block.type === 'gif'" class="gif-wrapper" :style="{ justifyContent: block.align }">
+                  <img :src="block.content" />
+                  <button class="revert-btn" @click.stop="block.type='text'; block.content=''">Edit Link</button>
+                </div>
+                
+                <textarea 
+                  v-else
+                  :ref="el => blockRefs[block.id] = el"
+                  v-model="block.content"
+                  @input="checkContent(block, $event)"
+                  @focus="activeBlockId = block.id"
+                  placeholder="Type text or paste GIF url..."
+                  class="block-input"
+                  rows="1" 
+                  :style="{
+                    fontFamily: block.fontFamily || 'Inter',
+                    fontSize: (block.fontSize || 18) + 'px',
+                    fontWeight: block.isBold ? 'bold' : 'normal',
+                    fontStyle: block.isItalic ? 'italic' : 'normal',
+                    textAlign: block.align,
+                    backgroundColor: 'transparent',
+                    color: block.textColors && block.textColors.length > 1 ? 'transparent' : (block.textColors?.[0] || 'white'),
+                    backgroundImage: block.textColors && block.textColors.length > 1 ? getGradient(block.textColors, block.textAngle) : 'none',
+                    webkitBackgroundClip: block.textColors && block.textColors.length > 1 ? 'text' : 'unset',
+                    backgroundClip: block.textColors && block.textColors.length > 1 ? 'text' : 'unset'
+                  }"
+                ></textarea>
+              </div>
+              <button class="add-text-btn" @click="addBlock">+ Add Text / GIF</button>
+            </div>
           </div>
 
           <button class="update-btn" @click="handleUpdate" :disabled="isUpdating">
@@ -487,8 +511,8 @@ onMounted(() => {
 /* HEADER */
 .page-header { padding: 20px; margin-bottom: 20px; display: flex; flex-direction: column; gap: 15px; }
 .header-top { display: flex; justify-content: space-between; align-items: center; }
-.back-btn { background: transparent; border: none; color: #94a3b8; cursor: pointer; transition: 0.2s; }
-.back-btn:hover { color: white; transform: translateX(-5px); }
+.back-btn { background: transparent; border: none; color: #94a3b8; font-weight: 600; cursor: pointer; transition: 0.2s; padding: 8px 16px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.1); }
+.back-btn:hover { color: white; background: rgba(239, 68, 68, 0.2); border-color: #ef4444; transform: translateX(-2px); }
 
 .monetization-badge { position: relative; padding: 6px 16px; border-radius: 20px; font-size: 0.8rem; font-weight: 700; display: flex; align-items: center; gap: 8px; background: #334155; color: #94a3b8; cursor: help; }
 .monetization-badge.paid { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
@@ -498,10 +522,10 @@ onMounted(() => {
 
 .title-group { display: flex; flex-direction: column; gap: 5px; }
 .title-group label { font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
-.title-row { display: flex; gap: 10px; align-items: flex-end; }
-.title-input { flex: 1; background: transparent; border: none; font-size: 2rem; color: white; outline: none; border-bottom: 2px solid rgba(255,255,255,0.1); padding-bottom: 5px; transition: 0.3s; }
+.title-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.title-input { flex: 1; min-width: 250px; background: transparent; border: none; font-size: 2rem; color: white; outline: none; border-bottom: 2px solid rgba(255,255,255,0.1); padding-bottom: 5px; transition: 0.3s; }
 .title-input:focus { border-color: #3b82f6; }
-.font-select { align-self: flex-end; background: #1e293b; color: #cbd5e1; border: 1px solid #334155; padding: 8px; border-radius: 8px; font-size: 0.9rem; cursor: pointer; outline: none; }
+.font-select { background: #1e293b; color: #cbd5e1; border: 1px solid #334155; padding: 8px; border-radius: 8px; font-size: 0.9rem; cursor: pointer; outline: none; }
 
 /* GRID LAYOUT */
 .main-grid { display: grid; grid-template-columns: 350px 1fr; gap: 25px; }
@@ -547,41 +571,59 @@ input:checked + .slider:before { transform: translateX(22px); }
 /* DESCRIPTION EDITOR COL */
 .desc-col { display: flex; flex-direction: column; gap: 15px; }
 
-.editor-toolbar { padding: 12px 20px; display: flex; align-items: center; gap: 15px; font-size: 0.9rem; color: #94a3b8; flex-wrap: wrap; }
-.color-group { display: flex; align-items: center; gap: 6px; }
-.mini-color { position: relative; width: 28px; height: 28px; }
-.mini-color input { width: 100%; height: 100%; border: none; padding: 0; background: none; cursor: pointer; border-radius: 50%; overflow: hidden; border: 2px solid rgba(255,255,255,0.2); }
-.del { position: absolute; top: -5px; right: -5px; background: #ef4444; color: white; border-radius: 50%; width: 14px; height: 14px; font-size: 10px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.5); }
-.angle-slider { width: 100px; }
+.desc-box-container { border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; background: #0f172a; display: flex; flex-direction: column; }
+.desc-header { background: #1e293b; padding: 12px 20px; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.header-label { font-size: 0.75rem; text-transform: uppercase; color: #94a3b8; font-weight: 700; letter-spacing: 0.5px; }
 
-.block-tools { padding: 10px 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap; border-left: 3px solid #3b82f6; }
-.tool-row { display: flex; align-items: center; gap: 10px; }
-.mini-select.font { width: 120px; padding: 5px; background: #0f172a; border: 1px solid #334155; color: white; border-radius: 4px; }
-.mini-input.size { width: 60px; padding: 5px; text-align: center; background: #0f172a; border: 1px solid #334155; color: white; border-radius: 4px; }
-.lbl { font-size: 0.8rem; font-weight: 700; color: #cbd5e1; }
-.sep { width: 1px; height: 20px; background: rgba(255,255,255,0.1); margin: 0 5px; }
+.desc-toolbar { background: #334155; padding: 10px 20px; display: flex; align-items: center; gap: 20px; min-height: 60px; flex-wrap: wrap; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.desc-toolbar.empty { justify-content: center; color: #64748b; font-size: 0.85rem; font-style: italic; background: #1e293b; }
 
-.format-btns button { width: 30px; height: 30px; background: #1e293b; border: 1px solid #334155; color: #cbd5e1; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
-.format-btns button:hover { background: rgba(59,130,246,0.2); }
-.format-btns button.active { background: #3b82f6; color: white; border-color: #3b82f6; }
+.toolbar-section { display: flex; flex-direction: column; gap: 5px; }
+.toolbar-section.style-group { flex-direction: row; align-items: center; gap: 8px; margin-left: auto; }
+@media (max-width: 600px) { .toolbar-section.style-group { margin-left: 0; margin-top: 10px; } }
+.toolbar-section label { font-size: 0.65rem; color: #cbd5e1; font-weight: 600; text-transform: uppercase; }
 
-.desc-canvas { min-height: 400px; padding: 30px; display: flex; flex-direction: column; gap: 15px; }
-.desc-block { position: relative; transition: 0.2s; border: 1px dashed transparent; }
-.desc-block:hover { border-color: rgba(255,255,255,0.1); }
-.desc-block.active { border-color: #3b82f6; box-shadow: 0 0 0 1px rgba(59,130,246,0.3); z-index: 5; }
+.vertical-sep { width: 1px; height: 30px; background: rgba(255,255,255,0.1); }
+.gradient-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gradient-controls.small { gap: 6px; }
+.color-wrap { position: relative; display: flex; align-items: center; }
+.color-wrap input[type="color"] { width: 36px; height: 36px; border: 2px solid rgba(255,255,255,0.2); padding: 0; background: none; cursor: pointer; border-radius: 6px; overflow: hidden; }
+.tiny-del { position: absolute; top: -6px; right: -6px; background: #ef4444; border: none; color: white; width: 14px; height: 14px; font-size: 9px; border-radius: 50%; display: flex; justify-content: center; align-items: center; cursor: pointer; z-index: 2; box-shadow: 0 2px 4px rgba(0,0,0,0.3); }
 
-.block-actions { position: absolute; top: -10px; right: -10px; display: none; z-index: 10; }
-.desc-block:hover .block-actions { display: block; }
-.delete-btn { background: #ef4444; color: white; border: none; width: 24px; height: 24px; border-radius: 50%; cursor: pointer; font-size: 14px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; }
+.add-color-btn { width: 36px; height: 36px; background: rgba(255,255,255,0.1); border: 1px dashed rgba(255,255,255,0.3); color: white; border-radius: 6px; cursor: pointer; font-size: 1.2rem; line-height: 1; display: flex; justify-content: center; align-items: center; }
+.add-color-btn:hover { background: rgba(255,255,255,0.2); }
+.angle-slider-wrap { display: flex; flex-direction: column; margin-left: 10px; width: 80px; }
+.angle-slider-wrap label { font-size: 0.6rem; color: #94a3b8; margin-bottom: 2px; }
+input[type="range"] { width: 100%; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; outline: none; cursor: pointer; }
+.mini-slider { width: 60px; margin-left: 5px; }
 
-.block-input { width: 100%; background: transparent; border: none; resize: none; overflow: hidden; outline: none; padding: 5px; margin: 0; display: block; min-height: 1.5em; }
+.size-control { display: flex; flex-direction: column; gap: 2px; margin-right: 5px; }
+.size-input { width: 50px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 4px; padding: 5px; font-size: 0.9rem; text-align: center; }
 
-.gif-wrapper { width: 100%; display: flex; justify-content: center; position: relative; }
-.gif-wrapper img { max-width: 100%; border-radius: 8px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
-.edit-link-btn { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; backdrop-filter: blur(4px); }
+.desc-toolbar button { background: rgba(0,0,0,0.2); border: 1px solid transparent; color: #cbd5e1; width: 32px; height: 32px; border-radius: 6px; cursor: pointer; display: flex; justify-content: center; align-items: center; transition: 0.2s; }
+.desc-toolbar button:hover { background: rgba(255,255,255,0.1); }
+.desc-toolbar button.active { background: #3b82f6; color: white; border-color: #2563eb; }
 
-.add-block-btn { width: 100%; padding: 15px; border: 1px dashed #334155; background: rgba(0,0,0,0.1); color: #64748b; border-radius: 8px; cursor: pointer; transition: 0.2s; font-weight: 600; margin-top: 20px; }
-.add-block-btn:hover { border-color: #3b82f6; color: #3b82f6; background: rgba(59, 130, 246, 0.05); }
+.align-group { display: flex; gap: 2px; background: rgba(0,0,0,0.2); border-radius: 6px; padding: 2px; }
+.align-group button { background: transparent; border: none; }
+.align-group button.active { background: #3b82f6; }
+
+.desc-canvas { min-height: 350px; padding: 30px; display: flex; flex-direction: column; gap: 15px; }
+.desc-block-row { position: relative; width: 100%; transition: transform 0.2s; border: 1px dashed transparent; }
+.desc-block-row:hover { border-color: rgba(255,255,255,0.1); }
+.desc-block-row.active { border-color: #3b82f6; box-shadow: 0 0 0 1px rgba(59,130,246,0.3); z-index: 5; }
+.desc-block-row:hover .row-del-btn { opacity: 1; }
+
+.block-input { width: 100%; border: none; padding: 10px; outline: none; border-radius: 6px; resize: none; overflow: hidden; caret-color: #ffffff; font-family: inherit; line-height: 1.4; min-height: 40px; }
+
+.gif-wrapper { display: flex; width: 100%; position: relative; padding: 10px 0; }
+.gif-wrapper img { max-width: 100%; border-radius: 8px; max-height: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+.revert-btn { position: absolute; top: 20px; right: 20px; background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 4px; border: none; color: white; cursor: pointer; font-size: 0.8rem; backdrop-filter: blur(4px); }
+
+.row-del-btn { position: absolute; left: -35px; top: 50%; transform: translateY(-50%); background: #ef4444; border: none; color: white; width: 24px; height: 24px; border-radius: 50%; cursor: pointer; opacity: 0; transition: 0.2s; z-index: 10; display: flex; align-items: center; justify-content: center; padding-bottom: 2px; }
+
+.add-text-btn { margin-top: 15px; width: 100%; padding: 12px; background: rgba(255,255,255,0.05); border: 1px dashed rgba(255,255,255,0.2); color: #94a3b8; border-radius: 8px; cursor: pointer; transition: 0.2s; font-size: 0.9rem; }
+.add-text-btn:hover { background: rgba(255,255,255,0.1); color: white; border-color: #3b82f6; }
 
 .update-btn { margin-top: 20px; padding: 16px; background: linear-gradient(135deg, #3b82f6, #a855f7); color: white; border: none; border-radius: 12px; font-weight: 700; font-size: 1.1rem; cursor: pointer; transition: 0.2s; box-shadow: 0 10px 25px rgba(59, 130, 246, 0.4); }
 .update-btn:hover { transform: translateY(-2px); box-shadow: 0 15px 30px rgba(59, 130, 246, 0.6); }
@@ -589,6 +631,9 @@ input:checked + .slider:before { transform: translateX(22px); }
 
 @media (max-width: 900px) {
   .main-grid { grid-template-columns: 1fr; }
-  .toggle-card { order: -1; } /* Keep toggle at top on mobile */
+  .toggle-card { order: -1; }
+  .title-row { flex-direction: column; align-items: stretch; }
+  .title-input { width: 100%; }
 }
+
 </style>
