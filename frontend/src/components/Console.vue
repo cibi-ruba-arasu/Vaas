@@ -148,14 +148,12 @@ watch(gameInstances, (newInstances) => {
     }
 }, { deep: true })
 
-// Fullscreen exit detector
 const handleFullscreenChange = () => {
     if (!document.fullscreenElement && isPopupOpen.value) {
         closeGameModal(false) 
     }
 }
 
-// Back Button / Route Hash detector
 watch(() => route.hash, (newHash) => {
     if (newHash !== '#playing' && isPopupOpen.value) {
         closeGameModal(true)
@@ -274,6 +272,73 @@ const activeEngineData = ref(null)
 const viewportOffset = ref({ x: 0, y: 0 })
 const isPanning = ref(false)
 const panStart = ref({ x: 0, y: 0 })
+
+/* ================= 🏆 ACHIEVEMENTS DATA LOGIC ================= */
+const activeGameGiftCounts = computed(() => {
+    const gameId = activePostId.value;
+    if (!gameId) return { pfp: 0, badges: 0 };
+    
+    // 1. ENGINE MEMORY (Highest Priority - Live Scan)
+    if (activeEngineData.value && activeEngineData.value._id === gameId) {
+        let pfp = 0;
+        let badges = 0;
+        const state = activeEngineData.value.canvasState;
+        const nodes = state?.nodes || [];
+
+        const connected = new Set();
+        const addConnection = (val) => {
+            if (val !== null && val !== undefined && val !== "") connected.add(Number(val));
+        };
+
+        if (state?.rootNodeId !== undefined && state?.rootNodeId !== null) {
+            connected.add(Number(state.rootNodeId));
+        }
+
+        // Pass 1: Map all connections
+        nodes.forEach(n => {
+            addConnection(n.Next);
+            addConnection(n.NextTrue);
+            addConnection(n.NextFalse);
+            if (n.options && Array.isArray(n.options)) {
+                n.options.forEach(o => addConnection(o.next));
+            }
+        });
+
+        // Pass 2: Count valid, connected gifts
+        nodes.forEach(node => {
+            const typeStr = String(node.node_type || node.Node_type || node.type || node.name || node.Node_name || "");
+            
+            if (typeStr.toLowerCase() === 'gift' && connected.has(Number(node.index))) {
+                const mode = String(node.giftMode || (node.data && node.data.giftMode) || (node.Node_data && node.Node_data.giftMode) || 'pfp').toLowerCase();
+                if (mode === 'badge') badges++;
+                else pfp++;
+            }
+        });
+        return { pfp, badges };
+    }
+
+    // 2. BACKEND DATA (Quick load for Console UI before Engine Boot)
+    const game = filteredGames.value.find(g => g._id === gameId);
+    
+    // If DB has valid scanned numbers (!== -1), trust them instantly
+    if (game && game.giftCounts && game.giftCounts.pfp !== -1) {
+        return game.giftCounts;
+    }
+
+    // 3. LEGACY FALLBACK (Before engine boots)
+    return { pfp: '?', badges: '?' };
+});
+
+const unlockedPfps = computed(() => {
+    if (!activePostId.value || !Console_Status.value.games[activePostId.value]) return 0;
+    return Console_Status.value.games[activePostId.value].achievements?.pfp?.length || 0;
+});
+
+const unlockedBadges = computed(() => {
+    if (!activePostId.value || !Console_Status.value.games[activePostId.value]) return 0;
+    return Console_Status.value.games[activePostId.value].achievements?.badges?.length || 0;
+});
+/* ============================================================== */
 
 const startGame = async (game) => {
     if (game.monetization?.isPaid && !game.monetization?.hasDemo) {
@@ -509,12 +574,12 @@ onUnmounted(() => {
 
                 <div class="workspace-grid">
                     <div class="workspace-left">
+                        
                         <div class="workspace-box top-square">
                             <h3 class="box-title">Game Instances</h3>
                             <div class="instances-container">
                                 <div v-if="gameInstances.length === 0" class="empty-instances"><p class="placeholder-desc">No instances running.</p></div>
                                 <div v-else class="instance-list">
-                                    
                                     <div v-for="(inst, idx) in gameInstances" :key="inst.id" 
                                          class="instance-item"
                                          :class="{ 'active': activeInstanceId === inst.id }"
@@ -533,15 +598,56 @@ onUnmounted(() => {
                                         
                                         <button class="remove-inst-btn" @click.stop="removeGameInstance(inst.id)" title="Delete">✕</button>
                                     </div>
-
                                 </div>
                             </div>
                             <button class="load-btn" @click="addGameInstance">+ Add Instance</button>
                         </div>
+
                         <div class="workspace-box bottom-rect">
                             <h3 class="box-title">Game Data</h3>
-                            <p class="placeholder-text">Save states, achievements, and configurations will appear here.</p>
+                            
+                            <div v-if="activePostId" class="game-data-content">
+                                
+                                <div class="achievement-section">
+                                    <div class="ach-header">
+                                        <div class="ach-title-wrap">
+                                            <span class="ach-icon">🖼️</span>
+                                            <span class="ach-title">Profile Pictures</span>
+                                        </div>
+                                        <span class="ach-count" v-if="activeGameGiftCounts.pfp > 0 || activeGameGiftCounts.pfp === '?'">
+                                            <span class="highlight">{{ unlockedPfps }}</span> / {{ activeGameGiftCounts.pfp }}
+                                        </span>
+                                    </div>
+                                    <div class="ach-empty" v-if="activeGameGiftCounts.pfp === 0">
+                                        No PFPs available
+                                    </div>
+                                    <div class="ach-progress" v-else>
+                                        <div class="ach-fill" :style="{ width: activeGameGiftCounts.pfp !== '?' ? (unlockedPfps / activeGameGiftCounts.pfp * 100) + '%' : '0%' }"></div>
+                                    </div>
+                                </div>
+
+                                <div class="achievement-section">
+                                    <div class="ach-header">
+                                        <div class="ach-title-wrap">
+                                            <span class="ach-icon">🎖️</span>
+                                            <span class="ach-title">Badges</span>
+                                        </div>
+                                        <span class="ach-count" v-if="activeGameGiftCounts.badges > 0 || activeGameGiftCounts.badges === '?'">
+                                            <span class="highlight">{{ unlockedBadges }}</span> / {{ activeGameGiftCounts.badges }}
+                                        </span>
+                                    </div>
+                                    <div class="ach-empty" v-if="activeGameGiftCounts.badges === 0">
+                                        No Badges available
+                                    </div>
+                                    <div class="ach-progress" v-else>
+                                        <div class="ach-fill badge-fill" :style="{ width: activeGameGiftCounts.badges !== '?' ? (unlockedBadges / activeGameGiftCounts.badges * 100) + '%' : '0%' }"></div>
+                                    </div>
+                                </div>
+
+                            </div>
+                            <p v-else class="placeholder-text">Open a game to view data.</p>
                         </div>
+                        
                     </div>
 
                     <div class="workspace-right">
@@ -1248,6 +1354,70 @@ onUnmounted(() => {
 }
 .load-btn:hover { background: rgba(59, 130, 246, 0.2); }
 
+/* ================= GAME DATA UI ================= */
+.game-data-content {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-top: 30px; 
+    flex: 1;
+    justify-content: center;
+}
+
+.achievement-section {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.ach-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.ach-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ach-icon { font-size: 1.2rem; }
+.ach-title { color: #cbd5e1; font-size: 0.9rem; font-weight: 600; }
+.ach-count { color: #94a3b8; font-size: 0.85rem; font-weight: bold; }
+.ach-count .highlight { color: #fff; font-size: 1rem; }
+
+.ach-empty {
+    font-size: 0.8rem;
+    color: #64748b;
+    font-style: italic;
+    text-align: center;
+    padding: 5px 0;
+}
+
+.ach-progress {
+    width: 100%;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.ach-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #60a5fa);
+    border-radius: 4px;
+    transition: width 0.5s ease-in-out;
+}
+
+.ach-fill.badge-fill {
+    background: linear-gradient(90deg, #f59e0b, #fbbf24);
+}
+
 /* ================= MOBILE PORTRAIT WARNING ================= */
 .portrait-warning {
     display: none; 
@@ -1281,12 +1451,11 @@ onUnmounted(() => {
 }
 
 /* ================= RESPONSIVE HANDLING ================= */
-
 @media screen and (max-width: 1000px) and (orientation: landscape),
        screen and (max-height: 600px) and (orientation: landscape) {
     
     .workspace-grid { 
-        flex-direction: row !important; /* Never stack on landscape */
+        flex-direction: row !important; 
         padding: 10px; 
         gap: 10px; 
     }
@@ -1295,24 +1464,21 @@ onUnmounted(() => {
         width: 220px; 
         gap: 10px; 
         flex-direction: column;
-        overflow-y: auto; /* Makes the entire left column scrollable */
-        padding-right: 5px; /* Adds a bit of breathing room for the scrollbar */
+        overflow-y: auto; 
+        padding-right: 5px; 
     }
 
-    /* Custom scrollbar for the left column */
     .workspace-left::-webkit-scrollbar { width: 4px; }
     .workspace-left::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); border-radius: 4px; }
     .workspace-left::-webkit-scrollbar-thumb { background: rgba(59,130,246,0.5); border-radius: 4px; }
     
-    /* Reveal the Game Data box and give it a set height */
     .bottom-rect { 
         display: flex !important; 
         min-height: 180px; 
-        flex: none; /* Prevents it from stretching oddly */
+        flex: none; 
         padding: 15px 10px;
     }
     
-    /* Give the Instances box a set height so the user can scroll down to Game Data */
     .top-square { 
         height: auto; 
         min-height: 220px; 
@@ -1320,18 +1486,27 @@ onUnmounted(() => {
         flex: none; 
     }
     
-    /* Fix absolute positioning so text flows naturally */
     .box-title { position: static; margin-bottom: 10px; font-size: 0.75rem; text-align: center; }
     .instances-container { margin-top: 0; min-height: 120px; }
+    .game-data-content { margin-top: 0; }
     
-    /* Compact the Header */
     .workspace-header { padding: 8px 15px; }
     .workspace-header-title { font-size: 1rem; }
     .close-modal-btn { padding: 6px 12px; font-size: 0.8rem; }
     .start-game-btn { padding: 6px 16px; font-size: 0.9rem; }
     
-    /* Compact viewport texts */
     .placeholder-watermark { font-size: 1.8rem; padding: 0 10px; }
     .viewport-header { padding: 8px 15px; }
+}
+
+@media screen and (max-width: 768px) and (orientation: portrait) {
+    .portrait-warning { display: flex; }
+    .game-modal-content { display: none !important; } 
+    
+    .console-header { flex-direction: column; gap: 1rem; }
+    .search-wrapper { max-width: 100%; order: 3; margin-top: 1rem; }
+    .cd-item { width: 200px; height: 200px; }
+    .cd-hole { width: 40px; height: 40px; }
+    .nav-arrow { font-size: 2rem; padding: 10px; }
 }
 </style>

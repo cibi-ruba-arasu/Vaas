@@ -223,6 +223,53 @@ const translateToAll = async (text, sourceLang) => {
     return results;
 };
 
+const calculateGiftCounts = (canvasState) => {
+    let pfpCount = 0;
+    let badgeCount = 0;
+
+    if (canvasState && canvasState.nodes && Array.isArray(canvasState.nodes)) {
+        const connected = new Set();
+        
+        // Helper to safely register connections
+        const addConnection = (val) => {
+            if (val !== null && val !== undefined && val !== "") {
+                connected.add(Number(val));
+            }
+        };
+
+        // PASS 1: The Root Node is inherently connected
+        if (canvasState.rootNodeId !== undefined && canvasState.rootNodeId !== null) {
+            connected.add(Number(canvasState.rootNodeId));
+        }
+
+        // PASS 1: Map every single outgoing connection in the canvas
+        canvasState.nodes.forEach(n => {
+            addConnection(n.Next);
+            addConnection(n.NextTrue);
+            addConnection(n.NextFalse);
+            if (n.options && Array.isArray(n.options)) {
+                n.options.forEach(o => addConnection(o.next));
+            }
+        });
+
+        // PASS 2: Check gifts and ONLY count if their index exists in the connected set
+        canvasState.nodes.forEach(node => {
+            const typeStr = String(node.node_type || node.Node_type || node.type || node.name || node.Node_name || "");
+            
+            // Case insensitive check for "Gift"
+            if (typeStr.toLowerCase() === 'gift' && connected.has(Number(node.index))) {
+                const mode = String(node.giftMode || (node.data && node.data.giftMode) || (node.Node_data && node.Node_data.giftMode) || 'pfp').toLowerCase();
+                if (mode === 'badge') {
+                    badgeCount++;
+                } else {
+                    pfpCount++;
+                }
+            }
+        });
+    }
+    return { pfp: pfpCount, badges: badgeCount };
+};
+
 /* ===== HELPER: RECURSIVE MEDIA PROCESSOR ===== */
 const processProjectAssets = async (nodes, userId, projectId) => {
   const usedFilePaths = new Set();
@@ -830,7 +877,7 @@ app.post("/projects", authMiddleware, async (req, res) => {
 
 app.put("/projects/:id", authMiddleware, async (req, res) => {
   const { mongoId } = req.user
-  const { name, description, thumbnail, titleFont } = req.body // Added titleFont
+  const { name, description, thumbnail, titleFont } = req.body 
   
   const bucket = await Project.findOne({ userId: mongoId })
   if (!bucket) return res.status(404).json({ message: "Bucket not found" })
@@ -854,16 +901,16 @@ app.put("/projects/:id", authMiddleware, async (req, res) => {
       await deleteFolderContent(thumbnailFolder);
       project.thumbnail = undefined;
   }
-
+  
+  // Update Draft Data
   project.name = name
   project.description = description
-  if (titleFont) project.titleFont = titleFont; // ✅ Save Font
+  if (titleFont) project.titleFont = titleFont; 
   project.updatedAt = new Date()
 
   await bucket.save()
   res.json({ project })
 })
-
 app.delete("/projects/:id", authMiddleware, async (req, res) => {
   const { mongoId } = req.user
 
@@ -1225,10 +1272,15 @@ app.post("/publish", authMiddleware, async (req, res) => {
       delete liveCanvasState._id;
       delete liveCanvasState.__v;
       
-      publishData.canvasState = liveCanvasState; // Inject it into the update payload
+      publishData.canvasState = liveCanvasState; 
     }
 
-    // 4. Save to Database using $set (prevents deleting existing canvasState if omitted)
+    /* 🎁 4. CALCULATE GIFT COUNTS USING THE HELPER 🎁 */
+    const stateToScan = publishData.canvasState || (existingPublish ? existingPublish.canvasState : null);
+    publishData.giftCounts = calculateGiftCounts(stateToScan);
+    /* ============================================== */
+
+    // 5. Save to Database using $set
     const result = await Publish.findOneAndUpdate(
       { projectId: id }, 
       { $set: publishData },

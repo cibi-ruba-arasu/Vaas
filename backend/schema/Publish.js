@@ -24,6 +24,10 @@ const publishSchema = new mongoose.Schema({
     hasDemo: { type: Boolean, default: false },
     demoNodeLimit: { type: Number, default: 10 }
   },
+  giftCounts: {
+    pfp: { type: Number, default: -1 },
+    badges: { type: Number, default: -1 }
+  },
 
   canvasState: { type: mongoose.Schema.Types.Mixed, default: {} },
   publishedAt: { type: Date, default: Date.now },
