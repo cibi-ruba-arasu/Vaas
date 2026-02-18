@@ -716,7 +716,8 @@ const setVarStringSuffix = ref("")
 
 // --- Computed & Watchers relying on setVarId ---
 const availableOperators = computed(() => {
-    const v = globalVariables.value.find(g => g.id === setVarId.value);
+    // FIX: Use loose equality (==) to match String IDs (from DB) with Number IDs (in State)
+    const v = globalVariables.value.find(g => g.id == setVarId.value);
     if (v && v.type === 'string') {
         return ['=', '+']; 
     }
@@ -724,7 +725,8 @@ const availableOperators = computed(() => {
 });
 
 watch(setVarId, (newId) => {
-    const v = globalVariables.value.find(g => g.id === newId);
+    // FIX: Use loose equality (==) here as well
+    const v = globalVariables.value.find(g => g.id == newId);
     if (v && v.type === 'string' && setVarOperator.value !== '=' && setVarOperator.value !== '+') {
         setVarOperator.value = '=';
     }
@@ -4047,8 +4049,9 @@ const stopAllVideos = () => {
     nodeScenes.value.forEach(scene => stopVideosInScene(scene));
 }
 
+/* ================= PREVIEW NAVIGATION ================= */
 const advancePreview = () => {
-    // 1. If we are currently in an exit animation, do nothing until it finishes
+    // 1. If we are currently in an exit animation, do nothing
     if (isSceneExiting.value) return;
 
     const currentScene = nodeScenes.value[currentPreviewSceneIndex.value]
@@ -4085,53 +4088,59 @@ const advancePreview = () => {
              comp.videoElement.currentTime = 0;
              comp._hasPlayedFull = false; 
              
-             // Reset listeners
+             // 1. Critical Fix: Allow clicks to pass through the video element to the canvas container
+             comp.videoElement.style.pointerEvents = 'none'; 
+
+             // 2. Reset listeners to prevent ghost triggers from previous states
              comp.videoElement.onended = null;
              comp.videoElement.ontimeupdate = null;
              
-             // Flag to ensure auto-advance only triggers once per playback session
-             let autoAdvanceTriggered = false;
+             // Check if this is the final item in the scene
+             const isLastComp = currentPreviewComponentIndex.value >= components.length - 1;
 
              if (comp.isLoop) {
                  // --- LOOPING VIDEO LOGIC ---
-                 // Detect loop by checking if time resets
-                 let lastTime = 0;
-                 comp.videoElement.ontimeupdate = () => {
-                     const t = comp.videoElement.currentTime;
-                     if (t < lastTime) { 
-                         // Loop Detected (Video finished playing once)
-                         comp._hasPlayedFull = true;
-                         
-                         // Requirement: "render it automatically once the video finishes playing once"
-                         if (!autoAdvanceTriggered) {
-                             autoAdvanceTriggered = true;
-                             advancePreview();
+                 comp.videoElement.loop = true; // Ensure visual loop
+
+                 if (isLastComp) {
+                     // 
+                     // CASE A: LOOPING + LAST COMPONENT
+                     // We DO NOT attach any listeners. 
+                     // The video plays forever.
+                     // The ONLY way to leave is via the user clicking the screen (handled by handleCanvasClick)
+                     comp.videoElement.play().catch(e => console.error(e));
+                 } else {
+                     // CASE B: LOOPING + NOT LAST (e.g., Background Video)
+                     // We watch for the first loop to finish, then auto-show the next item (like text)
+                     let lastTime = 0;
+                     comp.videoElement.ontimeupdate = () => {
+                         const t = comp.videoElement.currentTime;
+                         // Detect wrap-around (current time < last time) which means loop happened
+                         if (t < lastTime) { 
+                             // Remove listener immediately so it doesn't trigger again
+                             comp.videoElement.ontimeupdate = null;
+                             advancePreview(); // Auto-advance to show the overlay/text
                          }
-                     }
-                     lastTime = t;
-                 };
+                         lastTime = t;
+                     };
+                     comp.videoElement.play().catch(e => console.error(e));
+                 }
              } else {
                  // --- NON-LOOPING VIDEO LOGIC ---
+                 comp.videoElement.loop = false;
                  comp.videoElement.onended = () => { 
                      comp._hasPlayedFull = true; 
                      
-                     // 1. If it's the LAST component -> Exit Scene Automatically
-                     const isLastComp = currentPreviewComponentIndex.value >= components.length - 1;
-                     
-                     // 2. If it's NOT last -> Check if next component is Auto Render
                      const nextComp = !isLastComp ? components[currentPreviewComponentIndex.value + 1] : null;
 
                      if (isLastComp) {
-                         advancePreview(); // Triggers End of Scene logic
+                         advancePreview(); // End Scene automatically when video ends
                      } else if (nextComp && nextComp.autoRender) {
-                         advancePreview(); // Triggers Next Component
+                         advancePreview(); // Next Component automatically
                      }
-                     // If neither (Middle component, manual render), we wait for user click.
-                     // The click is enabled now because _hasPlayedFull is true.
                  };
+                 comp.videoElement.play().catch(e => console.error(e));
              }
-
-             comp.videoElement.play().catch(e => console.error("Auto-play prevented", e));
         } 
         else {
              // Standard Non-Video Component Logic
@@ -4143,30 +4152,26 @@ const advancePreview = () => {
         }
 
     } else {
-        // --- END OF SCENE ---
+        // --- END OF SCENE (SCENE TRANSITION) ---
         if (currentPreviewSceneIndex.value < nodeScenes.value.length - 1) {
             
-            // CASE 1: SCENE TRANSITION ANIMATION
-            // Determine max exit duration to wait
+            // Transition Animation Wait
             let maxExitDuration = 0;
             components.forEach(c => {
                 if (c.exitAnimationDuration && c.exitAnimationDuration > maxExitDuration) {
                     maxExitDuration = c.exitAnimationDuration;
                 }
             });
-            if (maxExitDuration === 0) maxExitDuration = 0.5; // default safety
+            if (maxExitDuration === 0) maxExitDuration = 0.5;
 
-            // Trigger Exit State
             isSceneExiting.value = true;
             sceneExitStartTime.value = Date.now();
 
-            // Wait for exit, then swap scenes
             setTimeout(() => {
                 stopVideosInScene(currentScene);
                 currentPreviewSceneIndex.value++
                 currentPreviewComponentIndex.value = -1 
                 
-                // Reset Exit State
                 isSceneExiting.value = false;
                 sceneExitStartTime.value = 0;
                 
@@ -4179,10 +4184,10 @@ const advancePreview = () => {
             }, maxExitDuration * 1000);
 
         } else {
-            // End of sequence
+            // End of Sequence
             const lastComp = components[components.length-1];
             if (lastComp && (lastComp.type === 'options' || (lastComp.type === 'input' && !lastComp.isSubmitted))) {
-                 // Do nothing, wait for user action
+                 // Wait for user interaction
             } else {
                  exitPreview()
             }
@@ -4473,6 +4478,8 @@ const onPreviewMouseDown = (e) => {
 }
 
 // --- FIX: Prevent default canvas logic from firing on Inputs/Buttons ---
+// Find this function in your code (around line 2540) and update the guard clause:
+
 const onPreviewMouseUp = (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
 
@@ -4484,11 +4491,14 @@ const onPreviewMouseUp = (e) => {
     if (currentPreviewComponentIndex.value >= 0) {
         const activeComp = scene.components[currentPreviewComponentIndex.value];
 
-        // --- NEW CHECK: Block click if video hasn't played fully ---
-        if (activeComp && activeComp.type === 'video' && !activeComp._hasPlayedFull) {
+        // --- FIX STARTS HERE ---
+        // Original: if (activeComp && activeComp.type === 'video' && !activeComp._hasPlayedFull) { return; }
+        
+        // Corrected: Allow clicking if the video is set to LOOP (!activeComp.isLoop)
+        if (activeComp && activeComp.type === 'video' && !activeComp._hasPlayedFull && !activeComp.isLoop) {
             return; 
         }
-        // -----------------------------------------------------------
+        // --- FIX ENDS HERE ---
 
         if (activeComp && activeComp.type === 'options') {
             const clickedIdx = activeComp._clickedOptionIndex;
@@ -5925,7 +5935,7 @@ const onPreviewWheel = (e) => {
                             </div>
 
                             <div class="logic-group large">
-                                <template v-if="setVarOperator === '+' && globalVariables.find(v => v.id === setVarId)?.type === 'string'">
+                                <template v-if="setVarOperator === '+' && globalVariables.find(v => v.id == setVarId)?.type === 'string'">
                                     <div class="string-concat-ui">
                                         <div class="concat-row">
                                             <label>Before string (Prefix)</label>
@@ -5933,7 +5943,7 @@ const onPreviewWheel = (e) => {
                                         </div>
                                         
                                         <div class="var-badge-display">
-                                            &lt; {{ globalVariables.find(v => v.id === setVarId)?.name }} &gt;
+                                            &lt; {{ globalVariables.find(v => v.id == setVarId)?.name }} &gt;
                                         </div>
                                         
                                         <div class="concat-row">
@@ -5960,7 +5970,7 @@ const onPreviewWheel = (e) => {
                                     
                                     <div v-if="setVarValueType === 'constant'">
                                         <input 
-                                            :type="globalVariables.find(v => v.id === setVarId)?.type === 'integer' ? 'number' : 'text'"
+                                            :type="globalVariables.find(v => v.id == setVarId)?.type === 'integer' ? 'number' : 'text'"
                                             v-model="setVarValue" 
                                             class="logic-input" 
                                             placeholder="Enter value..."
@@ -5980,20 +5990,20 @@ const onPreviewWheel = (e) => {
                         </div>
 
                         <div class="preview-equation">
-                            <span class="eq-part target">{{ globalVariables.find(v => v.id === setVarId)?.name || '?' }}</span>
+                            <span class="eq-part target">{{ globalVariables.find(v => v.id == setVarId)?.name || '?' }}</span>
                             <span class="eq-part op">=</span>
                             
-                            <template v-if="setVarOperator === '+' && globalVariables.find(v => v.id === setVarId)?.type === 'string'">
+                            <template v-if="setVarOperator === '+' && globalVariables.find(v => v.id == setVarId)?.type === 'string'">
                                 <span class="eq-part value" v-if="setVarStringPrefix">"{{ setVarStringPrefix }}" + </span>
-                                <span class="eq-part target">{{ globalVariables.find(v => v.id === setVarId)?.name }}</span>
+                                <span class="eq-part target">{{ globalVariables.find(v => v.id == setVarId)?.name }}</span>
                                 <span class="eq-part value" v-if="setVarStringSuffix"> + "{{ setVarStringSuffix }}"</span>
                             </template>
                             
                             <template v-else>
-                                <span class="eq-part target" v-if="setVarOperator !== '='">{{ globalVariables.find(v => v.id === setVarId)?.name }} {{ setVarOperator }}</span>
+                                <span class="eq-part target" v-if="setVarOperator !== '='">{{ globalVariables.find(v => v.id == setVarId)?.name }} {{ setVarOperator }}</span>
                                 <span class="eq-part value">
                                     <template v-if="setVarValueType === 'constant'">{{ setVarValue || '...' }}</template>
-                                    <template v-else>{{ globalVariables.find(v => v.id === setVarValue)?.name || '?' }}</template>
+                                    <template v-else>{{ globalVariables.find(v => v.id == setVarValue)?.name || '?' }}</template>
                                 </span>
                             </template>
                         </div>
