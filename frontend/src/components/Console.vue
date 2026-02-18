@@ -127,6 +127,7 @@ const removeGame = async (id) => {
 /* ================= GAME POPUP MODAL LOGIC & ANIMATION ================= */
 const isPopupOpen = ref(false)
 const activePostId = ref(null)
+const activeDataTab = ref('pfp') // Controls the Game Data Tab Switcher
 
 const gameInstances = ref([])
 const isWorkspaceGameLoaded = ref(false)
@@ -185,6 +186,7 @@ const handlePlayClick = async (id) => {
 const openGameModal = (id) => {
     activePostId.value = id
     isPopupOpen.value = true
+    activeDataTab.value = 'pfp' // Reset tab on open
     
     if (!Console_Status.value.games[id]) {
         Console_Status.value.games[id] = { instances: [], achievements: { pfp: [], badges: [] } }
@@ -321,7 +323,7 @@ const activeGameGiftCounts = computed(() => {
     const game = filteredGames.value.find(g => g._id === gameId);
     
     // If DB has valid scanned numbers (!== -1), trust them instantly
-    if (game && game.giftCounts && game.giftCounts.pfp !== -1) {
+    if (game && game.giftCounts && game.giftCounts.pfp !== -1 && game.giftCounts.pfp !== undefined) {
         return game.giftCounts;
     }
 
@@ -608,40 +610,57 @@ onUnmounted(() => {
                             
                             <div v-if="activePostId" class="game-data-content">
                                 
-                                <div class="achievement-section">
-                                    <div class="ach-header">
-                                        <div class="ach-title-wrap">
-                                            <span class="ach-icon">🖼️</span>
-                                            <span class="ach-title">Profile Pictures</span>
-                                        </div>
-                                        <span class="ach-count" v-if="activeGameGiftCounts.pfp > 0 || activeGameGiftCounts.pfp === '?'">
-                                            <span class="highlight">{{ unlockedPfps }}</span> / {{ activeGameGiftCounts.pfp }}
-                                        </span>
-                                    </div>
-                                    <div class="ach-empty" v-if="activeGameGiftCounts.pfp === 0">
-                                        No PFPs available
-                                    </div>
-                                    <div class="ach-progress" v-else>
-                                        <div class="ach-fill" :style="{ width: activeGameGiftCounts.pfp !== '?' ? (unlockedPfps / activeGameGiftCounts.pfp * 100) + '%' : '0%' }"></div>
-                                    </div>
+                                <div class="data-tabs">
+                                    <button class="data-tab-btn" :class="{ active: activeDataTab === 'pfp' }" @click="activeDataTab = 'pfp'">
+                                        🖼️ PFPs
+                                    </button>
+                                    <button class="data-tab-btn" :class="{ active: activeDataTab === 'badge' }" @click="activeDataTab = 'badge'">
+                                        🎖️ Badges
+                                    </button>
                                 </div>
 
-                                <div class="achievement-section">
-                                    <div class="ach-header">
-                                        <div class="ach-title-wrap">
-                                            <span class="ach-icon">🎖️</span>
-                                            <span class="ach-title">Badges</span>
+                                <div v-if="activeDataTab === 'pfp'" class="achievement-section" :class="{ 'is-disabled': activeGameGiftCounts.pfp === 0 }">
+                                    <template v-if="activeGameGiftCounts.pfp !== 0">
+                                        <div class="ach-header">
+                                            <div class="ach-title-wrap">
+                                                <span class="ach-title">Profile Pictures</span>
+                                            </div>
+                                            <span class="ach-count" v-if="activeGameGiftCounts.pfp > 0 || activeGameGiftCounts.pfp === '?'">
+                                                <span class="highlight">{{ unlockedPfps }}</span> / {{ activeGameGiftCounts.pfp }}
+                                            </span>
                                         </div>
-                                        <span class="ach-count" v-if="activeGameGiftCounts.badges > 0 || activeGameGiftCounts.badges === '?'">
-                                            <span class="highlight">{{ unlockedBadges }}</span> / {{ activeGameGiftCounts.badges }}
-                                        </span>
-                                    </div>
-                                    <div class="ach-empty" v-if="activeGameGiftCounts.badges === 0">
-                                        No Badges available
-                                    </div>
-                                    <div class="ach-progress" v-else>
-                                        <div class="ach-fill badge-fill" :style="{ width: activeGameGiftCounts.badges !== '?' ? (unlockedBadges / activeGameGiftCounts.badges * 100) + '%' : '0%' }"></div>
-                                    </div>
+                                        <div class="ach-progress">
+                                            <div class="ach-fill" :style="{ width: activeGameGiftCounts.pfp !== '?' ? (unlockedPfps / activeGameGiftCounts.pfp * 100) + '%' : '0%' }"></div>
+                                        </div>
+                                    </template>
+                                    <template v-else>
+                                        <div class="ach-empty-disabled">
+                                            <span class="icon">🖼️</span>
+                                            <span>No PFPs available</span>
+                                        </div>
+                                    </template>
+                                </div>
+
+                                <div v-if="activeDataTab === 'badge'" class="achievement-section" :class="{ 'is-disabled': activeGameGiftCounts.badges === 0 }">
+                                    <template v-if="activeGameGiftCounts.badges !== 0">
+                                        <div class="ach-header">
+                                            <div class="ach-title-wrap">
+                                                <span class="ach-title">Badges</span>
+                                            </div>
+                                            <span class="ach-count" v-if="activeGameGiftCounts.badges > 0 || activeGameGiftCounts.badges === '?'">
+                                                <span class="highlight">{{ unlockedBadges }}</span> / {{ activeGameGiftCounts.badges }}
+                                            </span>
+                                        </div>
+                                        <div class="ach-progress">
+                                            <div class="ach-fill badge-fill" :style="{ width: activeGameGiftCounts.badges !== '?' ? (unlockedBadges / activeGameGiftCounts.badges * 100) + '%' : '0%' }"></div>
+                                        </div>
+                                    </template>
+                                    <template v-else>
+                                        <div class="ach-empty-disabled">
+                                            <span class="icon">🎖️</span>
+                                            <span>No Badges available</span>
+                                        </div>
+                                    </template>
                                 </div>
 
                             </div>
@@ -1354,24 +1373,87 @@ onUnmounted(() => {
 }
 .load-btn:hover { background: rgba(59, 130, 246, 0.2); }
 
-/* ================= GAME DATA UI ================= */
+/* ================= GAME DATA UI (TABS) ================= */
 .game-data-content {
     display: flex;
     flex-direction: column;
     gap: 15px;
     margin-top: 30px; 
     flex: 1;
+}
+
+.data-tabs {
+    display: flex;
+    gap: 10px;
+    background: rgba(0, 0, 0, 0.4);
+    padding: 5px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    flex-shrink: 0;
+}
+
+.data-tab-btn {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #64748b;
+    padding: 8px 0;
+    font-size: 0.85rem;
+    font-weight: bold;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: 0.3s;
+    display: flex;
+    align-items: center;
     justify-content: center;
+    gap: 5px;
+}
+
+.data-tab-btn.active {
+    background: rgba(59, 130, 246, 0.15);
+    color: #3b82f6;
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.1);
+}
+
+.data-tab-btn:hover:not(.active) {
+    color: #cbd5e1;
+    background: rgba(255, 255, 255, 0.05);
 }
 
 .achievement-section {
     background: rgba(0, 0, 0, 0.3);
     border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 8px;
-    padding: 12px;
+    padding: 15px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
+    flex: 1;
+}
+
+.achievement-section.is-disabled {
+    border: 1px dashed rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.1);
+    align-items: center;
+    justify-content: center;
+}
+
+.ach-empty-disabled {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #475569;
+    font-size: 0.9rem;
+    text-align: center;
+    gap: 8px;
+    font-style: italic;
+}
+
+.ach-empty-disabled .icon {
+    font-size: 1.5rem;
+    opacity: 0.5;
+    filter: grayscale(100%);
 }
 
 .ach-header {
@@ -1390,14 +1472,6 @@ onUnmounted(() => {
 .ach-title { color: #cbd5e1; font-size: 0.9rem; font-weight: 600; }
 .ach-count { color: #94a3b8; font-size: 0.85rem; font-weight: bold; }
 .ach-count .highlight { color: #fff; font-size: 1rem; }
-
-.ach-empty {
-    font-size: 0.8rem;
-    color: #64748b;
-    font-style: italic;
-    text-align: center;
-    padding: 5px 0;
-}
 
 .ach-progress {
     width: 100%;
@@ -1498,11 +1572,9 @@ onUnmounted(() => {
     .placeholder-watermark { font-size: 1.8rem; padding: 0 10px; }
     .viewport-header { padding: 8px 15px; }
 }
-
 @media screen and (max-width: 768px) and (orientation: portrait) {
     .portrait-warning { display: flex; }
     .game-modal-content { display: none !important; } 
-    
     .console-header { flex-direction: column; gap: 1rem; }
     .search-wrapper { max-width: 100%; order: 3; margin-top: 1rem; }
     .cd-item { width: 200px; height: 200px; }
