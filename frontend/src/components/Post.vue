@@ -194,7 +194,9 @@ onMounted(() => {
             
             <div class="author-row">
               <span class="by">woven by</span>
-              <span class="author-name" @click="router.push(`/user/${post.authorId}`)">{{ post.authorName }}</span>
+              
+              <span class="author-name" @click="router.push(`/user/${post.authorUserId || post.authorId}`)">{{ post.authorName }}</span>
+              
               <span class="date">• {{ formatDate(post.publishedAt) }}</span>
             </div>
             

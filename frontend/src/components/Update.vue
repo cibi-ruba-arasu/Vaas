@@ -103,6 +103,20 @@ const activeBlock = computed(() =>
   form.value.description.blocks.find(b => b.id === activeBlockId.value)
 );
 
+const handleFileChange = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) return alert("File too large (Max 5MB)");
+  
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    // Set the Base64 string to the form. 
+    // The backend POST /publish will handle the upload to GCS.
+    form.value.thumbnail = event.target.result;
+  }
+  reader.readAsDataURL(file);
+};
+
 // --- ACTIONS: DESCRIPTION EDITOR ---
 const addBlock = async () => {
   const id = Date.now();
@@ -212,7 +226,7 @@ const handleUpdate = async () => {
     
     if (res.ok) {
       alert(form.value.updateCanvas ? "✅ Project & Content Updated!" : "✅ Metadata Updated Successfully!");
-      router.push(`/post/${data.publishedAt ? projectId : ''}`); 
+      router.push('/profile'); 
     } else {
       alert(data.message || "Update failed");
     }
@@ -271,7 +285,18 @@ onMounted(() => {
             <span class="tooltip">Monetization status cannot be changed after release.</span>
           </div>
         </div>
-        
+        <div class="thumbnail-section">
+            <label>Cover Image</label>
+            <div class="thumbnail-editor" :style="{ backgroundImage: form.thumbnail ? `url(${form.thumbnail})` : 'linear-gradient(to bottom right, #000, #1e3a8a)' }">
+                <div class="overlay">
+                    <label class="change-btn">
+                        <span>Change Cover</span>
+                        <input type="file" @change="handleFileChange" accept="image/*" hidden />
+                    </label>
+                </div>
+                <div v-if="form.isThumbnailNSFW" class="nsfw-overlay-badge">NSFW</div>
+            </div>
+        </div>
         <div class="title-group">
           <label>Project Title</label>
           <div class="title-row">
@@ -635,5 +660,15 @@ input[type="range"] { width: 100%; height: 4px; background: rgba(255,255,255,0.2
   .title-row { flex-direction: column; align-items: stretch; }
   .title-input { width: 100%; }
 }
+.thumbnail-section { margin-bottom: 15px; }
+.thumbnail-editor { width: 100%; height: 200px; border-radius: 12px; background-size: cover; background-position: center; border: 1px solid rgba(255,255,255,0.1); position: relative; overflow: hidden; margin-top: 5px; }
+.overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; opacity: 0; transition: 0.3s; }
+.thumbnail-editor:hover .overlay { opacity: 1; }
+.change-btn { background: white; color: black; padding: 8px 16px; border-radius: 30px; font-weight: 700; cursor: pointer; transition: transform 0.2s; font-size: 0.9rem; }
+.change-btn:hover { transform: scale(1.05); }
+.nsfw-overlay-badge { position: absolute; bottom: 10px; right: 10px; background: #ef4444; color: white; font-weight: 800; padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; box-shadow: 0 2px 5px rgba(0,0,0,0.5); }
 
+@media (max-width: 900px) {
+  .thumbnail-editor { height: 160px; }
+}
 </style>

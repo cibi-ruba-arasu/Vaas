@@ -502,13 +502,13 @@ const handleFileChange = async (e) => {
   const file = e.target.files[0];
   if (!file || file.size > 5 * 1024 * 1024) return;
   const reader = new FileReader();
-  reader.onload = async (v) => await updateThumbnail(v.target.result);
+  reader.onload = async (v) => await updateThumbnail(v.target.result); // 1. Gets Base64
   reader.readAsDataURL(file);
 };
 
 const updateThumbnail = async (base64) => {
   isUploading.value = true;
-  await saveProject(base64);
+  await saveProject(base64); // 2. Calls saveProject immediately
   isUploading.value = false;
 };
 
@@ -533,7 +533,7 @@ const publishProject = async () => {
     
     if (res.ok) {
       alert("🎉 Successfully Published to the Feed!");
-      router.push('/create');
+      router.push('/profile');
     } else {
       alert("Publishing Failed: " + data.message);
     }

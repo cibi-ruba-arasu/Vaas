@@ -911,26 +911,58 @@ app.put("/projects/:id", authMiddleware, async (req, res) => {
   await bucket.save()
   res.json({ project })
 })
+
 app.delete("/projects/:id", authMiddleware, async (req, res) => {
-  const { mongoId } = req.user
+  const { mongoId } = req.user;
+  const projectId = req.params.id;
 
-  const bucket = await Project.findOne({ userId: mongoId })
+  try {
+    const bucket = await Project.findOne({ userId: mongoId });
 
-  if (!bucket) {
-    return res.status(404).json({ message: "Project not found" })
+    if (!bucket) {
+      return res.status(404).json({ message: "Project bucket not found" });
+    }
+
+    const project = bucket.projects.id(projectId);
+
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+
+    // 1. Find the Published post to get its unique _id
+    // (Consoles store the Publish _id, not the Draft projectId)
+    const publishedPost = await Publish.findOne({ projectId });
+
+    if (publishedPost) {
+      // 2. Remove this post from ALL users' consoles
+      await ConsoleDB.updateMany(
+        {}, 
+        { $pull: { savedPosts: publishedPost._id } }
+      );
+      
+      // 3. Delete the Publish document
+      await Publish.deleteOne({ projectId });
+    }
+
+    // 4. Delete the CanvasState (the actual nodes/game data)
+    await CanvasState.deleteOne({ projectId });
+
+    // 5. Wipe all media from Google Cloud Storage to prevent ghost files
+    // (Using your existing deleteFolderContent helper)
+    const gcsFolder = `users/${mongoId}/projects/${projectId}`;
+    await deleteFolderContent(gcsFolder);
+
+    // 6. Finally, remove the project from the user's draft bucket
+    project.deleteOne();
+    await bucket.save();
+
+    res.json({ success: true, message: "Project completely unraveled." });
+
+  } catch (err) {
+    console.error("Delete Project Cascade Error:", err);
+    res.status(500).json({ message: "Failed to delete project." });
   }
-
-  const project = bucket.projects.id(req.params.id)
-
-  if (!project) {
-    return res.status(404).json({ message: "Project not found" })
-  }
-
-  project.deleteOne()
-  await bucket.save()
-
-  res.json({ success: true })
-})
+});
 
 app.get("/projects/:id", authMiddleware, async (req, res) => {
   const { mongoId } = req.user
@@ -1236,9 +1268,12 @@ app.get("/users/:userid", authMiddleware, async (req, res) => {
 app.post("/publish", authMiddleware, async (req, res) => {
   const { 
     id, name, titleFont, description, language, categories, 
-    customCategories, warnings, isThumbnailNSFW, monetization, thumbnail,
+    customCategories, warnings, isThumbnailNSFW, monetization, 
     updateCanvas // 👈 Catch the toggle from frontend
   } = req.body;
+
+  // We grab 'thumbnail' separately because we might modify it
+  let { thumbnail } = req.body; 
 
   const { mongoId } = req.user;
 
@@ -1250,16 +1285,41 @@ app.post("/publish", authMiddleware, async (req, res) => {
     const author = await User.findById(mongoId).select("username followers"); 
     if (!author) return res.status(404).json({ message: "Author not found" });
 
+    // =========================================================
+    // 📸 THUMBNAIL UPLOAD LOGIC (COPIED FROM /projects)
+    // =========================================================
+    if (thumbnail && thumbnail.startsWith("data:")) {
+      // Define the folder: users/{uid}/projects/{pid}/thumbnail
+      const thumbnailFolder = `users/${mongoId}/projects/${id}/thumbnail`;
+      
+      // Clean up old files first (Optional, but keeps bucket clean)
+      await deleteFolderContent(thumbnailFolder);
+
+      // Upload new file
+      const uploadResult = await uploadToGCS(thumbnail, thumbnailFolder, "cover");
+      
+      if (uploadResult) {
+          thumbnail = uploadResult.url; // Replace Base64 with GCS URL
+      } else {
+          console.error("Failed to upload publish thumbnail to GCS");
+          // Fallback: If upload fails, maybe don't save the massive string? 
+          // For now, we keep it or set to null to prevent DB crash.
+          // thumbnail = null; 
+      }
+    }
+    // =========================================================
+
     // 1. Check if it's already published
     const existingPublish = await Publish.findOne({ projectId: id });
 
-    // 2. Prepare Base Metadata
+    // 2. Prepare Base Metadata (Use the potentially updated 'thumbnail' variable)
     const publishData = {
       projectId: id,
       authorId: mongoId,
       authorName: author.username,
       name, titleFont, description, language, categories, customCategories, warnings, 
-      isThumbnailNSFW, monetization, thumbnail,
+      isThumbnailNSFW, monetization, 
+      thumbnail, // 👈 Uses the GCS URL now
       publishedAt: new Date()
     };
 
@@ -1300,10 +1360,24 @@ app.post("/publish", authMiddleware, async (req, res) => {
       await Notification.insertMany(notifications);
     }
 
+    // 6. SYNC BACK TO PROJECT BUCKET (OPTIONAL BUT RECOMMENDED)
+    // If the thumbnail changed, update the original Project Draft too so they match
+    if (thumbnail && thumbnail.startsWith("http")) {
+       const projectBucket = await Project.findOne({ userId: mongoId });
+       if (projectBucket) {
+         const subProject = projectBucket.projects.id(id);
+         if (subProject) {
+           subProject.thumbnail = thumbnail;
+           await projectBucket.save();
+         }
+       }
+    }
+
     res.json({ 
       success: true, 
       message: updateCanvas ? "Project and Content updated!" : "Metadata updated successfully!",
-      publishedAt: result.publishedAt 
+      publishedAt: result.publishedAt,
+      thumbnail: thumbnail // Send back the new URL
     });
 
   } catch (err) {
@@ -1339,8 +1413,7 @@ app.get("/posts/:id", authMiddleware, async (req, res) => {
     const isAuthor = post.authorId.toString() === mongoId;
 
     if (!isAuthor) {
-      incUpdate.visits = 1; // Always increment visits
-      
+      incUpdate.visits = 1; 
       const hasViewed = post.viewedBy && post.viewedBy.includes(mongoId);
       if (!hasViewed) {
         incUpdate.views = 1; 
@@ -1353,7 +1426,6 @@ app.get("/posts/:id", authMiddleware, async (req, res) => {
       if (arrayUpdate.viewedBy) updateQuery.$push = { viewedBy: arrayUpdate.viewedBy };
       await Publish.findByIdAndUpdate(id, updateQuery);
       
-      // Update local object for response
       if (incUpdate.visits) post.visits = (post.visits || 0) + 1;
       if (incUpdate.views) post.views = (post.views || 0) + 1;
     }
@@ -1361,20 +1433,28 @@ app.get("/posts/:id", authMiddleware, async (req, res) => {
     // --- CONSOLE CHECK FIX ---
     let inConsole = false;
     const userConsole = await ConsoleDB.findOne({ userId: mongoId });
-    
-    // FIX: Safely map ObjectIds to strings to ensure it flips to TRUE
     if (userConsole && userConsole.savedPosts && userConsole.savedPosts.some(savedId => savedId.toString() === id)) {
         inConsole = true;
     }
 
+    // ✅ THE FIX: Fetch the custom 'userid' to send to the frontend
+    const author = await User.findById(post.authorId).select("userid");
+    const authorUserId = author ? author.userid : post.authorId;
+
+    // Convert the mongoose document to a plain object and inject the new ID
+    const postResponse = {
+        ...post.toObject(),
+        authorUserId 
+    };
+
     res.json({
-        post,
+        post: postResponse, // Send the modified object
         stats: {
             views: post.views,
             visits: post.visits,
             plays: post.plays
         },
-        inConsole // Sends true/false properly now
+        inConsole 
     });
 
   } catch (err) {
@@ -1382,7 +1462,6 @@ app.get("/posts/:id", authMiddleware, async (req, res) => {
     res.status(500).json({ message: "Server error fetching post" });
   }
 });
-
 app.post("/posts/:id/play", authMiddleware, async (req, res) => {
   const { id } = req.params;
   const { mongoId } = req.user;

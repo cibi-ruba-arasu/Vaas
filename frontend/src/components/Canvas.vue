@@ -3982,17 +3982,13 @@ const startPreview = () => {
     // --- FIX: AUTOMATIC FULLSCREEN ---
     // We moved this INSIDE nextTick to ensure the .preview-overlay exists in the DOM
     nextTick(() => {
-        const previewContainer = document.querySelector('.preview-overlay')
-        if (previewContainer) {
-            if (previewContainer.requestFullscreen) {
-                previewContainer.requestFullscreen().catch(err => console.warn("Fullscreen blocked:", err));
-            } else if (previewContainer.webkitRequestFullscreen) { /* Safari */
-                previewContainer.webkitRequestFullscreen();
-            }
-        } else {
-             // Fallback to document
-             document.documentElement.requestFullscreen().catch(err => console.warn("Fullscreen blocked:", err));
+        // --- FIX: Use document.documentElement so unmounting overlays doesn't break fullscreen ---
+        if (document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().catch(err => console.warn("Fullscreen blocked:", err));
+        } else if (document.documentElement.webkitRequestFullscreen) { /* Safari */
+            document.documentElement.webkitRequestFullscreen();
         }
+        // -----------------------------------------------------------------------------------------
 
         initializePreviewCanvas()
         
@@ -4628,6 +4624,15 @@ const loadNodeForPreview = (targetNodeId) => {
 
     // --- CRITICAL FIX: CHECK FOR GIFT NODE HERE ---
     if (currentStatus.node_type === 'Gift') {
+        // --- NEW: Tear down the active preview so it doesn't loop/block ---
+        isPreviewMode.value = false;
+        stopAllVideos();
+        if (previewAudioElement.value) {
+            previewAudioElement.value.pause();
+            previewAudioElement.value = null;
+        }
+        // ------------------------------------------------------------------
+        
         playGiftNode(currentStatus); // Trigger the Overlay & Audio
         return; // Stop here, do not load standard scenes
     }
@@ -4670,16 +4675,14 @@ const loadNodeForPreview = (targetNodeId) => {
     
     nextTick(() => {
         if (!previewCanvasRef.value) return;
-        const previewContainer = document.querySelector('.preview-overlay')
-        if (previewContainer) {
-            if (previewContainer.requestFullscreen) {
-                previewContainer.requestFullscreen().catch(err => console.warn("Fullscreen blocked:", err));
-            } else if (previewContainer.webkitRequestFullscreen) {
-                previewContainer.webkitRequestFullscreen();
-            }
-        } else {
-             document.documentElement.requestFullscreen().catch(err => console.warn("Fullscreen blocked:", err));
+        
+        // --- FIX: Use document.documentElement so unmounting overlays doesn't break fullscreen ---
+        if (document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().catch(err => console.warn("Fullscreen blocked:", err));
+        } else if (document.documentElement.webkitRequestFullscreen) {
+            document.documentElement.webkitRequestFullscreen();
         }
+        // -----------------------------------------------------------------------------------------
 
         previewCtx = previewCanvasRef.value.getContext('2d');
         resizePreviewCanvas();
