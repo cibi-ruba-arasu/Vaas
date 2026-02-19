@@ -2448,16 +2448,25 @@ const resizeGraphCanvas = () => {
   const container = document.querySelector('.popup-content')
   if (container) {
     const rect = container.getBoundingClientRect()
+    
+    // 1. Always update the VISUAL canvas size so you can edit using the full screen
     graphCanvasRef.value.width = rect.width
     graphCanvasRef.value.height = rect.height
     imagesCanvasRef.value.width = rect.width
     imagesCanvasRef.value.height = rect.height
 
+    // 2. DATA UPDATE (The Fix)
     if (popupNode.value) {
         const status = Canvas_Status.value.find(s => s.index === popupNode.value.id)
         if (status) {
-            status.referenceWidth = rect.width
-            status.referenceHeight = rect.height
+            // --- FIX STARTS HERE ---
+            // Only set reference dimensions if they are missing.
+            // This prevents Fullscreen mode from overwriting your project's scaling logic.
+            if (!status.referenceWidth || !status.referenceHeight) {
+                status.referenceWidth = rect.width
+                status.referenceHeight = rect.height
+            }
+            // --- FIX ENDS HERE ---
         }
     }
     
@@ -3948,6 +3957,7 @@ const resetComponentsRuntimeState = (scenes) => {
 }
 
 /* ================= PREVIEW LOGIC ================= */
+
 const startPreview = () => {
     if (nodeScenes.value.length === 0) {
         alert("No scenes to preview!")
@@ -3955,15 +3965,11 @@ const startPreview = () => {
     }
 
     stopAllVideos();
-
-    // --- FIX: Reset Component Runtime State (Inputs, etc.) ---
     resetComponentsRuntimeState(nodeScenes.value);
 
     isPreviewMode.value = true
     currentPreviewSceneIndex.value = 0
     currentPreviewComponentIndex.value = -1 
-    
-    // Reset timer logic
     componentStartTime.value = 0; 
 
     if (sequenceAudio.value && sequenceAudio.value.url) {
@@ -3973,12 +3979,21 @@ const startPreview = () => {
         previewAudioElement.value.play().catch(e => console.log("Autoplay prevented:", e))
     }
 
-    const previewContainer = document.querySelector('.preview-overlay')
-    if (previewContainer && previewContainer.requestFullscreen) {
-        previewContainer.requestFullscreen()
-    }
-    
+    // --- FIX: AUTOMATIC FULLSCREEN ---
+    // We moved this INSIDE nextTick to ensure the .preview-overlay exists in the DOM
     nextTick(() => {
+        const previewContainer = document.querySelector('.preview-overlay')
+        if (previewContainer) {
+            if (previewContainer.requestFullscreen) {
+                previewContainer.requestFullscreen().catch(err => console.warn("Fullscreen blocked:", err));
+            } else if (previewContainer.webkitRequestFullscreen) { /* Safari */
+                previewContainer.webkitRequestFullscreen();
+            }
+        } else {
+             // Fallback to document
+             document.documentElement.requestFullscreen().catch(err => console.warn("Fullscreen blocked:", err));
+        }
+
         initializePreviewCanvas()
         
         const firstScene = nodeScenes.value[0]
@@ -3989,7 +4004,6 @@ const startPreview = () => {
         }
     })
 }
-
 const initializePreviewCanvas = () => {
     if (!previewCanvasRef.value) return
     previewCtx = previewCanvasRef.value.getContext('2d')
@@ -4656,10 +4670,21 @@ const loadNodeForPreview = (targetNodeId) => {
     
     nextTick(() => {
         if (!previewCanvasRef.value) return;
+        const previewContainer = document.querySelector('.preview-overlay')
+        if (previewContainer) {
+            if (previewContainer.requestFullscreen) {
+                previewContainer.requestFullscreen().catch(err => console.warn("Fullscreen blocked:", err));
+            } else if (previewContainer.webkitRequestFullscreen) {
+                previewContainer.webkitRequestFullscreen();
+            }
+        } else {
+             document.documentElement.requestFullscreen().catch(err => console.warn("Fullscreen blocked:", err));
+        }
+
         previewCtx = previewCanvasRef.value.getContext('2d');
         resizePreviewCanvas();
         drawPreview();
-        startRenderLoop(); // Kickstart animation
+        startRenderLoop();
 
         const firstScene = nodeScenes.value[0]
         if (firstScene && firstScene.components && firstScene.components.length > 0) {
@@ -4840,11 +4865,6 @@ const onPreviewWheel = (e) => {
 
             <button class="settings-btn" @click="toggleProjectSettings" title="Project Settings">
                 ⚙️
-            </button>
-
-            <button class="fullscreen-btn" @click="toggleFullscreen" title="Toggle Fullscreen">
-                <span v-if="!isFullscreen">⤢</span>
-                <span v-else>⤡</span>
             </button>
         </div>
     </div>
