@@ -14,14 +14,15 @@ const searchQuery = ref('')
 const currentIndex = ref(0)
 
 /* ================= 📊 CONSOLE STATUS TRACKER (LOCAL STORAGE) ================= */
-const savedStatus = localStorage.getItem('console_status_data')
+const savedStatus = sessionStorage.getItem('console_status_data')
 const Console_Status = ref(savedStatus ? JSON.parse(savedStatus) : {
     actionHistory: [], 
     games: {} 
 })
 
+
 watch(Console_Status, (newVal) => {
-    localStorage.setItem('console_status_data', JSON.stringify(newVal))
+    sessionStorage.setItem('console_status_data', JSON.stringify(newVal))
 }, { deep: true })
 
 const trackAction = (actionName, details = {}) => {
@@ -31,6 +32,10 @@ const trackAction = (actionName, details = {}) => {
         ...details
     })
 }
+
+const activeGlobalVariables = computed(() => {
+    return activeEngineData.value?.canvasState?.globalVariables || [];
+})
 
 /* ================= DATA FETCHING ================= */
 const fetchConsole = async () => {
@@ -143,6 +148,50 @@ const activeInstanceName = computed(() => {
     return inst ? inst.name : 'Unknown Instance'
 })
 
+/* ================= GAME PLAYER STATE ================= */
+const isPlaying = ref(false)
+const currentNode = ref(null)
+const currentSceneIndex = ref(0)
+
+const windowSize = ref({ width: window.innerWidth, height: window.innerHeight })
+const updateWindowSize = () => {
+    windowSize.value = { width: window.innerWidth, height: window.innerHeight }
+}
+
+// Note: Vue allows multiple onMounted hooks, so this safely adds to your existing ones
+onMounted(() => window.addEventListener('resize', updateWindowSize))
+onUnmounted(() => window.removeEventListener('resize', updateWindowSize))
+
+// 2. Compute the exact blueprint dimensions of the current node
+const playerDimensions = computed(() => {
+    if (!currentNode.value) return { width: 800, height: 600 } // Fallback
+    return {
+        width: currentNode.value.referenceWidth || 800,
+        height: currentNode.value.referenceHeight || 600
+    }
+})
+
+// 3. Calculate the perfect aspect-ratio fit (letterboxing)
+const playerScale = computed(() => {
+    const dims = playerDimensions.value
+    const availableWidth = windowSize.value.width
+    const availableHeight = windowSize.value.height
+
+    const scaleX = availableWidth / dims.width
+    const scaleY = availableHeight / dims.height
+
+    // Return the smaller scale to ensure the whole scene fits inside the screen
+    return Math.min(scaleX, scaleY)
+})
+
+// 4. Dynamically extract the background color for the active scene
+const currentSceneBg = computed(() => {
+    if (!currentNode.value || !currentNode.value.scenes || !currentNode.value.scenes[currentSceneIndex.value]) {
+        return '#000000' // Default fallback
+    }
+    return currentNode.value.scenes[currentSceneIndex.value].backgroundColor || '#000000'
+})
+
 watch(gameInstances, (newInstances) => {
     if (activePostId.value && Console_Status.value.games[activePostId.value]) {
         Console_Status.value.games[activePostId.value].instances = newInstances;
@@ -226,11 +275,68 @@ const closeGameModal = async (fromBackButton = false) => {
     }
 }
 
+const centerOnRootNode = () => {
+    if (!activeEngineData.value || !viewportCanvasRef.value) return;
+    
+    const state = activeEngineData.value.canvasState;
+    const rootId = state?.rootNodeId;
+    const rootNode = state?.nodes?.find(n => n.index === rootId);
+    
+    if (rootNode) {
+        const canvas = viewportCanvasRef.value;
+        const rect = canvas.parentElement.getBoundingClientRect();
+        
+        // The dimensions of your node blueprint (used in drawViewport)
+        const nodeWidth = 220;
+        const nodeHeight = 70;
+        
+        // Calculate the offset required to place the node in the exact center of the view
+        viewportOffset.value = {
+            x: (rect.width / 2) - (rootNode.x + (nodeWidth / 2)),
+            y: (rect.height / 2) - (rootNode.y + (nodeHeight / 2))
+        };
+    }
+}
+
+const loadGamePreview = async (game) => {
+    // If data is already loaded for this game, just focus and draw
+    if (activeEngineData.value && activeEngineData.value._id === game._id) {
+        isEngineRunning.value = true;
+        await nextTick(); // Wait for canvas HTML to mount
+        centerOnRootNode(); // <--- NEW: Auto Focus
+        drawViewport();
+        return;
+    }
+
+    try {
+        const res = await fetch(`http://localhost:5000/posts/${game._id}`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        
+        if (res.ok) {
+            const data = await res.json();
+            activeEngineData.value = data.post || data; 
+            
+            isEngineRunning.value = true;
+            trackAction("ENGINE_RUNNING");
+            
+            // Wait for Vue to render the <canvas> element
+            await nextTick();
+            centerOnRootNode(); // <--- NEW: Auto Focus
+            drawViewport();
+        } else {
+            alert("Failed to fetch game data from the archive.");
+        }
+    } catch (e) {
+        console.error("Engine Boot Failed:", e);
+    }
+}
+
 const selectInstance = (id) => {
     activeInstanceId.value = id
     const game = filteredGames.value.find(g => g._id === activePostId.value)
     if (game) {
-        startGame(game)
+        loadGamePreview(game) // Action 1: Only load the workspace and preview
     }
 }
 
@@ -331,6 +437,8 @@ const activeGameGiftCounts = computed(() => {
     return { pfp: '?', badges: '?' };
 });
 
+
+
 const unlockedPfps = computed(() => {
     if (!activePostId.value || !Console_Status.value.games[activePostId.value]) return 0;
     return Console_Status.value.games[activePostId.value].achievements?.pfp?.length || 0;
@@ -343,47 +451,33 @@ const unlockedBadges = computed(() => {
 /* ============================================================== */
 
 const startGame = async (game) => {
+    // Prevent unpurchased paid games
     if (game.monetization?.isPaid && !game.monetization?.hasDemo) {
-        alert("🔒 Purchase Required: This game is paid and has no demo. (Popup coming soon!)");
+        alert("🔒 Purchase Required: This game is paid and has no demo.");
         trackAction("START_DENIED_PAID", { gameId: game._id })
         return;
     }
 
-    trackAction("ENGINE_BOOT_STARTED", { gameId: game._id, instanceId: activeInstanceId.value })
+    trackAction("GAME_STARTED", { gameId: game._id, instanceId: activeInstanceId.value })
 
-    if (activeEngineData.value && activeEngineData.value._id === game._id) {
-        isEngineRunning.value = true;
-        nextTick(() => { drawViewport(); });
-        return;
+    // Ensure we have the data loaded just in case
+    if (!activeEngineData.value || activeEngineData.value._id !== game._id) {
+        await loadGamePreview(game);
     }
-
-    try {
-        const res = await fetch(`http://localhost:5000/posts/${game._id}`, {
-            headers: { Authorization: `Bearer ${token}` }
-        });
-        
-        if (res.ok) {
-            const data = await res.json();
-            activeEngineData.value = data.post || data; 
-            
-            isEngineRunning.value = true;
-            trackAction("ENGINE_RUNNING")
-            
-            const rootId = activeEngineData.value.canvasState?.rootNodeId;
-            const rootNode = activeEngineData.value.canvasState?.nodes?.find(n => n.index === rootId);
-            
-            if (rootNode) {
-                viewportOffset.value = { x: 350 - rootNode.x, y: 250 - rootNode.y };
-            } else {
-                viewportOffset.value = { x: 0, y: 0 };
-            }
-
-            nextTick(() => { drawViewport(); });
-        } else {
-            alert("Failed to fetch game data from the archive.");
-        }
-    } catch (e) {
-        console.error("Engine Boot Failed:", e);
+    
+    // Extract Canvas State
+    const state = activeEngineData.value.canvasState;
+    
+    // Find the Root Node
+    const rootId = state?.rootNodeId;
+    const rootNode = state?.nodes?.find(n => n.index === rootId);
+    
+    if (rootNode) {
+        currentNode.value = rootNode;
+        currentSceneIndex.value = 0; // Start at the first scene
+        isPlaying.value = true; // Launch the player overlay
+    } else {
+        alert("Error: No entry point found in this game.");
     }
 }
 
@@ -566,15 +660,124 @@ onUnmounted(() => {
     <transition name="fade">
         <div v-if="isPopupOpen" class="game-modal-overlay">
             <div class="game-modal-content">
-                <div class="workspace-header">
-                    <button class="close-modal-btn" @click="closeGameModal(false)">✕ Close</button>
-                    <div class="workspace-header-title">Console Workspace</div>
-                    <button class="start-game-btn" :disabled="!activeInstanceId" @click="startGame(filteredGames.find(g => g._id === activePostId))">
-                        {{ isEngineRunning ? '↻ Restart' : '▶ Start' }}
+                <div v-if="isPlaying" class="fullscreen-player">
+                    <button class="exit-player-btn" @click="isPlaying = false">
+                        ⏸️ Pause / Exit
                     </button>
-                </div>
 
-                <div class="workspace-grid">
+                    <div class="player-container"
+                        :style="{
+                            width: playerDimensions.width + 'px',
+                            height: playerDimensions.height + 'px',
+                            transform: `scale(${playerScale})`,
+                            backgroundColor: currentSceneBg
+                        }"
+                    >
+                        <template v-if="currentNode && currentNode.scenes && currentNode.scenes[currentSceneIndex]">
+                            <div v-for="(comp, index) in currentNode.scenes[currentSceneIndex].components" :key="comp.id"
+                                :style="{
+                                    position: 'absolute',
+                                    /* 1. Multiply by 2 (pixelsPerUnit) */
+                                    /* 2. Subtract Y to invert the CSS coordinate system */
+                                    left: `calc(50% + ${comp.x * 2}px)`,
+                                    top: `calc(50% - ${comp.y * 2}px)`,
+                                    width: `${comp.width}px`,
+                                    height: `${comp.height}px`,
+                                    transform: `translate(-50%, -50%) rotate(${comp.rotation || 0}deg)`,
+                                    zIndex: index
+                                }">
+                                
+                                <div v-if="comp.type === 'text'" :style="{
+                                    color: comp.color,
+                                    fontSize: comp.fontSize + 'px',
+                                    fontFamily: comp.fontFamily,
+                                    fontWeight: comp.fontWeight,
+                                    fontStyle: comp.fontStyle,
+                                    textDecoration: `${comp.textDecoration} ${comp.textDecorationColor}`,
+                                    backgroundColor: comp.backgroundColor,
+                                    border: `${comp.borderWidth}px solid ${comp.borderColor}`,
+                                    borderRadius: comp.borderRadius + 'px',
+                                    width: '100%', height: '100%',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    whiteSpace: 'pre-wrap', textAlign: 'center'
+                                }">
+                                    {{ comp.content }}
+                                </div>
+
+                                <img v-else-if="comp.type === 'image'" :src="comp.url" style="width: 100%; height: 100%; object-fit: cover; pointer-events: none;" />
+
+                                <video v-else-if="comp.type === 'video'" :src="comp.url" style="width: 100%; height: 100%; object-fit: cover; pointer-events: none;" autoplay loop :muted="comp.isMuted"></video>
+
+                                <div v-else-if="comp.type === 'options'" :style="{
+                                    width: '100%', height: '100%',
+                                    backgroundColor: comp.boxColor,
+                                    opacity: comp.boxOpacity,
+                                    border: `${comp.borderWidth}px solid ${comp.borderColor}`,
+                                    borderRadius: comp.borderRadius + 'px',
+                                    display: 'flex', flexDirection: 'column', gap: '10px',
+                                    padding: '10px', overflowY: 'auto'
+                                }">
+                                    <button v-for="opt in comp.optionsList" :key="opt.id"
+                                        :style="{
+                                            backgroundColor: comp.styles?.normal?.backgroundColor || '#374151',
+                                            color: comp.styles?.normal?.color || '#ffffff',
+                                            border: `${comp.styles?.normal?.borderWidth || 1}px solid ${comp.styles?.normal?.borderColor || '#9ca3af'}`,
+                                            borderRadius: (comp.styles?.normal?.borderRadius || 4) + 'px',
+                                            fontSize: (comp.styles?.normal?.fontSize || 16) + 'px',
+                                            fontFamily: comp.styles?.normal?.fontFamily || 'sans-serif',
+                                            padding: '8px', cursor: 'pointer', transition: '0.2s'
+                                        }"
+                                        @mouseover="$event.target.style.backgroundColor = comp.styles?.hovered?.backgroundColor || '#4b5563'; $event.target.style.borderColor = comp.styles?.hovered?.borderColor || '#00ff88';"
+                                        @mouseleave="$event.target.style.backgroundColor = comp.styles?.normal?.backgroundColor || '#374151'; $event.target.style.borderColor = comp.styles?.normal?.borderColor || '#9ca3af';"
+                                    >
+                                        {{ opt.text }}
+                                    </button>
+                                </div>
+
+                                <div v-else-if="comp.type === 'input'" :style="{ width: '100%', height: '100%', display: 'flex', gap: '5px' }">
+                                    <input type="text" :placeholder="comp.placeholderText" :style="{
+                                        flex: 1, padding: '8px',
+                                        backgroundColor: comp.backgroundColor, color: '#000',
+                                        border: `${comp.borderWidth}px solid ${comp.borderColor}`,
+                                        borderRadius: comp.borderRadius + 'px',
+                                        fontSize: comp.fontSize + 'px', fontFamily: comp.fontFamily
+                                    }" />
+                                    <button :style="{
+                                        backgroundColor: comp.buttonNormalColor, color: comp.buttonTextColor,
+                                        padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer'
+                                    }">
+                                        {{ comp.buttonText }}
+                                    </button>
+                                </div>
+
+                                <div v-else-if="comp.type === 'variable'" :style="{
+                                    color: comp.color, fontSize: comp.fontSize + 'px', fontFamily: comp.fontFamily,
+                                    fontWeight: comp.fontWeight, fontStyle: comp.fontStyle,
+                                    textDecoration: `${comp.textDecoration} ${comp.textDecorationColor}`,
+                                    backgroundColor: comp.backgroundColor,
+                                    border: `${comp.borderWidth}px solid ${comp.borderColor}`,
+                                    borderRadius: comp.borderRadius + 'px',
+                                    width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                }">
+                                    {{ activeGlobalVariables.find(v => v.id == comp.variableId)?.value ?? 0 }}
+                                </div>
+
+                            </div>
+                        </template>
+                    </div>
+                    
+                </div>
+                <div v-show="!isPlaying" style="display: flex; flex-direction: column; width: 100%; height: 100%;">
+                    <div class="workspace-header">
+                        <button class="close-modal-btn" @click="closeGameModal(false)">✕ Close</button>
+                        <div class="workspace-header-title">Console Workspace</div>
+                        <button class="start-game-btn" :disabled="!activeInstanceId" @click="startGame(filteredGames.find(g => g._id === activePostId))">
+                            ▶ Start
+                        </button>       
+                    </div>
+
+                    <div class="workspace-grid">
+                
                     <div class="workspace-left">
                         
                         <div class="workspace-box top-square">
@@ -695,6 +898,7 @@ onUnmounted(() => {
                             </template>
 
                         </div>
+                    </div>
                     </div>
                 </div>
             </div>
@@ -1580,5 +1784,45 @@ onUnmounted(() => {
     .cd-item { width: 200px; height: 200px; }
     .cd-hole { width: 40px; height: 40px; }
     .nav-arrow { font-size: 2rem; padding: 10px; }
+}
+.fullscreen-player {
+    position: fixed; /* Fixed viewport covering */
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: #111111; /* Outer letterbox color */
+    z-index: 99999; /* Sit on top of the modal and blur background */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.player-container {
+    position: relative;
+    transform-origin: center center; /* Scale exactly from the middle */
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.8); /* Depth from the letterbox */
+    overflow: hidden;
+}
+
+.exit-player-btn {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    z-index: 200;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: white;
+    padding: 10px 15px;
+    border-radius: 8px;
+    cursor: pointer;
+    backdrop-filter: blur(5px);
+    transition: 0.2s;
+}
+
+.exit-player-btn:hover {
+    background: rgba(239, 68, 68, 0.8);
+    border-color: #ef4444;
 }
 </style>
