@@ -21,6 +21,7 @@ const currentIndex = ref(0)
 const renderedComponentIds = ref([])
 const currentCompIndex = ref(0)
 const isBackgroundFading = ref(false)
+const isSceneExiting = ref(false)
 
 const currentlyAnimatingIds = ref([])
 const skippedAnimationIds = ref([])
@@ -79,6 +80,7 @@ const startScene = () => {
     renderedComponentIds.value = []
     skippedAnimationIds.value = []
     currentlyAnimatingIds.value = []
+    isSceneExiting.value = false // <--- NEW: Reset exit state
     
     // Clear any lingering animation timers from the previous scene
     for (let key in animationTimers.value) {
@@ -122,8 +124,8 @@ const triggerAnimationWait = (comp) => {
     }, durationMs);
 }
 const advanceScene = () => {
-    // 🛡️ Prevent clicks while the background is still fading in
-    if (isBackgroundFading.value) return; 
+    // 🛡️ Prevent clicks while the background is still fading in OR OUT
+    if (isBackgroundFading.value || isSceneExiting.value) return; 
 
     // 🛑 SKIP LOGIC: If an animation is playing, fast-forward it and STOP.
     if (currentlyAnimatingIds.value.length > 0) {
@@ -155,27 +157,35 @@ const advanceScene = () => {
         // Prevent advancing if an input or option is waiting for interaction
         if (comps.some(c => c.type === 'options' || (c.type === 'input' && !c.isSubmitted))) return;
         
-        // Go to next Scene
-        if (currentSceneIndex.value < currentNode.value.scenes.length - 1) {
-            currentSceneIndex.value++;
-            startScene();
-            return;
-        }
+        // --- NEW: TRIGGER FADE OUT ---
+        isSceneExiting.value = true;
         
-        // Go to next Node
-        let nextId = currentNode.value.Next;
-        if (nextId !== null && nextId !== undefined) {
-            const nextNode = activeEngineData.value.canvasState.nodes.find(n => n.index === nextId);
-            if (nextNode) {
-                currentNode.value = nextNode;
-                currentSceneIndex.value = 0;
+        setTimeout(() => {
+            isSceneExiting.value = false;
+            
+            // Go to next Scene
+            if (currentSceneIndex.value < currentNode.value.scenes.length - 1) {
+                currentSceneIndex.value++;
                 startScene();
-            } else {
-                isPlaying.value = false;
+                return;
             }
-        } else {
-            isPlaying.value = false; // End of game
-        }
+            
+            // Go to next Node
+            let nextId = currentNode.value.Next;
+            if (nextId !== null && nextId !== undefined) {
+                const nextNode = activeEngineData.value.canvasState.nodes.find(n => n.index === nextId);
+                if (nextNode) {
+                    currentNode.value = nextNode;
+                    currentSceneIndex.value = 0;
+                    startScene();
+                } else {
+                    isPlaying.value = false;
+                }
+            } else {
+                isPlaying.value = false; // End of game
+            }
+        }, 1000); // Wait exactly 1 second for the CSS fade-out to finish
+        
         return; 
     }
 
@@ -188,7 +198,6 @@ const advanceScene = () => {
     triggerAnimationWait(nextComp);
 
     // ⏱️ CHECK FOR AUTO-RENDER SEQUENCING
-    // Wait for the CURRENT component's animation to finish before spawning the next one
     if (currentCompIndex.value < comps.length) {
         const subsequentComp = comps[currentCompIndex.value];
         if (subsequentComp.autoRender) {
@@ -198,7 +207,7 @@ const advanceScene = () => {
                 
             autoRenderTimer.value = setTimeout(() => {
                 autoRenderTimer.value = null;
-                advanceScene(); // Automatically trigger the next item
+                advanceScene(); 
             }, waitTime);
         }
     }
@@ -877,7 +886,7 @@ onUnmounted(() => {
                     </button>
 
                     <div class="player-container" @click="advanceScene"
-                        :key="`scene-${currentSceneIndex}`"
+                        :key="`node-${currentNode?.index}-scene-${currentSceneIndex}`"
                         :style="{
                             position: 'absolute',
                             left: '50%',
@@ -886,9 +895,12 @@ onUnmounted(() => {
                             height: playerDimensions.height + 'px',
                             transform: `translate(-50%, -50%) scale(${playerScale})`,
                             backgroundColor: currentSceneBg,
-                            cursor: isBackgroundFading ? 'wait' : 'pointer',
+                            cursor: isBackgroundFading || isSceneExiting ? 'wait' : 'pointer',
                             overflow: 'hidden',
-                            animation: 'sceneBgFadeIn 1s ease-in-out forwards'
+                            /* If isSceneExiting is true, play fade out. 
+                            Otherwise, play fade in. 
+                            */
+                            animation: isSceneExiting ? 'sceneBgFadeOut 1s forwards' : 'sceneBgFadeIn 1s ease-in-out forwards'
                         }"
                     >
                         <template v-if="currentNode && currentNode.scenes && currentNode.scenes[currentSceneIndex]">
@@ -929,7 +941,8 @@ onUnmounted(() => {
                                         <div v-else-if="comp.type === 'options'" @click.stop :style="{
                                             width: '100%', height: '100%', backgroundColor: comp.boxColor, opacity: comp.boxOpacity,
                                             border: `${comp.borderWidth}px solid ${comp.borderColor}`, borderRadius: comp.borderRadius + 'px',
-                                            display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px', overflowY: 'auto'
+                                            /* 1. Changed to row wrap layout starting from the top-left */
+                                            display: 'flex', flexWrap: 'wrap', alignContent: 'flex-start', gap: '10px', padding: '10px', overflowY: 'auto'
                                         }">
                                             <button v-for="opt in comp.optionsList" :key="opt.id"
                                                 :style="{
@@ -939,7 +952,8 @@ onUnmounted(() => {
                                                     borderRadius: (comp.styles?.normal?.borderRadius || 4) + 'px',
                                                     fontSize: (comp.styles?.normal?.fontSize || 16) + 'px',
                                                     fontFamily: comp.styles?.normal?.fontFamily || 'sans-serif',
-                                                    padding: '8px', cursor: 'pointer', transition: '0.2s'
+                                                    /* 2. Added shrink-wrap dimensions and matched the Canvas padding (8px 12px) */
+                                                    padding: '8px 12px', width: 'fit-content', height: 'fit-content', cursor: 'pointer', transition: '0.2s'
                                                 }"
                                                 @mouseover="$event.target.style.backgroundColor = comp.styles?.hovered?.backgroundColor || '#4b5563'; $event.target.style.borderColor = comp.styles?.hovered?.borderColor || '#00ff88';"
                                                 @mouseleave="$event.target.style.backgroundColor = comp.styles?.normal?.backgroundColor || '#374151'; $event.target.style.borderColor = comp.styles?.normal?.borderColor || '#9ca3af';"
@@ -2081,6 +2095,13 @@ onUnmounted(() => {
 @keyframes sceneBgFadeIn {
     from { opacity: 0; }
     to { opacity: 1; }
+}
+
+
+/* --- NEW FADE OUT KEYFRAME --- */
+@keyframes sceneBgFadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
 }
 
 @keyframes fadeIn {
