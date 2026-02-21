@@ -13,6 +13,10 @@ const loading = ref(true)
 const searchQuery = ref('')
 const currentIndex = ref(0)
 
+// ================= COMPONENT RENDERING & ANIMATION ENGINE =================
+const renderedComponentIds = ref(new Set())
+const currentCompIndex = ref(0)
+
 /* ================= 📊 CONSOLE STATUS TRACKER (LOCAL STORAGE) ================= */
 const savedStatus = sessionStorage.getItem('console_status_data')
 const Console_Status = ref(savedStatus ? JSON.parse(savedStatus) : {
@@ -20,6 +24,69 @@ const Console_Status = ref(savedStatus ? JSON.parse(savedStatus) : {
     games: {} 
 })
 
+const isBackgroundFading = ref(false)
+
+const startScene = () => {
+    renderedComponentIds.value.clear()
+    currentCompIndex.value = 0
+    isBackgroundFading.value = true // Block input and trigger fade state
+    
+    // Wait for the background fade-in (hardcoded to 1000ms)
+    setTimeout(() => {
+        isBackgroundFading.value = false
+        checkInitialComponent()
+    }, 1000)
+}
+const checkInitialComponent = () => {
+    if (!currentNode.value || !currentNode.value.scenes) return;
+    const scene = currentNode.value.scenes[currentSceneIndex.value];
+    if (!scene || !scene.components) return;
+    
+    const comps = scene.components;
+    if (currentCompIndex.value >= comps.length) return;
+    
+    // Check if the FIRST component is set to autoRender
+    if (comps[0].autoRender) {
+        advanceScene();
+    }
+}
+const advanceScene = () => {
+    // 🛡️ Prevent user clicks while background is still rendering
+    if (isBackgroundFading.value) return; 
+
+    if (!currentNode.value || !currentNode.value.scenes) return;
+    
+    const scene = currentNode.value.scenes[currentSceneIndex.value];
+    if (!scene || !scene.components) return;
+
+    const comps = scene.components;
+    
+    // If we have rendered all components, stop here
+    if (currentCompIndex.value >= comps.length) return; 
+
+    // 1. Reveal the next component in the sequence
+    renderedComponentIds.value.add(comps[currentCompIndex.value].id);
+    currentCompIndex.value++;
+
+    // 2. If the following components have `autoRender: true`, reveal them instantly too
+    while (currentCompIndex.value < comps.length && comps[currentCompIndex.value].autoRender) {
+        renderedComponentIds.value.add(comps[currentCompIndex.value].id);
+        currentCompIndex.value++;
+    }
+}
+
+const getAnimationCss = (comp) => {
+    if (!comp.animationType || comp.animationType === 'none') return 'none';
+    const duration = comp.animationDuration || 1;
+    
+    // Matched Canvas animations
+    if (comp.animationType === 'fade') return `fadeIn ${duration}s ease-in-out forwards`;
+    if (comp.animationType === 'slide') return `slideIn ${duration}s ease-out forwards`;
+    if (comp.animationType === 'typewriter') return `typewriter ${duration}s steps(40, end) forwards`;
+    if (comp.animationType === 'zoom') return `zoomIn ${duration}s ease-out forwards`;
+    
+    return `fadeIn ${duration}s forwards`; // Fallback
+}
 
 watch(Console_Status, (newVal) => {
     sessionStorage.setItem('console_status_data', JSON.stringify(newVal))
@@ -476,6 +543,7 @@ const startGame = async (game) => {
         currentNode.value = rootNode;
         currentSceneIndex.value = 0; // Start at the first scene
         isPlaying.value = true; // Launch the player overlay
+        startScene();
     } else {
         alert("Error: No entry point found in this game.");
     }
@@ -665,20 +733,27 @@ onUnmounted(() => {
                         ⏸️ Pause / Exit
                     </button>
 
-                    <div class="player-container"
+                    <div class="player-container" @click="advanceScene"
+                        :key="`scene-${currentSceneIndex}`"
                         :style="{
+                            position: 'absolute',
+                            left: '50%',
+                            top: '50%',
                             width: playerDimensions.width + 'px',
                             height: playerDimensions.height + 'px',
-                            transform: `scale(${playerScale})`,
-                            backgroundColor: currentSceneBg
+                            transform: `translate(-50%, -50%) scale(${playerScale})`,
+                            backgroundColor: currentSceneBg,
+                            cursor: isBackgroundFading ? 'wait' : 'pointer',
+                            overflow: 'hidden',
+                            animation: 'sceneBgFadeIn 1s ease-in-out forwards'
                         }"
                     >
                         <template v-if="currentNode && currentNode.scenes && currentNode.scenes[currentSceneIndex]">
+                
                             <div v-for="(comp, index) in currentNode.scenes[currentSceneIndex].components" :key="comp.id"
+                                v-show="renderedComponentIds.has(comp.id)"
                                 :style="{
                                     position: 'absolute',
-                                    /* 1. Multiply by 2 (pixelsPerUnit) */
-                                    /* 2. Subtract Y to invert the CSS coordinate system */
                                     left: `calc(50% + ${comp.x * 2}px)`,
                                     top: `calc(50% - ${comp.y * 2}px)`,
                                     width: `${comp.width}px`,
@@ -687,81 +762,71 @@ onUnmounted(() => {
                                     zIndex: index
                                 }">
                                 
-                                <div v-if="comp.type === 'text'" :style="{
-                                    color: comp.color,
-                                    fontSize: comp.fontSize + 'px',
-                                    fontFamily: comp.fontFamily,
-                                    fontWeight: comp.fontWeight,
-                                    fontStyle: comp.fontStyle,
-                                    textDecoration: `${comp.textDecoration} ${comp.textDecorationColor}`,
-                                    backgroundColor: comp.backgroundColor,
-                                    border: `${comp.borderWidth}px solid ${comp.borderColor}`,
-                                    borderRadius: comp.borderRadius + 'px',
-                                    width: '100%', height: '100%',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    whiteSpace: 'pre-wrap', textAlign: 'center'
-                                }">
-                                    {{ comp.content }}
-                                </div>
+                                <div :style="{ width: '100%', height: '100%', animation: getAnimationCss(comp) }">
 
-                                <img v-else-if="comp.type === 'image'" :src="comp.url" style="width: 100%; height: 100%; object-fit: cover; pointer-events: none;" />
-
-                                <video v-else-if="comp.type === 'video'" :src="comp.url" style="width: 100%; height: 100%; object-fit: cover; pointer-events: none;" autoplay loop :muted="comp.isMuted"></video>
-
-                                <div v-else-if="comp.type === 'options'" :style="{
-                                    width: '100%', height: '100%',
-                                    backgroundColor: comp.boxColor,
-                                    opacity: comp.boxOpacity,
-                                    border: `${comp.borderWidth}px solid ${comp.borderColor}`,
-                                    borderRadius: comp.borderRadius + 'px',
-                                    display: 'flex', flexDirection: 'column', gap: '10px',
-                                    padding: '10px', overflowY: 'auto'
-                                }">
-                                    <button v-for="opt in comp.optionsList" :key="opt.id"
-                                        :style="{
-                                            backgroundColor: comp.styles?.normal?.backgroundColor || '#374151',
-                                            color: comp.styles?.normal?.color || '#ffffff',
-                                            border: `${comp.styles?.normal?.borderWidth || 1}px solid ${comp.styles?.normal?.borderColor || '#9ca3af'}`,
-                                            borderRadius: (comp.styles?.normal?.borderRadius || 4) + 'px',
-                                            fontSize: (comp.styles?.normal?.fontSize || 16) + 'px',
-                                            fontFamily: comp.styles?.normal?.fontFamily || 'sans-serif',
-                                            padding: '8px', cursor: 'pointer', transition: '0.2s'
-                                        }"
-                                        @mouseover="$event.target.style.backgroundColor = comp.styles?.hovered?.backgroundColor || '#4b5563'; $event.target.style.borderColor = comp.styles?.hovered?.borderColor || '#00ff88';"
-                                        @mouseleave="$event.target.style.backgroundColor = comp.styles?.normal?.backgroundColor || '#374151'; $event.target.style.borderColor = comp.styles?.normal?.borderColor || '#9ca3af';"
-                                    >
-                                        {{ opt.text }}
-                                    </button>
-                                </div>
-
-                                <div v-else-if="comp.type === 'input'" :style="{ width: '100%', height: '100%', display: 'flex', gap: '5px' }">
-                                    <input type="text" :placeholder="comp.placeholderText" :style="{
-                                        flex: 1, padding: '8px',
-                                        backgroundColor: comp.backgroundColor, color: '#000',
-                                        border: `${comp.borderWidth}px solid ${comp.borderColor}`,
-                                        borderRadius: comp.borderRadius + 'px',
-                                        fontSize: comp.fontSize + 'px', fontFamily: comp.fontFamily
-                                    }" />
-                                    <button :style="{
-                                        backgroundColor: comp.buttonNormalColor, color: comp.buttonTextColor,
-                                        padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer'
+                                    <div v-if="comp.type === 'text'" :style="{
+                                        color: comp.color, fontSize: comp.fontSize + 'px', fontFamily: comp.fontFamily,
+                                        fontWeight: comp.fontWeight, fontStyle: comp.fontStyle,
+                                        textDecoration: `${comp.textDecoration} ${comp.textDecorationColor}`,
+                                        backgroundColor: comp.backgroundColor, border: `${comp.borderWidth}px solid ${comp.borderColor}`,
+                                        borderRadius: comp.borderRadius + 'px', width: '100%', height: '100%',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        whiteSpace: 'pre-wrap', textAlign: 'center'
                                     }">
-                                        {{ comp.buttonText }}
-                                    </button>
-                                </div>
+                                        {{ comp.content }}
+                                    </div>
 
-                                <div v-else-if="comp.type === 'variable'" :style="{
-                                    color: comp.color, fontSize: comp.fontSize + 'px', fontFamily: comp.fontFamily,
-                                    fontWeight: comp.fontWeight, fontStyle: comp.fontStyle,
-                                    textDecoration: `${comp.textDecoration} ${comp.textDecorationColor}`,
-                                    backgroundColor: comp.backgroundColor,
-                                    border: `${comp.borderWidth}px solid ${comp.borderColor}`,
-                                    borderRadius: comp.borderRadius + 'px',
-                                    width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center'
-                                }">
-                                    {{ activeGlobalVariables.find(v => v.id == comp.variableId)?.value ?? 0 }}
-                                </div>
+                                    <img v-else-if="comp.type === 'image'" :src="comp.url" style="width: 100%; height: 100%; object-fit: cover; pointer-events: none;" />
 
+                                    <video v-else-if="comp.type === 'video'" :src="comp.url" style="width: 100%; height: 100%; object-fit: cover; pointer-events: none;" autoplay loop :muted="comp.isMuted"></video>
+
+                                    <div v-else-if="comp.type === 'options'" @click.stop :style="{
+                                        width: '100%', height: '100%', backgroundColor: comp.boxColor, opacity: comp.boxOpacity,
+                                        border: `${comp.borderWidth}px solid ${comp.borderColor}`, borderRadius: comp.borderRadius + 'px',
+                                        display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px', overflowY: 'auto'
+                                    }">
+                                        <button v-for="opt in comp.optionsList" :key="opt.id"
+                                            :style="{
+                                                backgroundColor: comp.styles?.normal?.backgroundColor || '#374151',
+                                                color: comp.styles?.normal?.color || '#ffffff',
+                                                border: `${comp.styles?.normal?.borderWidth || 1}px solid ${comp.styles?.normal?.borderColor || '#9ca3af'}`,
+                                                borderRadius: (comp.styles?.normal?.borderRadius || 4) + 'px',
+                                                fontSize: (comp.styles?.normal?.fontSize || 16) + 'px',
+                                                fontFamily: comp.styles?.normal?.fontFamily || 'sans-serif',
+                                                padding: '8px', cursor: 'pointer', transition: '0.2s'
+                                            }"
+                                            @mouseover="$event.target.style.backgroundColor = comp.styles?.hovered?.backgroundColor || '#4b5563'; $event.target.style.borderColor = comp.styles?.hovered?.borderColor || '#00ff88';"
+                                            @mouseleave="$event.target.style.backgroundColor = comp.styles?.normal?.backgroundColor || '#374151'; $event.target.style.borderColor = comp.styles?.normal?.borderColor || '#9ca3af';"
+                                        >
+                                            {{ opt.text }}
+                                        </button>
+                                    </div>
+
+                                    <div v-else-if="comp.type === 'input'" @click.stop :style="{ width: '100%', height: '100%', display: 'flex', gap: '5px' }">
+                                        <input type="text" :placeholder="comp.placeholderText" :style="{
+                                            flex: 1, padding: '8px', backgroundColor: comp.backgroundColor, color: '#000',
+                                            border: `${comp.borderWidth}px solid ${comp.borderColor}`, borderRadius: comp.borderRadius + 'px',
+                                            fontSize: comp.fontSize + 'px', fontFamily: comp.fontFamily
+                                        }" />
+                                        <button :style="{
+                                            backgroundColor: comp.buttonNormalColor, color: comp.buttonTextColor,
+                                            padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer'
+                                        }">
+                                            {{ comp.buttonText }}
+                                        </button>
+                                    </div>
+
+                                    <div v-else-if="comp.type === 'variable'" :style="{
+                                        color: comp.color, fontSize: comp.fontSize + 'px', fontFamily: comp.fontFamily,
+                                        fontWeight: comp.fontWeight, fontStyle: comp.fontStyle,
+                                        textDecoration: `${comp.textDecoration} ${comp.textDecorationColor}`,
+                                        backgroundColor: comp.backgroundColor, border: `${comp.borderWidth}px solid ${comp.borderColor}`,
+                                        borderRadius: comp.borderRadius + 'px', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                    }">
+                                        {{ activeGlobalVariables.find(v => v.id == comp.variableId)?.value ?? 0 }}
+                                    </div>
+
+                                </div>
                             </div>
                         </template>
                     </div>
@@ -1824,5 +1889,37 @@ onUnmounted(() => {
 .exit-player-btn:hover {
     background: rgba(239, 68, 68, 0.8);
     border-color: #ef4444;
+}
+
+/* ================= ENTRANCE ANIMATIONS ================= */
+.player-container {
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.8);
+    overflow: hidden;
+}
+
+/* ================= MISSING ANIMATIONS ================= */
+@keyframes sceneBgFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateY(30px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes typewriter {
+    from { clip-path: inset(0 100% 0 0); }
+    to { clip-path: inset(0 0 0 0); }
+}
+
+@keyframes zoomIn {
+    from { opacity: 0; transform: scale(0.8); }
+    to { opacity: 1; transform: scale(1); }
 }
 </style>
