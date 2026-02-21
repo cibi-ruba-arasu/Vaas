@@ -5,6 +5,9 @@ import { useRouter, useRoute } from 'vue-router'
 const router = useRouter()
 const route = useRoute()
 const token = sessionStorage.getItem('token')
+const isPlaying = ref(false)
+const currentNode = ref(null)
+const currentSceneIndex = ref(0)
 
 const myGames = ref([])
 const loading = ref(true)
@@ -23,6 +26,47 @@ const currentlyAnimatingIds = ref([])
 const skippedAnimationIds = ref([])
 const animationTimers = ref({})
 const autoRenderTimer = ref(null)
+
+// ================= AUDIO ENGINE =================
+const currentAudio = ref(null)
+
+const handleNodeAudio = (audioData) => {
+    // 1. Always stop any currently playing music from the previous node
+    if (currentAudio.value) {
+        currentAudio.value.pause()
+        currentAudio.value.currentTime = 0
+        currentAudio.value = null
+    }
+
+    // 2. Play the new node's audio, if it exists
+    if (audioData && audioData.url) {
+        const audio = new Audio(audioData.url)
+        
+        // Apply properties from the database
+        audio.volume = audioData.volume !== undefined ? audioData.volume : 1.0
+        audio.loop = audioData.loop !== undefined ? audioData.loop : true
+        
+        // Browsers require a user interaction before playing audio. 
+        // Since they clicked to start the game or click to advance nodes, it will play safely.
+        audio.play().catch(e => console.warn("Background audio blocked by browser:", e))
+        
+        currentAudio.value = audio
+    }
+}
+
+// 3. Automatically manage audio whenever the node changes!
+watch(currentNode, (newNode, oldNode) => {
+    // If the game is closed, newNode becomes null -> Stop music
+    if (!newNode) {
+        handleNodeAudio(null); 
+        return;
+    }
+    
+    // Only switch music if we actually moved to a DIFFERENT node
+    if (!oldNode || newNode.index !== oldNode.index) {
+        handleNodeAudio(newNode.audio);
+    }
+})
 
 /* ================= 📊 CONSOLE STATUS TRACKER (LOCAL STORAGE) ================= */
 const savedStatus = sessionStorage.getItem('console_status_data')
@@ -304,9 +348,6 @@ const activeInstanceName = computed(() => {
 })
 
 /* ================= GAME PLAYER STATE ================= */
-const isPlaying = ref(false)
-const currentNode = ref(null)
-const currentSceneIndex = ref(0)
 
 const windowSize = ref({ width: window.innerWidth, height: window.innerHeight })
 const updateWindowSize = () => {
@@ -417,15 +458,22 @@ const closeGameModal = async (fromBackButton = false) => {
     isEngineRunning.value = false
     activeInstanceId.value = null
     activeEngineData.value = null
-    trackAction("CLOSED_GAME_MODAL")
     
-    // --- CLEAR ANY PENDING RENDERS ---
+    // --- NEW: STOP AUDIO AND RESET NODE ---
+    currentNode.value = null 
+    if (currentAudio.value) {
+        currentAudio.value.pause()
+        currentAudio.value.currentTime = 0
+        currentAudio.value = null
+    }
+    // --------------------------------------
+
     if (autoRenderTimer.value) {
         clearTimeout(autoRenderTimer.value)
         autoRenderTimer.value = null
     }
-    // ---------------------------------
-    
+
+    trackAction("CLOSED_GAME_MODAL")
     unlockOrientation()
 
     if (document.fullscreenElement) {
