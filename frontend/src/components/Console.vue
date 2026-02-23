@@ -35,6 +35,104 @@ const inputFocusState = ref({})
 const btnHoverState = ref({})
 const btnActiveState = ref({})
 
+const navigateToNode = (targetNodeId) => {
+    let currentId = targetNodeId;
+
+    while (currentId !== null && currentId !== undefined) {
+        const nextNode = activeEngineData.value?.canvasState?.nodes?.find(n => String(n.index) === String(currentId));
+        
+        if (!nextNode) {
+            console.warn("Dead end reached or node missing:", currentId);
+            isPlaying.value = false; // Dead end reached
+            return;
+        }
+
+        // Found a visual node! Render it.
+        if (nextNode.node_type === 'General') {
+            currentNode.value = nextNode;
+            currentSceneIndex.value = 0;
+            startScene();
+            return;
+        }
+
+        // --- BACKGROUND LOGIC PROCESSING ---
+        // Safely find variables. If no active instance exists, fallback to global default variables.
+        const inst = gameInstances.value.find(i => i.id === activeInstanceId.value);
+        const activeVars = (inst && inst.variables) ? inst.variables : (activeEngineData.value?.canvasState?.globalVariables || []);
+
+        if (nextNode.node_type === 'Set Variables') {
+            const targetVar = activeVars.find(v => String(v.id) === String(nextNode.varId));
+            
+            if (targetVar) {
+                let modifyVal = nextNode.varValue;
+                
+                if (targetVar.type === 'integer') {
+                    let currentVal = parseInt(targetVar.value) || 0;
+                    modifyVal = parseInt(modifyVal) || 0;
+                    
+                    if (nextNode.varOperator === '+') targetVar.value = currentVal + modifyVal;
+                    else if (nextNode.varOperator === '-') targetVar.value = currentVal - modifyVal;
+                    else if (nextNode.varOperator === '*') targetVar.value = currentVal * modifyVal;
+                    else if (nextNode.varOperator === '/') targetVar.value = currentVal / modifyVal;
+                    else targetVar.value = modifyVal;
+                } else {
+                    if (nextNode.varOperator === '+') {
+                        targetVar.value = String(nextNode.stringPrefix || '') + String(modifyVal || '') + String(nextNode.stringSuffix || '');
+                    } else {
+                        targetVar.value = String(modifyVal || '');
+                    }
+                }
+            }
+            currentId = nextNode.Next;
+        } 
+        else if (nextNode.node_type === 'If-Else') {
+            let conditionMet = false;
+            const targetVar = activeVars.find(v => String(v.id) === String(nextNode.varId));
+            
+            if (targetVar) {
+                let actualVal = targetVar.value;
+                let compVal = nextNode.compareValue;
+                
+                if (targetVar.type === 'integer') {
+                    actualVal = parseInt(actualVal) || 0;
+                    compVal = parseInt(compVal) || 0;
+                }
+                
+                if (nextNode.operator === '==') conditionMet = (actualVal == compVal);
+                else if (nextNode.operator === '!=') conditionMet = (actualVal != compVal);
+                else if (nextNode.operator === '>') conditionMet = (actualVal > compVal);
+                else if (nextNode.operator === '<') conditionMet = (actualVal < compVal);
+                else if (nextNode.operator === '>=') conditionMet = (actualVal >= compVal);
+                else if (nextNode.operator === '<=') conditionMet = (actualVal <= compVal);
+            }
+            
+            currentId = conditionMet ? nextNode.NextTrue : nextNode.NextFalse;
+        }
+        else if (nextNode.node_type === 'Gift') {
+            // Unlocks permanent account achievements seamlessly
+            if (activePostId.value) {
+                if (!Console_Status.value.games[activePostId.value]) {
+                    Console_Status.value.games[activePostId.value] = { instances: [], achievements: { pfp: [], badges: [] } };
+                }
+                const ach = Console_Status.value.games[activePostId.value].achievements;
+                const giftObj = { name: nextNode.giftName, pixels: nextNode.pixelData, font: nextNode.giftFont };
+                
+                if (nextNode.giftMode === 'pfp' && !ach.pfp.some(p => p.name === nextNode.giftName)) ach.pfp.push(giftObj);
+                else if (nextNode.giftMode === 'badge' && !ach.badges.some(b => b.name === nextNode.giftName)) ach.badges.push(giftObj);
+                
+                Console_Status.value = { ...Console_Status.value }; // Save to local storage
+            }
+            currentId = nextNode.Next;
+        }
+        else {
+            currentId = nextNode.Next; // Fallback
+        }
+    }
+    
+    // If the loop exits, it means we reached the absolute end of the tree.
+    isPlaying.value = false; 
+}
+
 // Submits the input and saves it to the current instance's variables
 const submitInput = (comp) => {
     if (comp.isSubmitted) return;
@@ -63,6 +161,26 @@ const submitInput = (comp) => {
     advanceScene(); 
 }
 
+const selectOption = (comp, opt) => {
+    if (isBackgroundFading.value || isSceneExiting.value || comp.isSubmitted) return;
+
+    comp.isSubmitted = true; 
+    isSceneExiting.value = true; // Trigger fade out
+
+    setTimeout(() => {
+        isSceneExiting.value = false;
+
+        // Safely extract the options mapping from the parent node.
+        // We use String() to ensure perfect matching even if JSON parses one as an integer and the other as text.
+        const nodeOptions = currentNode.value?.options || [];
+        const nodeOptionConfig = nodeOptions.find(o => String(o.id) === String(opt.id));
+        const nextId = nodeOptionConfig ? nodeOptionConfig.next : null;
+        
+        // Pass off to the logic traverser
+        navigateToNode(nextId);
+        
+    }, 1000); 
+}
 // ================= AUDIO ENGINE =================
 const currentAudio = ref(null)
 
@@ -130,7 +248,10 @@ const startScene = () => {
         currentNode.value.scenes[currentSceneIndex.value].components.forEach(c => {
             if (c.type === 'input') {
                 c.isSubmitted = false;
-                inputValues.value[c.id] = ''; // Clear typed text
+                inputValues.value[c.id] = ''; 
+            }
+            if (c.type === 'options') {
+                c.isSubmitted = false; // Reset option locks
             }
         });
     }
@@ -182,7 +303,13 @@ const advanceScene = () => {
     }
     // 🛡️ Prevent clicks while the background is still fading in OR OUT
     if (isBackgroundFading.value || isSceneExiting.value) return; 
-
+    const visibleBlocker = comps.slice(0, currentCompIndex.value).find(c => 
+        (c.type === 'input' && !c.isSubmitted) || 
+        (c.type === 'options' && !c.isSubmitted)
+    );
+    if (visibleBlocker) {
+        return; // Stops clicks from bypassing interactions
+    }
     // 🛑 SKIP LOGIC: If an animation is playing, fast-forward it and STOP.
     if (currentlyAnimatingIds.value.length > 0) {
         currentlyAnimatingIds.value.forEach(id => {
@@ -209,7 +336,7 @@ const advanceScene = () => {
     // 🛑 SCENE TRANSITION LOGIC
     if (currentCompIndex.value >= comps.length) {
         // Prevent advancing if an input or option is waiting for interaction
-        if (comps.some(c => c.type === 'options' || (c.type === 'input' && !c.isSubmitted))) return;
+        if (comps.some(c => (c.type === 'options' && !c.isSubmitted) || (c.type === 'input' && !c.isSubmitted))) return;
         
         // --- NEW: TRIGGER FADE OUT ---
         isSceneExiting.value = true;
@@ -224,20 +351,8 @@ const advanceScene = () => {
                 return;
             }
             
-            // Go to next Node
-            let nextId = currentNode.value.Next;
-            if (nextId !== null && nextId !== undefined) {
-                const nextNode = activeEngineData.value.canvasState.nodes.find(n => n.index === nextId);
-                if (nextNode) {
-                    currentNode.value = nextNode;
-                    currentSceneIndex.value = 0;
-                    startScene();
-                } else {
-                    isPlaying.value = false;
-                }
-            } else {
-                isPlaying.value = false; // End of game
-            }
+            navigateToNode(currentNode.value.Next);
+            return;
         }, 1000); // Wait exactly 1 second for the CSS fade-out to finish
         
         return; 
@@ -1116,6 +1231,7 @@ const preloadUrls = (urls) => {
                                             display: 'flex', flexWrap: 'wrap', alignContent: 'flex-start', gap: '10px', padding: '10px', overflowY: 'auto'
                                         }">
                                             <button v-for="opt in comp.optionsList" :key="opt.id"
+                                                @click="selectOption(comp, opt)"
                                                 :style="{
                                                     backgroundColor: comp.styles?.normal?.backgroundColor || '#374151',
                                                     color: comp.styles?.normal?.color || '#ffffff',
