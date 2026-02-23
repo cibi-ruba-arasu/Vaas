@@ -28,6 +28,41 @@ const skippedAnimationIds = ref([])
 const animationTimers = ref({})
 const autoRenderTimer = ref(null)
 
+// ================= INTERACTIVE COMPONENT STATES =================
+const inputValues = ref({})
+const inputHoverState = ref({})
+const inputFocusState = ref({})
+const btnHoverState = ref({})
+const btnActiveState = ref({})
+
+// Submits the input and saves it to the current instance's variables
+const submitInput = (comp) => {
+    if (comp.isSubmitted) return;
+    
+    const val = inputValues.value[comp.id];
+    if (val === undefined || val === '') return; // Don't submit empty values
+
+    // Find the current active instance
+    const inst = gameInstances.value.find(i => i.id === activeInstanceId.value);
+    
+    if (inst && inst.variables) {
+        // Find the specific variable we need to update
+        const targetVar = inst.variables.find(v => v.id == comp.targetVariableId);
+        if (targetVar) {
+            // Respect the variable type (integer vs string)
+            targetVar.value = targetVar.type === 'integer' ? (parseInt(val) || 0) : val;
+        }
+    }
+
+    comp.isSubmitted = true; // Lock the input
+    
+    // Save to session storage
+    Console_Status.value = { ...Console_Status.value }; 
+
+    // Automatically trigger the next component animation
+    advanceScene(); 
+}
+
 // ================= AUDIO ENGINE =================
 const currentAudio = ref(null)
 
@@ -80,9 +115,8 @@ const startScene = () => {
     renderedComponentIds.value = []
     skippedAnimationIds.value = []
     currentlyAnimatingIds.value = []
-    isSceneExiting.value = false // <--- NEW: Reset exit state
+    isSceneExiting.value = false 
     
-    // Clear any lingering animation timers from the previous scene
     for (let key in animationTimers.value) {
         clearTimeout(animationTimers.value[key])
     }
@@ -90,11 +124,20 @@ const startScene = () => {
         clearTimeout(autoRenderTimer.value)
         autoRenderTimer.value = null
     }
+
+    // 🚀 NEW: Reset all inputs for the new scene
+    if (currentNode.value?.scenes?.[currentSceneIndex.value]?.components) {
+        currentNode.value.scenes[currentSceneIndex.value].components.forEach(c => {
+            if (c.type === 'input') {
+                c.isSubmitted = false;
+                inputValues.value[c.id] = ''; // Clear typed text
+            }
+        });
+    }
     
     currentCompIndex.value = 0
-    isBackgroundFading.value = true // Block input
+    isBackgroundFading.value = true 
     
-    // Wait for the background fade-in (1000ms)
     setTimeout(() => {
         isBackgroundFading.value = false
         checkInitialComponent()
@@ -124,6 +167,19 @@ const triggerAnimationWait = (comp) => {
     }, durationMs);
 }
 const advanceScene = () => {
+    if (isBackgroundFading.value || isSceneExiting.value) return; 
+
+    if (!currentNode.value || !currentNode.value.scenes) return;
+    const scene = currentNode.value.scenes[currentSceneIndex.value];
+    if (!scene || !scene.components) return;
+    const comps = scene.components;
+
+    // 🚀 NEW: THE GATEKEEPER
+    // Look at all components currently rendered on screen. If one is an input and NOT submitted, block progression!
+    const visibleUnsubmittedInput = comps.slice(0, currentCompIndex.value).find(c => c.type === 'input' && !c.isSubmitted);
+    if (visibleUnsubmittedInput) {
+        return; // Stops clicks from doing anything
+    }
     // 🛡️ Prevent clicks while the background is still fading in OR OUT
     if (isBackgroundFading.value || isSceneExiting.value) return; 
 
@@ -148,9 +204,7 @@ const advanceScene = () => {
 
     if (!currentNode.value || !currentNode.value.scenes) return;
     
-    const scene = currentNode.value.scenes[currentSceneIndex.value];
     if (!scene || !scene.components) return;
-    const comps = scene.components;
     
     // 🛑 SCENE TRANSITION LOGIC
     if (currentCompIndex.value >= comps.length) {
@@ -242,6 +296,11 @@ const trackAction = (actionName, details = {}) => {
 }
 
 const activeGlobalVariables = computed(() => {
+    // Look at the CURRENT active instance for its variables
+    const inst = gameInstances.value.find(i => i.id === activeInstanceId.value);
+    if (inst && inst.variables) return inst.variables;
+    
+    // Fallback if none exist
     return activeEngineData.value?.canvasState?.globalVariables || [];
 })
 
@@ -586,10 +645,20 @@ const selectInstance = (id) => {
 
 const addGameInstance = async () => {
     const newId = Date.now()
+    
+    // 🚀 NEW: Clone default variables for this specific instance!
+    let initialVars = [];
+    const game = filteredGames.value.find(g => g._id === activePostId.value);
+    if (game?.canvasState?.globalVariables) {
+        initialVars = JSON.parse(JSON.stringify(game.canvasState.globalVariables));
+    }
+
     gameInstances.value.push({
         id: newId,
-        name: `Instance ${gameInstances.value.length + 1}`
+        name: `Instance ${gameInstances.value.length + 1}`,
+        variables: initialVars // Attach private variables here
     })
+    
     isWorkspaceGameLoaded.value = true
     trackAction("ADDED_INSTANCE", { gameId: activePostId.value, totalInstances: gameInstances.value.length })
 
@@ -731,7 +800,10 @@ const startGame = async (game) => {
             currentSceneIndex.value = 0; // Start at the first scene
             isPlaying.value = true; // Launch the player overlay
             isEngineRunning.value = true;
-            
+            const inst = gameInstances.value.find(i => i.id === activeInstanceId.value);
+            if (inst && !inst.variables) {
+                inst.variables = JSON.parse(JSON.stringify(activeEngineData.value.canvasState.globalVariables || []));
+            }
             startScene();
         } else {
             alert("Error: No entry point found in this game.");
@@ -1061,17 +1133,54 @@ const preloadUrls = (urls) => {
                                             </button>
                                         </div>
 
-                                        <div v-else-if="comp.type === 'input'" @click.stop :style="{ width: '100%', height: '100%', display: 'flex', gap: '5px' }">
-                                            <input type="text" :placeholder="comp.placeholderText" :style="{
-                                                flex: 1, padding: '8px', backgroundColor: comp.backgroundColor, color: '#000',
-                                                border: `${comp.borderWidth}px solid ${comp.borderColor}`, borderRadius: comp.borderRadius + 'px',
-                                                fontSize: comp.fontSize + 'px', fontFamily: comp.fontFamily
-                                            }" />
-                                            <button :style="{
-                                                backgroundColor: comp.buttonNormalColor, color: comp.buttonTextColor,
-                                                padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer'
-                                            }">
-                                                {{ comp.buttonText }}
+                                        <div v-else-if="comp.type === 'input'" @click.stop :style="{ width: '100%', height: '100%', display: 'flex', gap: '5px' }">    
+                                            <input 
+                                                type="text" 
+                                                v-model="inputValues[comp.id]"
+                                                :placeholder="comp.placeholderText" 
+                                                :disabled="comp.isSubmitted"
+                                                @focus="inputFocusState[comp.id] = true"
+                                                @blur="inputFocusState[comp.id] = false"
+                                                @mouseenter="inputHoverState[comp.id] = true"
+                                                @mouseleave="inputHoverState[comp.id] = false"
+                                                @keyup.enter="submitInput(comp)"
+                                                :style="{
+                                                    flex: 1, 
+                                                    padding: '8px 12px', 
+                                                    backgroundColor: comp.backgroundColor, 
+                                                    color: '#000',
+                                                    /* Fallback to blue if focused, lighter blue if hovered, else default border */
+                                                    border: `${comp.borderWidth}px solid ${inputFocusState[comp.id] ? '#3b82f6' : (inputHoverState[comp.id] ? '#60a5fa' : comp.borderColor)}`, 
+                                                    borderRadius: comp.borderRadius + 'px',
+                                                    fontSize: comp.fontSize + 'px', 
+                                                    fontFamily: comp.fontFamily,
+                                                    outline: 'none',
+                                                    transition: 'all 0.2s',
+                                                    boxShadow: inputFocusState[comp.id] ? '0 0 0 3px rgba(59, 130, 246, 0.3)' : 'none',
+                                                    opacity: comp.isSubmitted ? 0.7 : 1
+                                                }" 
+                                            />
+                                            
+                                            <button 
+                                                @click="submitInput(comp)"
+                                                :disabled="comp.isSubmitted"
+                                                @mouseenter="btnHoverState[comp.id] = true"
+                                                @mouseleave="btnHoverState[comp.id] = false"
+                                                @mousedown="btnActiveState[comp.id] = true"
+                                                @mouseup="btnActiveState[comp.id] = false"
+                                                :style="{
+                                                    /* Dynamic button colors based on mouse state! */
+                                                    backgroundColor: comp.isSubmitted ? '#10b981' : (btnActiveState[comp.id] ? comp.buttonClickColor : (btnHoverState[comp.id] ? comp.buttonHoverColor : comp.buttonNormalColor)), 
+                                                    color: comp.buttonTextColor,
+                                                    padding: '8px 20px', 
+                                                    border: 'none', 
+                                                    borderRadius: '4px', 
+                                                    cursor: comp.isSubmitted ? 'default' : 'pointer',
+                                                    fontWeight: 'bold',
+                                                    transition: 'all 0.1s',
+                                                    transform: btnActiveState[comp.id] && !comp.isSubmitted ? 'scale(0.95)' : 'scale(1)'
+                                                }">
+                                                {{ comp.isSubmitted ? (comp.buttonSubmittedText || 'Sent') : comp.buttonText }}
                                             </button>
                                         </div>
 
