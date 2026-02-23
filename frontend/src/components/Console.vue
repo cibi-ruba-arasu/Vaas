@@ -437,22 +437,45 @@ const handlePlayClick = async (id) => {
     }, 2000)
 }
 
-const openGameModal = (id) => {
-    activePostId.value = id
+const openGameModal = (gameId) => {
     isPopupOpen.value = true
     activeDataTab.value = 'pfp' // Reset tab on open
+    activePostId.value = gameId
     
-    if (!Console_Status.value.games[id]) {
-        Console_Status.value.games[id] = { instances: [], achievements: { pfp: [], badges: [] } }
+    // 🚀 START BACKGROUND PRELOADING IMMEDIATELY
+    backgroundPreloadPromise = (async () => {
+        try {
+            // Fetch the base game data using native fetch
+            const res = await fetch(`http://localhost:5000/posts/${gameId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            const data = await res.json()
+            const gameDoc = data.post || data
+            
+            if (gameDoc && gameDoc.canvasState && gameDoc.canvasState.nodes) {
+                const rootNodeId = gameDoc.canvasState.rootNodeId
+                const rootNode = gameDoc.canvasState.nodes.find(n => n.index === rootNodeId)
+                
+                // Extract and cache the assets!
+                const urlsToCache = extractNodeAssets(rootNode)
+                await preloadUrls(urlsToCache)
+            }
+        } catch (e) {
+            console.warn("Background preload skipped or failed:", e)
+        }
+    })()
+
+    if (!Console_Status.value.games[gameId]) {
+        Console_Status.value.games[gameId] = { instances: [], achievements: { pfp: [], badges: [] } }
     }
 
-    gameInstances.value = Console_Status.value.games[id].instances || []
+    gameInstances.value = Console_Status.value.games[gameId].instances || []
     isWorkspaceGameLoaded.value = gameInstances.value.length > 0
     isEngineRunning.value = false
     activeInstanceId.value = null
     activeEngineData.value = null
 
-    trackAction("OPENED_GAME_MODAL", { gameId: id })
+    trackAction("OPENED_GAME_MODAL", { gameId: gameId })
 
     if (route.hash !== '#playing') {
         router.push({ hash: '#playing' })
@@ -468,14 +491,16 @@ const closeGameModal = async (fromBackButton = false) => {
     activeInstanceId.value = null
     activeEngineData.value = null
     
-    // --- NEW: STOP AUDIO AND RESET NODE ---
+    // --- RESET UI STATES ---
+    isInsertingCD.value = false
+    insertingGameId.value = null
     currentNode.value = null 
+
     if (currentAudio.value) {
         currentAudio.value.pause()
         currentAudio.value.currentTime = 0
         currentAudio.value = null
     }
-    // --------------------------------------
 
     if (autoRenderTimer.value) {
         clearTimeout(autoRenderTimer.value)
@@ -678,26 +703,44 @@ const startGame = async (game) => {
     }
 
     trackAction("GAME_STARTED", { gameId: game._id, instanceId: activeInstanceId.value })
+    isEngineLoading.value = true; 
 
-    // Ensure we have the data loaded just in case
-    if (!activeEngineData.value || activeEngineData.value._id !== game._id) {
-        await loadGamePreview(game);
-    }
-    
-    // Extract Canvas State
-    const state = activeEngineData.value.canvasState;
-    
-    // Find the Root Node
-    const rootId = state?.rootNodeId;
-    const rootNode = state?.nodes?.find(n => n.index === rootId);
-    
-    if (rootNode) {
-        currentNode.value = rootNode;
-        currentSceneIndex.value = 0; // Start at the first scene
-        isPlaying.value = true; // Launch the player overlay
-        startScene();
-    } else {
-        alert("Error: No entry point found in this game.");
+    try {
+        // 1. Wait for the background preloader to finish its job!
+        await backgroundPreloadPromise;
+
+        // 2. Ensure we have the engine data loaded just in case
+        if (!activeEngineData.value || activeEngineData.value._id !== game._id) {
+            await loadGamePreview(game);
+        }
+        
+        // Extract Canvas State
+        const state = activeEngineData.value.canvasState;
+        
+        // Find the Root Node
+        const rootId = state?.rootNodeId;
+        const rootNode = state?.nodes?.find(n => n.index === rootId);
+        
+        if (rootNode) {
+            currentNode.value = rootNode;
+            
+            // 3. Preload the specific node we are about to see
+            const activeNodeUrls = extractNodeAssets(currentNode.value);
+            await preloadUrls(activeNodeUrls);
+
+            currentSceneIndex.value = 0; // Start at the first scene
+            isPlaying.value = true; // Launch the player overlay
+            isEngineRunning.value = true;
+            
+            startScene();
+        } else {
+            alert("Error: No entry point found in this game.");
+        }
+    } catch (error) {
+        console.error("Failed to start game:", error);
+    } finally {
+        // 4. Hide the loading screen, revealing the perfectly loaded scene
+        isEngineLoading.value = false; 
     }
 }
 
@@ -806,6 +849,62 @@ onUnmounted(() => {
     window.removeEventListener('keydown', handleKeyDown)
     document.removeEventListener('fullscreenchange', handleFullscreenChange)
 })
+// ================= ASSET PRELOADER ENGINE =================
+const isEngineLoading = ref(false)
+let backgroundPreloadPromise = Promise.resolve()
+
+// Extracts all image, video, and audio URLs from a specific node
+const extractNodeAssets = (node) => {
+    if (!node) return []
+    const urls = new Set()
+    
+    // Grab background audio
+    if (node.audio?.url) urls.add(node.audio.url)
+    
+    // Grab scene components
+    if (node.scenes) {
+        node.scenes.forEach(scene => {
+            if (scene.components) {
+                scene.components.forEach(comp => {
+                    if ((comp.type === 'image' || comp.type === 'video') && comp.url) {
+                        urls.add(comp.url)
+                    }
+                })
+            }
+        })
+    }
+    return Array.from(urls)
+}
+
+// Forces the browser to download and cache the assets
+const preloadUrls = (urls) => {
+    const uniqueUrls = [...new Set(urls)].filter(url => url) // Clean array
+    
+    const promises = uniqueUrls.map(url => {
+        return new Promise((resolve) => {
+            const ext = url.split('.').pop().toLowerCase()
+            const isVideo = ['mp4', 'webm', 'ogg'].includes(ext)
+            const isAudio = ['mp3', 'wav', 'mpeg'].includes(ext)
+            
+            if (isVideo || isAudio) {
+                const media = isVideo ? document.createElement('video') : new Audio()
+                media.preload = 'auto'
+                media.oncanplaythrough = resolve // Resolves when enough data is buffered
+                media.onerror = resolve
+                media.src = url
+                media.load()
+                setTimeout(resolve, 5000) // Fallback: Don't hang longer than 5 seconds
+            } else {
+                const img = new Image()
+                img.onload = resolve
+                img.onerror = resolve
+                img.src = url
+                setTimeout(resolve, 5000) // Fallback timeout
+            }
+        })
+    })
+    return Promise.all(promises)
+}
 </script>
 
 <template>
@@ -1137,6 +1236,10 @@ onUnmounted(() => {
             </div>
         </div>
     </transition>
+  </div>
+  <div v-if="isEngineLoading" class="loading-overlay">
+    <div class="spinner"></div>
+    <h2 class="loading-text">Loading Assets...</h2>
   </div>
 </template>
 
@@ -2097,7 +2200,6 @@ onUnmounted(() => {
     to { opacity: 1; }
 }
 
-
 /* --- NEW FADE OUT KEYFRAME --- */
 @keyframes sceneBgFadeOut {
     from { opacity: 1; }
@@ -2122,5 +2224,40 @@ onUnmounted(() => {
 @keyframes typewriter {
     from { clip-path: inset(0 100% 0 0); }
     to { clip-path: inset(0 0 0 0); }
+}
+
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: #0f172a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100000; /* Extremely high to cover everything */
+}
+
+.spinner {
+    width: 60px;
+    height: 60px;
+    border: 6px solid #1e293b;
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 20px;
+}
+
+.loading-text {
+    color: #f8fafc;
+    font-family: 'Inter', sans-serif;
+    font-weight: 500;
+    letter-spacing: 1px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
 }
 </style>

@@ -237,7 +237,8 @@ const messages = [
   "Pookie the cosmic cat says hello!",
   "Woof meow?",
   "Look at you... so mystical!",
-  "Searching for my magical comb, these weaves don't style themselves!"
+  "Searching for my magical comb, these weaves don't style themselves!",
+  "Blessed be thy feet, that they might walk this path -Darryl, The Midnight Gospel"
 ]
 const currentMessage = ref(messages[0])
 let messageInterval
