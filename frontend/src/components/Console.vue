@@ -34,7 +34,7 @@ const inputHoverState = ref({})
 const inputFocusState = ref({})
 const btnHoverState = ref({})
 const btnActiveState = ref({})
-
+const hoveredOption = ref(null)
 const activeOptionTimers = ref({})
 const optionTimerProgress = ref({})
 
@@ -108,7 +108,6 @@ const navigateToNode = (targetNodeId) => {
             return;
         }
 
-        // 🚀 FIX: Define the active instance HERE so it's ready for both the tracker and the logic nodes
         const inst = gameInstances.value.find(i => i.id === activeInstanceId.value);
 
         if (inst) {
@@ -138,6 +137,12 @@ const navigateToNode = (targetNodeId) => {
             if (targetVar) {
                 let modifyVal = nextNode.varValue;
                 
+                // 🚀 FIX 1: Fetch actual value if modifying using another variable
+                if (nextNode.varValueType === 'variable') {
+                    const sourceVar = activeVars.find(v => String(v.id) === String(nextNode.varValue));
+                    modifyVal = sourceVar ? sourceVar.value : (targetVar.type === 'integer' ? 0 : '');
+                }
+                
                 if (targetVar.type === 'integer') {
                     let currentVal = parseInt(targetVar.value) || 0;
                     modifyVal = parseInt(modifyVal) || 0;
@@ -148,8 +153,9 @@ const navigateToNode = (targetNodeId) => {
                     else if (nextNode.varOperator === '/') targetVar.value = currentVal / modifyVal;
                     else targetVar.value = modifyVal;
                 } else {
+                    let currentVal = targetVar.value || ''; 
                     if (nextNode.varOperator === '+') {
-                        targetVar.value = String(nextNode.stringPrefix || '') + String(modifyVal || '') + String(nextNode.stringSuffix || '');
+                        targetVar.value = String(nextNode.stringPrefix || '') + String(currentVal) + String(nextNode.stringSuffix || '');
                     } else {
                         targetVar.value = String(modifyVal || '');
                     }
@@ -164,6 +170,12 @@ const navigateToNode = (targetNodeId) => {
             if (targetVar) {
                 let actualVal = targetVar.value;
                 let compVal = nextNode.compareValue;
+                
+                // 🚀 FIX 2: Fetch actual value if comparing against another variable
+                if (nextNode.compareValueType === 'variable') {
+                    const compareVar = activeVars.find(v => String(v.id) === String(nextNode.compareValue));
+                    compVal = compareVar ? compareVar.value : (targetVar.type === 'integer' ? 0 : '');
+                }
                 
                 if (targetVar.type === 'integer') {
                     actualVal = parseInt(actualVal) || 0;
@@ -201,7 +213,6 @@ const navigateToNode = (targetNodeId) => {
         }
     }
     
-    // If the loop exits, it means we reached the absolute end of the tree.
     isPlaying.value = false; 
 }
 
@@ -1700,21 +1711,54 @@ const preloadUrls = (urls) => {
 
                                             <button v-for="opt in comp.optionsList" :key="opt.id"
                                                 @click="selectOption(comp, opt)" 
+                                                @mouseenter="!comp.isSubmitted && (hoveredOption = `${comp.id}-${opt.id}`)"
+                                                @mouseleave="hoveredOption = null"
                                                 :disabled="comp.isSubmitted"
-                                                :style="{
-                                                    backgroundColor: comp.styles?.normal?.backgroundColor || '#374151',
-                                                    color: comp.styles?.normal?.color || '#ffffff',
-                                                    border: `${comp.styles?.normal?.borderWidth || 1}px solid ${comp.styles?.normal?.borderColor || '#9ca3af'}`,
-                                                    borderRadius: (comp.styles?.normal?.borderRadius || 4) + 'px',
-                                                    fontSize: (comp.styles?.normal?.fontSize || 16) + 'px',
-                                                    fontFamily: comp.styles?.normal?.fontFamily || 'sans-serif',
-                                                    padding: '8px 12px', width: 'fit-content', height: 'fit-content', 
-                                                    cursor: comp.isSubmitted ? 'default' : 'pointer', transition: '0.2s',
-                                                    opacity: comp.isSubmitted ? 0.6 : 1,
-                                                    zIndex: 2 /* Keep button above timer bar */
-                                                }"
-                                                @mouseover="!comp.isSubmitted && ($event.target.style.backgroundColor = comp.styles?.hovered?.backgroundColor || '#4b5563'); !comp.isSubmitted && ($event.target.style.borderColor = comp.styles?.hovered?.borderColor || '#00ff88');"
-                                                @mouseleave="!comp.isSubmitted && ($event.target.style.backgroundColor = comp.styles?.normal?.backgroundColor || '#374151'); !comp.isSubmitted && ($event.target.style.borderColor = comp.styles?.normal?.borderColor || '#9ca3af');"
+                                                :style="[
+                                                    /* Base styles that never change */
+                                                    {
+                                                        padding: '8px 12px', 
+                                                        width: 'fit-content', 
+                                                        height: 'fit-content', 
+                                                        cursor: comp.isSubmitted ? 'default' : 'pointer', 
+                                                        transition: 'all 0.2s ease',
+                                                        zIndex: 2,
+                                                        borderStyle: 'solid'
+                                                    },
+                                                    /* 1. If Clicked (Submitted) - Apply Clicked Styles & Fade Out */
+                                                    comp.isSubmitted ? {
+                                                        backgroundColor: comp.styles?.clicked?.backgroundColor || '#1f2937',
+                                                        color: comp.styles?.clicked?.color || '#ffffff',
+                                                        borderColor: comp.styles?.clicked?.borderColor || '#00ff88',
+                                                        borderWidth: (comp.styles?.clicked?.borderWidth || 2) + 'px',
+                                                        borderRadius: (comp.styles?.clicked?.borderRadius || 4) + 'px',
+                                                        fontSize: (comp.styles?.clicked?.fontSize || 16) + 'px',
+                                                        fontFamily: comp.styles?.clicked?.fontFamily || 'sans-serif',
+                                                        opacity: 0.6
+                                                    } : 
+                                                    /* 2. If Hovered - Apply Hovered Styles */
+                                                    hoveredOption === `${comp.id}-${opt.id}` ? {
+                                                        backgroundColor: comp.styles?.hovered?.backgroundColor || '#4b5563',
+                                                        color: comp.styles?.hovered?.color || '#ffffff',
+                                                        borderColor: comp.styles?.hovered?.borderColor || '#00ff88',
+                                                        borderWidth: (comp.styles?.hovered?.borderWidth || 1) + 'px',
+                                                        borderRadius: (comp.styles?.hovered?.borderRadius || 4) + 'px',
+                                                        fontSize: (comp.styles?.hovered?.fontSize || 16) + 'px',
+                                                        fontFamily: comp.styles?.hovered?.fontFamily || 'sans-serif',
+                                                        opacity: 1
+                                                    } : 
+                                                    /* 3. Default State - Apply Normal Styles */
+                                                    {
+                                                        backgroundColor: comp.styles?.normal?.backgroundColor || '#374151',
+                                                        color: comp.styles?.normal?.color || '#ffffff',
+                                                        borderColor: comp.styles?.normal?.borderColor || '#9ca3af',
+                                                        borderWidth: (comp.styles?.normal?.borderWidth || 1) + 'px',
+                                                        borderRadius: (comp.styles?.normal?.borderRadius || 4) + 'px',
+                                                        fontSize: (comp.styles?.normal?.fontSize || 16) + 'px',
+                                                        fontFamily: comp.styles?.normal?.fontFamily || 'sans-serif',
+                                                        opacity: 1
+                                                    }
+                                                ]"
                                             >
                                                 {{ opt.text }}
                                             </button>
