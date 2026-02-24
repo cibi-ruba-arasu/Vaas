@@ -1018,6 +1018,56 @@ const handleCanvasZoom = (e) => {
 }
 
 /* ================= 🏆 ACHIEVEMENTS DATA LOGIC ================= */
+
+const unlockedPfps = computed(() => {
+    if (!activePostId.value || !Console_Status.value.games[activePostId.value]) return 0;
+    return Console_Status.value.games[activePostId.value].achievements?.pfp?.length || 0;
+});
+
+const unlockedBadges = computed(() => {
+    if (!activePostId.value || !Console_Status.value.games[activePostId.value]) return 0;
+    return Console_Status.value.games[activePostId.value].achievements?.badges?.length || 0;
+});
+
+// 🚀 NEW: Get the actual arrays of unlocked items
+const unlockedPfpList = computed(() => {
+    if (!activePostId.value || !Console_Status.value.games[activePostId.value]) return [];
+    return Console_Status.value.games[activePostId.value].achievements?.pfp || [];
+});
+
+const unlockedBadgeList = computed(() => {
+    if (!activePostId.value || !Console_Status.value.games[activePostId.value]) return [];
+    return Console_Status.value.games[activePostId.value].achievements?.badges || [];
+});
+
+// 🚀 NEW: Fast canvas renderer for the 2D pixel arrays
+const drawMiniPixelArt = (canvas, pixels) => {
+    if (!canvas || !pixels || !Array.isArray(pixels) || pixels.length === 0) return;
+    
+    const ctx = canvas.getContext('2d');
+    const rows = pixels.length;
+    const cols = pixels[0].length;
+    
+    // Disable anti-aliasing to keep pixel art sharp
+    ctx.imageSmoothingEnabled = false; 
+
+    // Calculate dimensions
+    const scaleX = canvas.width / cols;
+    const scaleY = canvas.height / rows;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if (pixels[y][x]) {
+                ctx.fillStyle = pixels[y][x];
+                // Math.ceil prevents sub-pixel rendering gaps
+                ctx.fillRect(Math.floor(x * scaleX), Math.floor(y * scaleY), Math.ceil(scaleX), Math.ceil(scaleY));
+            }
+        }
+    }
+}
+
 const activeGameGiftCounts = computed(() => {
     const gameId = activePostId.value;
     if (!gameId) return { pfp: 0, badges: 0 };
@@ -1075,15 +1125,7 @@ const activeGameGiftCounts = computed(() => {
 
 
 
-const unlockedPfps = computed(() => {
-    if (!activePostId.value || !Console_Status.value.games[activePostId.value]) return 0;
-    return Console_Status.value.games[activePostId.value].achievements?.pfp?.length || 0;
-});
 
-const unlockedBadges = computed(() => {
-    if (!activePostId.value || !Console_Status.value.games[activePostId.value]) return 0;
-    return Console_Status.value.games[activePostId.value].achievements?.badges?.length || 0;
-});
 /* ============================================================== */
 
 const startGame = async (game) => {
@@ -1902,6 +1944,13 @@ const preloadUrls = (urls) => {
                                         <div class="ach-progress">
                                             <div class="ach-fill" :style="{ width: activeGameGiftCounts.pfp !== '?' ? (unlockedPfps / activeGameGiftCounts.pfp * 100) + '%' : '0%' }"></div>
                                         </div>
+                                        
+                                        <div class="ach-gallery" v-if="unlockedPfpList.length > 0">
+                                            <div v-for="(item, idx) in unlockedPfpList" :key="idx" class="ach-item">
+                                                <canvas :ref="el => drawMiniPixelArt(el, item.pixels)" width="64" height="64" class="ach-canvas"></canvas>
+                                                <span class="ach-item-name" :style="{ fontFamily: item.font || 'sans-serif' }" :title="item.name">{{ item.name }}</span>
+                                            </div>
+                                        </div>
                                     </template>
                                     <template v-else>
                                         <div class="ach-empty-disabled">
@@ -1923,6 +1972,13 @@ const preloadUrls = (urls) => {
                                         </div>
                                         <div class="ach-progress">
                                             <div class="ach-fill badge-fill" :style="{ width: activeGameGiftCounts.badges !== '?' ? (unlockedBadges / activeGameGiftCounts.badges * 100) + '%' : '0%' }"></div>
+                                        </div>
+                                        
+                                        <div class="ach-gallery" v-if="unlockedBadgeList.length > 0">
+                                            <div v-for="(item, idx) in unlockedBadgeList" :key="idx" class="ach-item">
+                                                <canvas :ref="el => drawMiniPixelArt(el, item.pixels)" width="64" height="64" class="ach-canvas"></canvas>
+                                                <span class="ach-item-name" :style="{ fontFamily: item.font || 'sans-serif' }" :title="item.name">{{ item.name }}</span>
+                                            </div>
                                         </div>
                                     </template>
                                     <template v-else>
@@ -2879,7 +2935,55 @@ const preloadUrls = (urls) => {
     overflow: hidden;
 }
 
+.ach-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(65px, 1fr));
+    gap: 12px;
+    margin-top: 15px;
+    max-height: 200px;
+    overflow-y: auto;
+    padding-right: 5px;
+}
+.ach-gallery::-webkit-scrollbar { width: 4px; }
+.ach-gallery::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); border-radius: 4px; }
+.ach-gallery::-webkit-scrollbar-thumb { background: rgba(59,130,246,0.5); border-radius: 4px; }
 
+.ach-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0, 0, 0, 0.4);
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    transition: transform 0.2s, border-color 0.2s;
+}
+
+.ach-item:hover {
+    transform: translateY(-2px) scale(1.05);
+    border-color: rgba(59, 130, 246, 0.5);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+}
+
+.ach-canvas {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    image-rendering: pixelated; /* Forces sharp pixels */
+    border-radius: 4px;
+    background: #000;
+    box-shadow: inset 0 0 5px rgba(255,255,255,0.1);
+}
+
+.ach-item-name {
+    font-size: 0.65rem;
+    color: #cbd5e1;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+}
 
 .exit-player-btn {
     position: absolute;
