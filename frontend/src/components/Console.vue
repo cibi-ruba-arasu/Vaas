@@ -35,6 +35,67 @@ const inputFocusState = ref({})
 const btnHoverState = ref({})
 const btnActiveState = ref({})
 
+const activeOptionTimers = ref({})
+const optionTimerProgress = ref({})
+
+// 🚀 NEW: JS-Driven Time Limit Tracking States
+
+const optionTimerIntervals = ref({}) // Tracks the visual shrinking bar
+
+// 🚀 NEW: Mathematically syncs the visual bar and the background auto-selector
+
+
+const startOptionTimer = (comp) => {
+    // Prevent starting if already running or if the user already clicked
+    if (activeOptionTimers.value[comp.id] || comp.isSubmitted) return;
+
+    // Initialize progress to 100%
+    optionTimerProgress.value[comp.id] = 100;
+
+    const tickRate = 50; // Update visual bar every 50ms for smooth animation
+    const totalTime = Number(comp.timeLimitDuration) * 1000; // Convert seconds to MS safely
+    let timeElapsed = 0;
+
+    // --- 1. THE VISUAL PROGRESS BAR ---
+    optionTimerIntervals.value[comp.id] = setInterval(() => {
+        if (comp.isSubmitted) {
+            clearInterval(optionTimerIntervals.value[comp.id]);
+            return;
+        }
+        
+        timeElapsed += tickRate;
+        let percentage = Math.max(0, 100 - ((timeElapsed / totalTime) * 100));
+        optionTimerProgress.value[comp.id] = percentage;
+
+        if (timeElapsed >= totalTime) {
+            clearInterval(optionTimerIntervals.value[comp.id]);
+        }
+    }, tickRate);
+
+    // --- 2. THE AUTO-SELECTION TRIGGER ---
+    activeOptionTimers.value[comp.id] = setTimeout(() => {
+        if (comp.isSubmitted) return; // Failsafe
+        
+        let chosenOpt = null;
+        if (comp.timeoutAction === 'random') {
+            // Pick a random option from the list
+            const randomIndex = Math.floor(Math.random() * comp.optionsList.length);
+            chosenOpt = comp.optionsList[randomIndex];
+        } else {
+            // Pick the specific targeted option
+            chosenOpt = comp.optionsList.find(o => String(o.id) === String(comp.timeoutTargetId));
+            // Failsafe: if the target ID is broken or deleted, default to the first option
+            if (!chosenOpt && comp.optionsList.length > 0) {
+                chosenOpt = comp.optionsList[0]; 
+            }
+        }
+
+        if (chosenOpt) {
+            selectOption(comp, chosenOpt); // Auto-click it!
+        }
+    }, totalTime);
+}
+
 const navigateToNode = (targetNodeId) => {
     let currentId = targetNodeId;
 
@@ -47,6 +108,18 @@ const navigateToNode = (targetNodeId) => {
             return;
         }
 
+        // 🚀 FIX: Define the active instance HERE so it's ready for both the tracker and the logic nodes
+        const inst = gameInstances.value.find(i => i.id === activeInstanceId.value);
+
+        if (inst) {
+            if (!inst.visitedNodes) inst.visitedNodes = [];
+            // Prevent pushing duplicate sequential nodes
+            if (inst.visitedNodes[inst.visitedNodes.length - 1] !== nextNode.index) {
+                inst.visitedNodes.push(nextNode.index);
+                Console_Status.value = { ...Console_Status.value }; // Save to Session Storage
+            }
+        }
+
         // Found a visual node! Render it.
         if (nextNode.node_type === 'General') {
             currentNode.value = nextNode;
@@ -57,7 +130,6 @@ const navigateToNode = (targetNodeId) => {
 
         // --- BACKGROUND LOGIC PROCESSING ---
         // Safely find variables. If no active instance exists, fallback to global default variables.
-        const inst = gameInstances.value.find(i => i.id === activeInstanceId.value);
         const activeVars = (inst && inst.variables) ? inst.variables : (activeEngineData.value?.canvasState?.globalVariables || []);
 
         if (nextNode.node_type === 'Set Variables') {
@@ -165,20 +237,27 @@ const selectOption = (comp, opt) => {
     if (isBackgroundFading.value || isSceneExiting.value || comp.isSubmitted) return;
 
     comp.isSubmitted = true; 
+    
+    // 🚀 NEW: Clean up and stop the JS timers if the user successfully clicked in time
+    if (activeOptionTimers.value[comp.id]) {
+        clearTimeout(activeOptionTimers.value[comp.id]);
+        delete activeOptionTimers.value[comp.id];
+    }
+    if (optionTimerIntervals.value[comp.id]) {
+        clearInterval(optionTimerIntervals.value[comp.id]);
+        delete optionTimerIntervals.value[comp.id];
+    }
+
     isSceneExiting.value = true; // Trigger fade out
 
     setTimeout(() => {
         isSceneExiting.value = false;
 
-        // Safely extract the options mapping from the parent node.
-        // We use String() to ensure perfect matching even if JSON parses one as an integer and the other as text.
         const nodeOptions = currentNode.value?.options || [];
         const nodeOptionConfig = nodeOptions.find(o => String(o.id) === String(opt.id));
         const nextId = nodeOptionConfig ? nodeOptionConfig.next : null;
         
-        // Pass off to the logic traverser
         navigateToNode(nextId);
-        
     }, 1000); 
 }
 // ================= AUDIO ENGINE =================
@@ -238,12 +317,23 @@ const startScene = () => {
     for (let key in animationTimers.value) {
         clearTimeout(animationTimers.value[key])
     }
+    
+    // 🚀 NEW: Clear all lingering option timers from the previous scene to prevent leaks
+    for (let key in activeOptionTimers.value) {
+        clearTimeout(activeOptionTimers.value[key]);
+    }
+    for (let key in optionTimerIntervals.value) {
+        clearInterval(optionTimerIntervals.value[key]);
+    }
+    activeOptionTimers.value = {};
+    optionTimerIntervals.value = {};
+    optionTimerProgress.value = {};
+
     if (autoRenderTimer.value) {
         clearTimeout(autoRenderTimer.value)
         autoRenderTimer.value = null
     }
 
-    // 🚀 NEW: Reset all inputs for the new scene
     if (currentNode.value?.scenes?.[currentSceneIndex.value]?.components) {
         currentNode.value.scenes[currentSceneIndex.value].components.forEach(c => {
             if (c.type === 'input') {
@@ -251,7 +341,7 @@ const startScene = () => {
                 inputValues.value[c.id] = ''; 
             }
             if (c.type === 'options') {
-                c.isSubmitted = false; // Reset option locks
+                c.isSubmitted = false; 
             }
         });
     }
@@ -264,7 +354,6 @@ const startScene = () => {
         checkInitialComponent()
     }, 1000)
 }
-
 const checkInitialComponent = () => {
     if (!currentNode.value || !currentNode.value.scenes) return;
     const scene = currentNode.value.scenes[currentSceneIndex.value];
@@ -278,15 +367,21 @@ const checkInitialComponent = () => {
 }
 
 const triggerAnimationWait = (comp) => {
-    if (!comp.animationType || comp.animationType === 'none') return;
-    
-    currentlyAnimatingIds.value.push(comp.id);
-    const durationMs = (comp.animationDuration || 1) * 1000;
-    
-    animationTimers.value[comp.id] = setTimeout(() => {
-        currentlyAnimatingIds.value = currentlyAnimatingIds.value.filter(id => id !== comp.id);
-    }, durationMs);
+    const waitTime = (!comp.animationType || comp.animationType === 'none') ? 0 : (comp.animationDuration || 1) * 1000;
+
+    // 🚀 NEW: Start the timer immediately as soon as the component begins rendering on screen
+    if (comp.type === 'options' && comp.hasTimeLimit && !comp.isSubmitted) {
+        startOptionTimer(comp);
+    }
+
+    if (waitTime > 0) {
+        currentlyAnimatingIds.value.push(comp.id);
+        animationTimers.value[comp.id] = setTimeout(() => {
+            currentlyAnimatingIds.value = currentlyAnimatingIds.value.filter(id => id !== comp.id);
+        }, waitTime);
+    }
 }
+
 const advanceScene = () => {
     if (isBackgroundFading.value || isSceneExiting.value) return; 
 
@@ -295,22 +390,14 @@ const advanceScene = () => {
     if (!scene || !scene.components) return;
     const comps = scene.components;
 
-    // 🚀 NEW: THE GATEKEEPER
-    // Look at all components currently rendered on screen. If one is an input and NOT submitted, block progression!
-    const visibleUnsubmittedInput = comps.slice(0, currentCompIndex.value).find(c => c.type === 'input' && !c.isSubmitted);
-    if (visibleUnsubmittedInput) {
-        return; // Stops clicks from doing anything
-    }
-    // 🛡️ Prevent clicks while the background is still fading in OR OUT
-    if (isBackgroundFading.value || isSceneExiting.value) return; 
     const visibleBlocker = comps.slice(0, currentCompIndex.value).find(c => 
         (c.type === 'input' && !c.isSubmitted) || 
         (c.type === 'options' && !c.isSubmitted)
     );
     if (visibleBlocker) {
-        return; // Stops clicks from bypassing interactions
+        return; 
     }
-    // 🛑 SKIP LOGIC: If an animation is playing, fast-forward it and STOP.
+
     if (currentlyAnimatingIds.value.length > 0) {
         currentlyAnimatingIds.value.forEach(id => {
             if (!skippedAnimationIds.value.includes(id)) {
@@ -320,7 +407,6 @@ const advanceScene = () => {
         });
         currentlyAnimatingIds.value = [];
         
-        // ⚡ FAST-FORWARD AUTO-RENDER: If we skip, immediately spawn the next auto-rendered item
         if (autoRenderTimer.value) {
             clearTimeout(autoRenderTimer.value);
             autoRenderTimer.value = null;
@@ -329,36 +415,24 @@ const advanceScene = () => {
         return; 
     }
 
-    if (!currentNode.value || !currentNode.value.scenes) return;
-    
-    if (!scene || !scene.components) return;
-    
-    // 🛑 SCENE TRANSITION LOGIC
     if (currentCompIndex.value >= comps.length) {
-        // Prevent advancing if an input or option is waiting for interaction
         if (comps.some(c => (c.type === 'options' && !c.isSubmitted) || (c.type === 'input' && !c.isSubmitted))) return;
         
-        // --- NEW: TRIGGER FADE OUT ---
         isSceneExiting.value = true;
         
         setTimeout(() => {
             isSceneExiting.value = false;
-            
-            // Go to next Scene
             if (currentSceneIndex.value < currentNode.value.scenes.length - 1) {
                 currentSceneIndex.value++;
                 startScene();
                 return;
             }
-            
             navigateToNode(currentNode.value.Next);
-            return;
-        }, 1000); // Wait exactly 1 second for the CSS fade-out to finish
-        
+            return; 
+        }, 1000); 
         return; 
     }
 
-    // Reveal next component
     let nextComp = comps[currentCompIndex.value];
     if (!renderedComponentIds.value.includes(nextComp.id)) {
         renderedComponentIds.value.push(nextComp.id);
@@ -366,7 +440,6 @@ const advanceScene = () => {
     currentCompIndex.value++;
     triggerAnimationWait(nextComp);
 
-    // ⏱️ CHECK FOR AUTO-RENDER SEQUENCING
     if (currentCompIndex.value < comps.length) {
         const subsequentComp = comps[currentCompIndex.value];
         if (subsequentComp.autoRender) {
@@ -704,14 +777,13 @@ const centerOnRootNode = () => {
         const canvas = viewportCanvasRef.value;
         const rect = canvas.parentElement.getBoundingClientRect();
         
-        // The dimensions of your node blueprint (used in drawViewport)
         const nodeWidth = 220;
         const nodeHeight = 70;
         
-        // Calculate the offset required to place the node in the exact center of the view
+        // 🚀 NEW: Apply the scale to the offset calculation
         viewportOffset.value = {
-            x: (rect.width / 2) - (rootNode.x + (nodeWidth / 2)),
-            y: (rect.height / 2) - (rootNode.y + (nodeHeight / 2))
+            x: (rect.width / 2) - ((rootNode.x + (nodeWidth / 2)) * viewportScale.value),
+            y: (rect.height / 2) - ((rootNode.y + (nodeHeight / 2)) * viewportScale.value)
         };
     }
 }
@@ -752,16 +824,28 @@ const loadGamePreview = async (game) => {
 
 const selectInstance = (id) => {
     activeInstanceId.value = id
+    
+    // Redraw the map instantly when switching instances
+    nextTick(() => {
+        drawViewport() 
+    })
+    
     const game = filteredGames.value.find(g => g._id === activePostId.value)
     if (game) {
-        loadGamePreview(game) // Action 1: Only load the workspace and preview
+        loadGamePreview(game) 
     }
 }
-
+watch(isPlaying, (newVal) => {
+    if (!newVal) {
+        nextTick(() => {
+            drawViewport();
+        });
+    }
+});
 const addGameInstance = async () => {
     const newId = Date.now()
     
-    // 🚀 NEW: Clone default variables for this specific instance!
+    // Clone default variables for this specific instance
     let initialVars = [];
     const game = filteredGames.value.find(g => g._id === activePostId.value);
     if (game?.canvasState?.globalVariables) {
@@ -771,7 +855,8 @@ const addGameInstance = async () => {
     gameInstances.value.push({
         id: newId,
         name: `Instance ${gameInstances.value.length + 1}`,
-        variables: initialVars // Attach private variables here
+        variables: initialVars,
+        visitedNodes: [] // 🚀 NEW: Track discovered nodes independently
     })
     
     isWorkspaceGameLoaded.value = true
@@ -783,6 +868,92 @@ const addGameInstance = async () => {
     if (instanceInputRefs.value[newId]) {
         instanceInputRefs.value[newId].focus()
     }
+}
+
+const drawPreview = () => {
+    if (!previewCanvas.value || !activeEngineData.value) return
+    const ctx = previewCanvas.value.getContext('2d')
+    const nodes = activeEngineData.value.canvasState.nodes
+    
+    if (!nodes || nodes.length === 0) return;
+
+    // 1. Calculate Bounds based on ALL nodes (so map doesn't scale/jump violently as you discover things)
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    nodes.forEach(n => {
+        if (n.x < minX) minX = n.x
+        if (n.x > maxX) maxX = n.x
+        if (n.y < minY) minY = n.y
+        if (n.y > maxY) maxY = n.y
+    })
+
+    const padding = 50
+    const canvasWidth = previewCanvas.value.width
+    const canvasHeight = previewCanvas.value.height
+
+    const contentWidth = maxX - minX || 1
+    const contentHeight = maxY - minY || 1
+
+    const scaleX = (canvasWidth - padding * 2) / contentWidth
+    const scaleY = (canvasHeight - padding * 2) / contentHeight
+    const scale = Math.min(scaleX, scaleY, 1)
+
+    const offsetX = (canvasWidth - contentWidth * scale) / 2 - minX * scale
+    const offsetY = (canvasHeight - contentHeight * scale) / 2 - minY * scale
+
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight)
+
+    // 🚀 2. Identify Discovered Nodes
+    const activeInst = gameInstances.value.find(i => i.id === activeInstanceId.value);
+    let visitedSequence = activeInst?.visitedNodes || [];
+    
+    // If empty (brand new instance), just reveal the root node
+    if (visitedSequence.length === 0) {
+        const rootId = activeEngineData.value.canvasState.rootNodeId;
+        if (rootId !== undefined && rootId !== null) {
+            visitedSequence = [rootId];
+        }
+    }
+
+    const visitedSet = new Set(visitedSequence);
+
+    // 🚀 3. Draw Discovered Connections (Lines)
+    ctx.strokeStyle = '#4ade80' // Neon green indicating traversal path
+    ctx.lineWidth = 3
+    
+    for (let i = 0; i < visitedSequence.length - 1; i++) {
+        const fromNode = nodes.find(n => n.index === visitedSequence[i])
+        const toNode = nodes.find(n => n.index === visitedSequence[i+1])
+        
+        if (fromNode && toNode) {
+            ctx.beginPath()
+            ctx.moveTo(fromNode.x * scale + offsetX, fromNode.y * scale + offsetY)
+            ctx.lineTo(toNode.x * scale + offsetX, toNode.y * scale + offsetY)
+            ctx.stroke()
+        }
+    }
+
+    // 🚀 4. Draw Discovered Nodes
+    visitedSet.forEach(nodeId => {
+        const node = nodes.find(n => n.index === nodeId)
+        if (!node) return;
+
+        // Highlight the "Current Location" (the last node in their history)
+        const isCurrentLocation = (nodeId === visitedSequence[visitedSequence.length - 1]);
+        
+        ctx.fillStyle = isCurrentLocation ? '#facc15' : '#3b82f6' // Yellow if current, Blue if visited past
+        ctx.beginPath()
+        ctx.arc(node.x * scale + offsetX, node.y * scale + offsetY, 12, 0, 2 * Math.PI)
+        ctx.fill()
+        ctx.strokeStyle = '#ffffff'
+        ctx.lineWidth = 2
+        ctx.stroke()
+
+        // Draw Node Name
+        ctx.fillStyle = '#ffffff'
+        ctx.font = '12px sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText(node.Node_name || `Node ${node.index}`, node.x * scale + offsetX, node.y * scale + offsetY + 25)
+    })
 }
 
 const removeGameInstance = (id) => {
@@ -808,6 +979,32 @@ const activeEngineData = ref(null)
 const viewportOffset = ref({ x: 0, y: 0 })
 const isPanning = ref(false)
 const panStart = ref({ x: 0, y: 0 })
+const viewportScale = ref(1)
+const dragDistance = ref(0)
+
+const handleCanvasZoom = (e) => {
+    if (!isEngineRunning.value || !viewportCanvasRef.value) return;
+
+    // Zoom in (up scroll) or zoom out (down scroll) by 10%
+    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+    let newScale = viewportScale.value * zoomFactor;
+    
+    // Limit zoom between 10% and 300%
+    newScale = Math.min(Math.max(0.1, newScale), 3); 
+
+    const rect = viewportCanvasRef.value.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const oldScale = viewportScale.value;
+    
+    // Adjust offset to keep the map centered exactly on the cursor
+    viewportOffset.value.x = mouseX - newScale * ((mouseX - viewportOffset.value.x) / oldScale);
+    viewportOffset.value.y = mouseY - newScale * ((mouseY - viewportOffset.value.y) / oldScale);
+    
+    viewportScale.value = newScale;
+    drawViewport();
+}
 
 /* ================= 🏆 ACHIEVEMENTS DATA LOGIC ================= */
 const activeGameGiftCounts = computed(() => {
@@ -901,12 +1098,27 @@ const startGame = async (game) => {
         // Extract Canvas State
         const state = activeEngineData.value.canvasState;
         
-        // Find the Root Node
-        const rootId = state?.rootNodeId;
-        const rootNode = state?.nodes?.find(n => n.index === rootId);
+        // 🚀 FIX: RESUME FROM LAST SAVED NODE INSTEAD OF ROOT NODE
+        const inst = gameInstances.value.find(i => i.id === activeInstanceId.value);
+        let targetNodeId = state?.rootNodeId;
+
+        // If this instance already has history, RESUME from the last visited node!
+        if (inst && inst.visitedNodes && inst.visitedNodes.length > 0) {
+            targetNodeId = inst.visitedNodes[inst.visitedNodes.length - 1];
+        }
         
-        if (rootNode) {
-            currentNode.value = rootNode;
+        const startNode = state?.nodes?.find(n => n.index === targetNodeId);
+        
+        if (startNode) {
+            currentNode.value = startNode;
+            
+            if (inst) {
+                if (!inst.visitedNodes) inst.visitedNodes = []; // Backwards compatibility
+                if (inst.visitedNodes[inst.visitedNodes.length - 1] !== startNode.index) {
+                    inst.visitedNodes.push(startNode.index);
+                    Console_Status.value = { ...Console_Status.value }; // Save to Session Storage
+                }
+            }
             
             // 3. Preload the specific node we are about to see
             const activeNodeUrls = extractNodeAssets(currentNode.value);
@@ -915,7 +1127,6 @@ const startGame = async (game) => {
             currentSceneIndex.value = 0; // Start at the first scene
             isPlaying.value = true; // Launch the player overlay
             isEngineRunning.value = true;
-            const inst = gameInstances.value.find(i => i.id === activeInstanceId.value);
             if (inst && !inst.variables) {
                 inst.variables = JSON.parse(JSON.stringify(activeEngineData.value.canvasState.globalVariables || []));
             }
@@ -932,21 +1143,104 @@ const startGame = async (game) => {
 }
 
 const startPan = (e) => {
-    isPanning.value = true;
-    panStart.value = { x: e.clientX - viewportOffset.value.x, y: e.clientY - viewportOffset.value.y };
+    isPanning.value = true
+    dragDistance.value = 0 // Reset distance tracker on click down
+    panStart.value = { x: e.clientX - viewportOffset.value.x, y: e.clientY - viewportOffset.value.y }
 }
 
 const panMove = (e) => {
     if (!isPanning.value) return;
-    viewportOffset.value.x = e.clientX - panStart.value.x;
-    viewportOffset.value.y = e.clientY - panStart.value.y;
+    
+    // Accumulate drag to distinguish between a click and a pan
+    dragDistance.value += Math.abs(e.movementX) + Math.abs(e.movementY); 
+    
+    // Update the global offset
+    viewportOffset.value = {
+        x: e.clientX - panStart.value.x,
+        y: e.clientY - panStart.value.y
+    };
+    
+    // 🚀 NEW: Redraw the canvas to actually show the movement!
     drawViewport(); 
 }
 
 const stopPan = () => {
-    if (isPanning.value) trackAction("PANNED_VIEWPORT", { x: viewportOffset.value.x, y: viewportOffset.value.y })
-    isPanning.value = false;
+    isPanning.value = false
 }
+
+// ================= MAP SELECTION HIT DETECTION =================
+const handleCanvasClick = (e) => {
+    // Prevent clicking if the user was just dragging/panning the map
+    if (!isEngineRunning.value || !viewportCanvasRef.value || !activeEngineData.value || dragDistance.value > 10) return;
+
+    const canvas = viewportCanvasRef.value;
+    const rect = canvas.getBoundingClientRect();
+    
+    // 1. Get Mouse position relative to the screen
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // 2. Convert Screen Coordinates to World Coordinates (Reverse Pan & Zoom)
+    const worldX = (mouseX - viewportOffset.value.x) / viewportScale.value;
+    const worldY = (mouseY - viewportOffset.value.y) / viewportScale.value;
+
+    const activeInst = gameInstances.value.find(i => i.id === activeInstanceId.value);
+    if (!activeInst || !activeInst.visitedNodes || activeInst.visitedNodes.length === 0) return;
+
+    const nodes = activeEngineData.value.canvasState?.nodes || [];
+    const nw = 220;
+    const nh = 70;
+
+    let clickedNodeId = null;
+
+    // Only allow clicking on VISIBLE nodes they have ALREADY visited
+    const visibleVisitedNodes = activeInst.visitedNodes.filter(nodeId => {
+        const n = nodes.find(node => node.index === nodeId);
+        return n && n.node_type !== 'Set Variables' && n.node_type !== 'Gift';
+    });
+
+    // 3. Search backwards through history to see if the mouse touches any node
+    for (let i = visibleVisitedNodes.length - 1; i >= 0; i--) {
+        const nodeId = visibleVisitedNodes[i];
+        const node = nodes.find(n => n.index === nodeId);
+        if (!node) continue;
+
+        let isMatch = false;
+
+        if (node.node_type === 'If-Else') {
+            // Check Diamond Bounding Box
+            const cx = node.x + nw / 2;
+            const cy = node.y + nh / 2;
+            const radius = 30; 
+            if (worldX >= cx - radius && worldX <= cx + radius && worldY >= cy - radius && worldY <= cy + radius) {
+                isMatch = true;
+            }
+        } else {
+            // Check Rectangle Bounding Box
+            if (worldX >= node.x && worldX <= node.x + nw && worldY >= node.y && worldY <= node.y + nh) {
+                isMatch = true;
+            }
+        }
+
+        if (isMatch) {
+            clickedNodeId = nodeId;
+            break;
+        }
+    }
+
+    // 4. If a node was clicked, move the player there WITHOUT deleting history!
+    if (clickedNodeId !== null) {
+        // Only update if they aren't already standing on this exact node
+        if (activeInst.visitedNodes[activeInst.visitedNodes.length - 1] !== clickedNodeId) {
+            // Push the clicked node to the front of the timeline so it becomes the new "Current Location"
+            activeInst.visitedNodes.push(clickedNodeId);
+            Console_Status.value = { ...Console_Status.value }; // Save the jump to LocalStorage
+            drawViewport(); // Redraw the map instantly to move the "📍 CURRENT" marker
+        }
+    }
+}
+
+
 
 const drawViewport = () => {
     if (!viewportCanvasRef.value || !isEngineRunning.value || !activeEngineData.value) return;
@@ -960,18 +1254,24 @@ const drawViewport = () => {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
+    
+    // Apply panning offset, THEN apply the zoom scale
     ctx.translate(viewportOffset.value.x, viewportOffset.value.y);
+    ctx.scale(viewportScale.value, viewportScale.value); 
 
+    // --- 1. DRAW BACKGROUND GRID ---
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1 / viewportScale.value; 
     const gridSize = 40;
     
     const offsetX = viewportOffset.value.x;
     const offsetY = viewportOffset.value.y;
-    const startX = -offsetX - gridSize;
-    const endX = startX + canvas.width + (gridSize * 2);
-    const startY = -offsetY - gridSize;
-    const endY = startY + canvas.height + (gridSize * 2);
+    const scale = viewportScale.value;
+    
+    const startX = -offsetX / scale - gridSize;
+    const endX = (canvas.width - offsetX) / scale + (gridSize * 2);
+    const startY = -offsetY / scale - gridSize;
+    const endY = (canvas.height - offsetY) / scale + (gridSize * 2);
 
     const gridStartX = Math.floor(startX / gridSize) * gridSize;
     const gridStartY = Math.floor(startY / gridSize) * gridSize;
@@ -985,31 +1285,186 @@ const drawViewport = () => {
     }
     ctx.stroke();
 
-    const rootId = activeEngineData.value.canvasState?.rootNodeId;
-    const rootNode = activeEngineData.value.canvasState?.nodes?.find(n => n.index === rootId);
-
-    if (rootNode) {
-        const nw = 220; const nh = 70;  
-        
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)'; 
-        ctx.strokeStyle = '#3b82f6'; 
-        ctx.lineWidth = 2;
-        
-        ctx.beginPath();
-        ctx.roundRect(rootNode.x, rootNode.y, nw, nh, 8);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '600 14px Inter, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(rootNode.Node_name || 'Root Node', rootNode.x + nw/2, rootNode.y + nh/2);
-        
-        ctx.fillStyle = '#10b981'; 
-        ctx.font = 'bold 10px sans-serif';
-        ctx.fillText('ENTRY POINT', rootNode.x + nw/2, rootNode.y - 10);
+    // --- 2. IDENTIFY DISCOVERED NODES ---
+    const nodes = activeEngineData.value.canvasState?.nodes || [];
+    const activeInst = gameInstances.value.find(i => i.id === activeInstanceId.value);
+    let rawVisitedSequence = activeInst?.visitedNodes || [];
+    
+    // If empty (brand new instance), just reveal the root node
+    if (rawVisitedSequence.length === 0) {
+        const rootId = activeEngineData.value.canvasState?.rootNodeId;
+        if (rootId !== undefined && rootId !== null) {
+            rawVisitedSequence = [rootId];
+        }
     }
+
+    // Filter out hidden backend nodes ('Set Variables' & 'Gift') from the visual map
+    const visibleVisitedNodes = new Set(rawVisitedSequence.filter(nodeId => {
+        const n = nodes.find(node => node.index === nodeId);
+        return n && n.node_type !== 'Set Variables' && n.node_type !== 'Gift';
+    }));
+
+    const nw = 220; 
+    const nh = 70;  
+
+    // Helper: Find actual structural connections, passing THROUGH hidden logic nodes
+    const getStructuralTargets = (node) => {
+        const targets = [];
+        
+        const addTarget = (id) => {
+            if (id === null || id === undefined || id === "") return;
+            
+            let currId = Number(id);
+            let safety = 0; // Prevent infinite loops
+            
+            while (currId !== null && currId !== undefined && safety < 100) {
+                const n = nodes.find(x => x.index === currId);
+                if (!n) break;
+                
+                // If we found a visible node, it's our structural target!
+                if (n.node_type !== 'Set Variables' && n.node_type !== 'Gift') {
+                    targets.push(currId);
+                    break;
+                }
+                
+                // If it's a hidden node, pass right through it to find the real target
+                currId = n.Next;
+                safety++;
+            }
+        };
+
+        // Scan all possible outputs of the current node
+        addTarget(node.Next);
+        addTarget(node.NextTrue);
+        addTarget(node.NextFalse);
+        if (node.options && Array.isArray(node.options)) {
+            node.options.forEach(opt => addTarget(opt.next));
+        }
+        
+        return targets;
+    };
+
+    // --- 3. DRAW CONNECTING LINES (STRUCTURAL FLOW) ---
+    ctx.strokeStyle = '#4ade80'; // Neon green path
+    ctx.lineWidth = 3;
+    const drawnLines = new Set(); // Prevent double drawing
+
+    visibleVisitedNodes.forEach(fromNodeId => {
+        const fromNode = nodes.find(n => n.index === fromNodeId);
+        if (!fromNode) return;
+        
+        const targets = getStructuralTargets(fromNode);
+        
+        targets.forEach(toNodeId => {
+            // ONLY draw the structural line if the target has actually been discovered
+            if (!visibleVisitedNodes.has(toNodeId)) return;
+            
+            const lineKey = `${fromNodeId}->${toNodeId}`;
+            if (drawnLines.has(lineKey)) return;
+            drawnLines.add(lineKey);
+
+            const toNode = nodes.find(n => n.index === toNodeId);
+            if (!toNode) return;
+
+            const startX = fromNode.node_type === 'If-Else' ? fromNode.x + nw/2 + 30 : fromNode.x + nw;
+            const startY = fromNode.y + nh / 2;
+            
+            const endX = toNode.node_type === 'If-Else' ? toNode.x + nw/2 - 30 : toNode.x;
+            const endY = toNode.y + nh / 2;
+
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            
+            const cpOffset = Math.max(50, Math.abs(endX - startX) / 2);
+            ctx.bezierCurveTo(
+                startX + cpOffset, startY, 
+                endX - cpOffset, endY, 
+                endX, endY
+            );
+            ctx.stroke();
+
+            // Arrow head / target dot
+            ctx.fillStyle = '#4ade80';
+            ctx.beginPath();
+            ctx.arc(endX, endY, 4, 0, Math.PI * 2);
+            ctx.fill();
+        });
+    });
+
+    // --- 4. DRAW THE NODE BOXES ---
+    visibleVisitedNodes.forEach(nodeId => {
+        const node = nodes.find(n => n.index === nodeId);
+        if (!node) return;
+
+        // Trace backward to find the absolute latest VISIBLE node the player is standing on
+        let lastVisibleId = null;
+        for (let i = rawVisitedSequence.length - 1; i >= 0; i--) {
+            if (visibleVisitedNodes.has(rawVisitedSequence[i])) {
+                lastVisibleId = rawVisitedSequence[i];
+                break;
+            }
+        }
+        const isCurrentLocation = (nodeId === lastVisibleId);
+        
+        const cx = node.x + nw/2;
+        const cy = node.y + nh/2;
+
+        if (node.node_type === 'If-Else') {
+            // 🛑 RENDER LOGIC DECISION NODE (Red Diamond)
+            ctx.fillStyle = isCurrentLocation ? '#facc15' : '#ef4444'; 
+            ctx.strokeStyle = isCurrentLocation ? '#fef08a' : '#fca5a5'; 
+            ctx.lineWidth = isCurrentLocation ? 3 : 2;
+            
+            const radius = 30;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - radius);
+            ctx.lineTo(cx + radius, cy);
+            ctx.lineTo(cx, cy + radius);
+            ctx.lineTo(cx - radius, cy);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 24px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('?', cx, cy);
+
+        } else {
+            // 🟩 RENDER STANDARD NODE (Rectangle)
+            ctx.fillStyle = isCurrentLocation ? 'rgba(59, 130, 246, 0.9)' : 'rgba(15, 23, 42, 0.9)'; 
+            ctx.strokeStyle = isCurrentLocation ? '#60a5fa' : '#3b82f6'; 
+            ctx.lineWidth = isCurrentLocation ? 3 : 2;
+            
+            ctx.beginPath();
+            ctx.roundRect(node.x, node.y, nw, nh, 8);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '600 14px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(node.Node_name || `Node ${node.index}`, cx, cy);
+        }
+        
+        // Root Node Label
+        if (node.index === activeEngineData.value.canvasState?.rootNodeId) {
+            ctx.fillStyle = '#10b981'; 
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('ENTRY POINT', cx, node.y - 10);
+        }
+
+        // Active Player Location Label
+        if (isCurrentLocation) {
+            ctx.fillStyle = '#facc15'; 
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('📍 CURRENT', cx, node.y + nh + 15);
+        }
+    });
 
     ctx.restore();
 }
@@ -1227,11 +1682,25 @@ const preloadUrls = (urls) => {
                                         <div v-else-if="comp.type === 'options'" @click.stop :style="{
                                             width: '100%', height: '100%', backgroundColor: comp.boxColor, opacity: comp.boxOpacity,
                                             border: `${comp.borderWidth}px solid ${comp.borderColor}`, borderRadius: comp.borderRadius + 'px',
-                                            /* 1. Changed to row wrap layout starting from the top-left */
-                                            display: 'flex', flexWrap: 'wrap', alignContent: 'flex-start', gap: '10px', padding: '10px', overflowY: 'auto'
+                                            display: 'flex', flexWrap: 'wrap', alignContent: 'flex-start', gap: '10px', padding: '10px', overflowY: 'auto',
+                                            position: 'relative' /* Required for the timer bar to stick to the top */
                                         }">
+                                            
+                                            <div v-if="comp.hasTimeLimit && optionTimerProgress[comp.id] !== undefined" :style="{
+                                                position: 'absolute',
+                                                top: 0,
+                                                left: 0,
+                                                height: '5px',
+                                                borderRadius: (comp.borderRadius || 8) + 'px ' + (comp.borderRadius || 8) + 'px 0 0',
+                                                width: comp.isSubmitted ? '0%' : optionTimerProgress[comp.id] + '%',
+                                                /* Dynamically switch from green to yellow to red */
+                                                backgroundColor: optionTimerProgress[comp.id] > 50 ? '#4ade80' : optionTimerProgress[comp.id] > 20 ? '#facc15' : '#ef4444',
+                                                transition: 'width 50ms linear, background-color 0.3s'
+                                            }"></div>
+
                                             <button v-for="opt in comp.optionsList" :key="opt.id"
-                                                @click="selectOption(comp, opt)"
+                                                @click="selectOption(comp, opt)" 
+                                                :disabled="comp.isSubmitted"
                                                 :style="{
                                                     backgroundColor: comp.styles?.normal?.backgroundColor || '#374151',
                                                     color: comp.styles?.normal?.color || '#ffffff',
@@ -1239,11 +1708,13 @@ const preloadUrls = (urls) => {
                                                     borderRadius: (comp.styles?.normal?.borderRadius || 4) + 'px',
                                                     fontSize: (comp.styles?.normal?.fontSize || 16) + 'px',
                                                     fontFamily: comp.styles?.normal?.fontFamily || 'sans-serif',
-                                                    /* 2. Added shrink-wrap dimensions and matched the Canvas padding (8px 12px) */
-                                                    padding: '8px 12px', width: 'fit-content', height: 'fit-content', cursor: 'pointer', transition: '0.2s'
+                                                    padding: '8px 12px', width: 'fit-content', height: 'fit-content', 
+                                                    cursor: comp.isSubmitted ? 'default' : 'pointer', transition: '0.2s',
+                                                    opacity: comp.isSubmitted ? 0.6 : 1,
+                                                    zIndex: 2 /* Keep button above timer bar */
                                                 }"
-                                                @mouseover="$event.target.style.backgroundColor = comp.styles?.hovered?.backgroundColor || '#4b5563'; $event.target.style.borderColor = comp.styles?.hovered?.borderColor || '#00ff88';"
-                                                @mouseleave="$event.target.style.backgroundColor = comp.styles?.normal?.backgroundColor || '#374151'; $event.target.style.borderColor = comp.styles?.normal?.borderColor || '#9ca3af';"
+                                                @mouseover="!comp.isSubmitted && ($event.target.style.backgroundColor = comp.styles?.hovered?.backgroundColor || '#4b5563'); !comp.isSubmitted && ($event.target.style.borderColor = comp.styles?.hovered?.borderColor || '#00ff88');"
+                                                @mouseleave="!comp.isSubmitted && ($event.target.style.backgroundColor = comp.styles?.normal?.backgroundColor || '#374151'); !comp.isSubmitted && ($event.target.style.borderColor = comp.styles?.normal?.borderColor || '#9ca3af');"
                                             >
                                                 {{ opt.text }}
                                             </button>
@@ -1305,7 +1776,9 @@ const preloadUrls = (urls) => {
                                             fontWeight: comp.fontWeight, fontStyle: comp.fontStyle,
                                             textDecoration: `${comp.textDecoration} ${comp.textDecorationColor}`,
                                             backgroundColor: comp.backgroundColor, border: `${comp.borderWidth}px solid ${comp.borderColor}`,
-                                            borderRadius: comp.borderRadius + 'px', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                            borderRadius: comp.borderRadius + 'px', width: '100%', height: '100%', 
+                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                            whiteSpace: 'nowrap'
                                         }">
                                             {{ activeGlobalVariables.find(v => v.id == comp.variableId)?.value ?? 0 }}
                                         </div>
@@ -1443,7 +1916,9 @@ const preloadUrls = (urls) => {
                                     ref="viewportCanvasRef" 
                                     style="width: 100%; height: 100%; outline: none; display: block;" 
                                     :style="{ cursor: isPanning ? 'grabbing' : 'grab' }" 
-                                    @mousedown="startPan" @mousemove="panMove" @mouseup="stopPan" @mouseleave="stopPan">
+                                    @mousedown="startPan" @mousemove="panMove" @mouseup="stopPan" @mouseleave="stopPan"
+                                    @wheel.prevent="handleCanvasZoom"
+                                    @click="handleCanvasClick">
                                 </canvas>
                             </template>
 
@@ -2484,5 +2959,11 @@ const preloadUrls = (urls) => {
 
 @keyframes spin {
     to { transform: rotate(360deg); }
+}
+
+@keyframes timerBar {
+    0% { width: 100%; background-color: #4ade80; } /* Neon Green */
+    50% { background-color: #facc15; } /* Warning Yellow */
+    100% { width: 0%; background-color: #ef4444; } /* Critical Red */
 }
 </style>
