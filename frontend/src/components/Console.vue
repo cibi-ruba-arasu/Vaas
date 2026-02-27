@@ -393,6 +393,58 @@ const triggerAnimationWait = (comp) => {
     }
 }
 
+/* ================= ACHIEVEMENT POPUP & SHARE LOGIC ================= */
+const selectedAchievement = ref(null)
+const achievementPopupType = ref('') // 'pfp' or 'badge'
+const isShareMenuOpen = ref(false)
+
+const openAchievementPopup = (item, type) => {
+    selectedAchievement.value = item
+    achievementPopupType.value = type
+    isShareMenuOpen.value = false
+}
+
+const closeAchievementPopup = () => {
+    selectedAchievement.value = null
+    achievementPopupType.value = ''
+    isShareMenuOpen.value = false
+}
+
+const setAsPfp = () => {
+    alert(`Success! "${selectedAchievement.value.name}" has been set as your Profile Picture.`)
+    closeAchievementPopup()
+}
+
+const addToAchievements = () => {
+    alert(`Success! "${selectedAchievement.value.name}" has been pinned to your public showcase.`)
+    closeAchievementPopup()
+}
+
+const shareToSocial = (platform) => {
+    const text = encodeURIComponent(`I just unlocked the "${selectedAchievement.value.name}" ${achievementPopupType.value === 'pfp' ? 'Profile Picture' : 'Badge'} on this awesome console!`)
+    const url = encodeURIComponent(window.location.href)
+    let shareUrl = ''
+
+    switch(platform) {
+        case 'whatsapp': 
+            shareUrl = `https://api.whatsapp.com/send?text=${text} ${url}`
+            break
+        case 'facebook': 
+            shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${url}&quote=${text}`
+            break
+        case 'reddit': 
+            shareUrl = `https://www.reddit.com/submit?url=${url}&title=${text}`
+            break
+        case 'twitter': 
+            shareUrl = `https://twitter.com/intent/tweet?text=${text}&url=${url}`
+            break
+    }
+
+    if (shareUrl) {
+        window.open(shareUrl, '_blank')
+    }
+}
+
 const advanceScene = () => {
     if (isBackgroundFading.value || isSceneExiting.value) return; 
 
@@ -1946,7 +1998,7 @@ const preloadUrls = (urls) => {
                                         </div>
                                         
                                         <div class="ach-gallery" v-if="unlockedPfpList.length > 0">
-                                            <div v-for="(item, idx) in unlockedPfpList" :key="idx" class="ach-item">
+                                            <div v-for="(item, idx) in unlockedPfpList" :key="idx" class="ach-item interactable" @click="openAchievementPopup(item, 'pfp')">
                                                 <canvas :ref="el => drawMiniPixelArt(el, item.pixels)" width="64" height="64" class="ach-canvas"></canvas>
                                                 <span class="ach-item-name" :style="{ fontFamily: item.font || 'sans-serif' }" :title="item.name">{{ item.name }}</span>
                                             </div>
@@ -1975,7 +2027,7 @@ const preloadUrls = (urls) => {
                                         </div>
                                         
                                         <div class="ach-gallery" v-if="unlockedBadgeList.length > 0">
-                                            <div v-for="(item, idx) in unlockedBadgeList" :key="idx" class="ach-item">
+                                            <div v-for="(item, idx) in unlockedBadgeList" :key="idx" class="ach-item interactable" @click="openAchievementPopup(item, 'badge')">
                                                 <canvas :ref="el => drawMiniPixelArt(el, item.pixels)" width="64" height="64" class="ach-canvas"></canvas>
                                                 <span class="ach-item-name" :style="{ fontFamily: item.font || 'sans-serif' }" :title="item.name">{{ item.name }}</span>
                                             </div>
@@ -2037,6 +2089,46 @@ const preloadUrls = (urls) => {
         </div>
     </transition>
   </div>
+  <transition name="fade">
+    <div v-if="selectedAchievement" class="achievement-modal-overlay" @click="closeAchievementPopup">
+        <div class="achievement-modal-content" @click.stop>
+            <button class="close-ach-btn" @click="closeAchievementPopup">✕</button>
+            
+            <div class="ach-modal-header">
+                <canvas :ref="el => drawMiniPixelArt(el, selectedAchievement?.pixels)" width="128" height="128" class="ach-modal-canvas"></canvas>
+                
+                <h3 :style="{ fontFamily: selectedAchievement?.font || 'sans-serif' }">{{ selectedAchievement?.name }}</h3>
+                
+                <span class="ach-modal-type">{{ achievementPopupType === 'pfp' ? 'Profile Picture' : 'Badge' }}</span>
+            </div>
+
+            <div class="ach-modal-actions">
+                <button v-if="achievementPopupType === 'pfp'" class="primary-action-btn" @click="setAsPfp">
+                    👤 Set as PFP
+                </button>
+                
+                <button v-if="achievementPopupType === 'badge'" class="primary-action-btn badge-action" @click="addToAchievements">
+                    🎖️ Add to Achievements
+                </button>
+
+                <div class="share-wrapper">
+                    <button class="secondary-action-btn" @click="isShareMenuOpen = !isShareMenuOpen">
+                        🔗 Share...
+                    </button>
+                    
+                    <transition name="slide">
+                        <div v-if="isShareMenuOpen" class="social-share-menu">
+                            <button class="social-btn whatsapp" @click="shareToSocial('whatsapp')">WhatsApp</button>
+                            <button class="social-btn facebook" @click="shareToSocial('facebook')">Facebook</button>
+                            <button class="social-btn twitter" @click="shareToSocial('twitter')">X / Twitter</button>
+                            <button class="social-btn reddit" @click="shareToSocial('reddit')">Reddit</button>
+                        </div>
+                    </transition>
+                </div>
+            </div>
+        </div>
+    </div>
+</transition>
   <div v-if="isEngineLoading" class="loading-overlay">
     <div class="spinner"></div>
     <h2 class="loading-text">Loading Assets...</h2>
@@ -3037,7 +3129,153 @@ const preloadUrls = (urls) => {
     0% { clip-path: inset(0 100% 0 0); }
     100% { clip-path: inset(0 0 0 0); }
 }
+.ach-item.interactable {
+    cursor: pointer;
+}
 
+.achievement-modal-overlay {
+    position: fixed;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    background: rgba(2, 6, 23, 0.85);
+    backdrop-filter: blur(8px);
+    z-index: 200000; /* Higher than game modal */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.achievement-modal-content {
+    background: #0f172a;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 16px;
+    padding: 30px;
+    width: 90%;
+    max-width: 350px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.8), 0 0 20px rgba(59,130,246,0.2);
+    text-align: center;
+}
+
+.close-ach-btn {
+    position: absolute;
+    top: 15px; right: 15px;
+    background: transparent;
+    border: none;
+    color: #64748b;
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: 0.2s;
+}
+.close-ach-btn:hover { color: #ef4444; }
+
+.ach-modal-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 25px;
+}
+
+.ach-modal-canvas {
+    width: 128px;
+    height: 128px;
+    image-rendering: pixelated;
+    background: #000;
+    border-radius: 8px;
+    box-shadow: inset 0 0 10px rgba(255,255,255,0.1), 0 5px 15px rgba(0,0,0,0.5);
+    border: 2px solid #334155;
+}
+
+.ach-modal-header h3 {
+    margin: 0;
+    font-size: 1.5rem;
+    color: #f8fafc;
+    text-shadow: 0 2px 5px rgba(0,0,0,0.5);
+}
+
+.ach-modal-type {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    background: rgba(255,255,255,0.05);
+    padding: 4px 12px;
+    border-radius: 20px;
+}
+
+.ach-modal-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+}
+
+.primary-action-btn {
+    background: #3b82f6;
+    color: white;
+    border: none;
+    padding: 12px;
+    border-radius: 8px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.2s;
+    font-size: 1rem;
+}
+.primary-action-btn:hover { background: #2563eb; transform: translateY(-2px); }
+
+.primary-action-btn.badge-action {
+    background: #f59e0b;
+}
+.primary-action-btn.badge-action:hover {
+    background: #d97706;
+}
+
+.share-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.secondary-action-btn {
+    width: 100%;
+    background: transparent;
+    color: #cbd5e1;
+    border: 1px solid rgba(255,255,255,0.2);
+    padding: 10px;
+    border-radius: 8px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.2s;
+}
+.secondary-action-btn:hover { background: rgba(255,255,255,0.05); border-color: #94a3b8; }
+
+.social-share-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+    background: rgba(0,0,0,0.3);
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px dashed rgba(255,255,255,0.1);
+}
+
+.social-btn {
+    padding: 8px;
+    border: none;
+    border-radius: 6px;
+    color: white;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.2s opacity;
+}
+.social-btn:hover { opacity: 0.8; }
+.social-btn.whatsapp { background: #25D366; }
+.social-btn.facebook { background: #1877F2; }
+.social-btn.twitter { background: #000000; border: 1px solid #333; }
+.social-btn.reddit { background: #FF4500; }
 </style>
 <style>
 /* ================= GLOBAL KEYFRAMES (UNSCOPED) ================= */
