@@ -8,7 +8,6 @@ const token = sessionStorage.getItem('token')
 const isPlaying = ref(false)
 const currentNode = ref(null)
 const currentSceneIndex = ref(0)
-
 const myGames = ref([])
 const loading = ref(true)
 
@@ -44,6 +43,15 @@ const optionTimerIntervals = ref({}) // Tracks the visual shrinking bar
 
 // 🚀 NEW: Mathematically syncs the visual bar and the background auto-selector
 
+const visitedNodes = ref(new Set()) // Tracks indices of nodes the player has traversed
+const achievedGifts = ref([]) // Stores the gift data the player unlocked
+const previewGraphZoom = ref(1)
+
+const showGiftReward = ref(false)
+const currentGiftReward = ref(null)
+const giftRewardType = ref('')
+const giftRewardAudio = ref(null)
+const giftRewardAnimation = ref('float-up')
 
 const startOptionTimer = (comp) => {
     // Prevent starting if already running or if the user already clicked
@@ -191,8 +199,10 @@ const navigateToNode = (targetNodeId) => {
             }
             
             currentId = conditionMet ? nextNode.NextTrue : nextNode.NextFalse;
-        }
-        else if (nextNode.node_type === 'Gift') {
+        }else if (nextNode.node_type === 'Gift') {
+            console.log("Gift node encountered:", nextNode.Node_name);
+            console.log("Gift node Next value:", nextNode.Next);
+            
             // Unlocks permanent account achievements seamlessly
             if (activePostId.value) {
                 if (!Console_Status.value.games[activePostId.value]) {
@@ -206,7 +216,33 @@ const navigateToNode = (targetNodeId) => {
                 
                 Console_Status.value = { ...Console_Status.value }; // Save to local storage
             }
-            currentId = nextNode.Next;
+            
+            // 🎁 Show gift reward popup instead of navigating immediately
+            // But first, make sure we're not already showing a gift
+            if (!showGiftReward.value) {
+                currentGiftReward.value = nextNode;
+                giftRewardType.value = nextNode.giftMode;
+                showGiftReward.value = true;
+                giftRewardAnimation.value = 'float-up';
+                
+                // 🎵 Play gift audio if available
+                if (nextNode.giftAudio && nextNode.giftAudio.url) {
+                    // Stop any previously playing gift audio
+                    if (giftRewardAudio.value) {
+                        giftRewardAudio.value.pause();
+                        giftRewardAudio.value.currentTime = 0;
+                    }
+                    
+                    const audio = new Audio(nextNode.giftAudio.url);
+                    audio.volume = nextNode.giftAudio.volume !== undefined ? nextNode.giftAudio.volume : 1.0;
+                    audio.loop = false;
+                    audio.play().catch(e => console.warn("Gift audio blocked by browser:", e));
+                    giftRewardAudio.value = audio;
+                }
+            }
+            
+            // Don't continue to next node automatically - wait for user click
+            return;
         }
         else {
             currentId = nextNode.Next; // Fallback
@@ -214,6 +250,86 @@ const navigateToNode = (targetNodeId) => {
     }
     
     isPlaying.value = false; 
+}
+
+watch(showGiftReward, (newVal) => {
+    console.log("showGiftReward changed to:", newVal);
+});
+
+watch(currentNode, (newVal) => {
+    console.log("Current node changed to:", newVal?.Node_name);
+});
+
+watch(isPlaying, (newVal) => {
+    console.log("isPlaying changed to:", newVal);
+    if (newVal) {
+        console.log("Current node:", currentNode.value?.Node_name);
+        console.log("Current scene index:", currentSceneIndex.value);
+    }
+});
+
+const continueAfterGift = () => {
+    if (!currentGiftReward.value) {
+        console.log("No gift reward to continue from");
+        return;
+    }
+    
+    // Prevent multiple clicks
+    if (giftRewardAnimation.value === 'fade-out') {
+        console.log("Already fading out, ignoring click");
+        return;
+    }
+    
+    console.log("Gift clicked, continuing to next node...");
+    console.log("Current gift reward:", currentGiftReward.value);
+    console.log("Next node ID:", currentGiftReward.value.Next);
+    
+    // Start fade out animation
+    giftRewardAnimation.value = 'fade-out';
+    
+    // Stop gift audio if playing
+    if (giftRewardAudio.value) {
+        giftRewardAudio.value.pause();
+        giftRewardAudio.value.currentTime = 0;
+        giftRewardAudio.value = null;
+    }
+    
+    // Store the next node ID before clearing
+    const nextId = currentGiftReward.value.Next;
+    const giftNode = { ...currentGiftReward.value }; // Create a copy
+    
+    // Hide popup immediately but with fade out animation
+    setTimeout(() => {
+        console.log("Hiding gift popup");
+        showGiftReward.value = false;
+        currentGiftReward.value = null;
+        
+        // Navigate to next node after popup is hidden
+        if (nextId !== null && nextId !== undefined && nextId !== "") {
+            console.log("Navigating to next node:", nextId);
+            
+            // Small delay to ensure popup is completely hidden
+            setTimeout(() => {
+                // Ensure we have the active instance
+                if (!activeInstanceId.value) {
+                    console.error("No active instance found");
+                    return;
+                }
+                
+                // Make sure we have the game data
+                if (!activeEngineData.value) {
+                    console.error("No active engine data found");
+                    return;
+                }
+                
+                // Navigate to the next node
+                navigateToNode(nextId);
+            }, 100);
+        } else {
+            console.log("No next node, ending game");
+            isPlaying.value = false;
+        }
+    }, 400); // Slightly shorter than animation to ensure smooth transition
 }
 
 // Submits the input and saves it to the current instance's variables
@@ -339,7 +455,13 @@ const startScene = () => {
     activeOptionTimers.value = {};
     optionTimerIntervals.value = {};
     optionTimerProgress.value = {};
-
+    showGiftReward.value = false;
+    currentGiftReward.value = null;
+    if (giftRewardAudio.value) {
+        giftRewardAudio.value.pause();
+        giftRewardAudio.value.currentTime = 0;
+        giftRewardAudio.value = null;
+    }
     if (autoRenderTimer.value) {
         clearTimeout(autoRenderTimer.value)
         autoRenderTimer.value = null
@@ -827,6 +949,13 @@ const closeGameModal = async (fromBackButton = false) => {
     if (!fromBackButton && route.hash === '#playing') {
         router.back()
     }
+    showGiftReward.value = false;
+    currentGiftReward.value = null;
+    if (giftRewardAudio.value) {
+        giftRewardAudio.value.pause();
+        giftRewardAudio.value.currentTime = 0;
+        giftRewardAudio.value = null;
+    }
 }
 
 const centerOnRootNode = () => {
@@ -1298,10 +1427,10 @@ const handleCanvasClick = (e) => {
 
     let clickedNodeId = null;
 
-    // Only allow clicking on VISIBLE nodes they have ALREADY visited
+    // Only allow clicking on VISIBLE nodes they have ALREADY visited (including Gift nodes)
     const visibleVisitedNodes = activeInst.visitedNodes.filter(nodeId => {
         const n = nodes.find(node => node.index === nodeId);
-        return n && n.node_type !== 'Set Variables' && n.node_type !== 'Gift';
+        return n && n.node_type !== 'Set Variables'; // Gift nodes are now clickable
     });
 
     // 3. Search backwards through history to see if the mouse touches any node
@@ -1321,7 +1450,7 @@ const handleCanvasClick = (e) => {
                 isMatch = true;
             }
         } else {
-            // Check Rectangle Bounding Box
+            // Check Rectangle Bounding Box (works for General and Gift nodes)
             if (worldX >= node.x && worldX <= node.x + nw && worldY >= node.y && worldY <= node.y + nh) {
                 isMatch = true;
             }
@@ -1403,10 +1532,10 @@ const drawViewport = () => {
         }
     }
 
-    // Filter out hidden backend nodes ('Set Variables' & 'Gift') from the visual map
+    // Include Gift nodes, but still hide Set Variables (they are backend only)
     const visibleVisitedNodes = new Set(rawVisitedSequence.filter(nodeId => {
         const n = nodes.find(node => node.index === nodeId);
-        return n && n.node_type !== 'Set Variables' && n.node_type !== 'Gift';
+        return n && n.node_type !== 'Set Variables';
     }));
 
     const nw = 220; 
@@ -1426,13 +1555,13 @@ const drawViewport = () => {
                 const n = nodes.find(x => x.index === currId);
                 if (!n) break;
                 
-                // If we found a visible node, it's our structural target!
-                if (n.node_type !== 'Set Variables' && n.node_type !== 'Gift') {
+                // If we found a visible node (General, If-Else, Gift), it's our structural target!
+                if (n.node_type !== 'Set Variables') {
                     targets.push(currId);
                     break;
                 }
                 
-                // If it's a hidden node, pass right through it to find the real target
+                // If it's a hidden node (Set Variables), pass right through it to find the real target
                 currId = n.Next;
                 safety++;
             }
@@ -1536,6 +1665,31 @@ const drawViewport = () => {
             ctx.textBaseline = 'middle';
             ctx.fillText('?', cx, cy);
 
+        } else if (node.node_type === 'Gift') {
+            // 🎁 RENDER GIFT NODE (Gold rectangle with gift icon)
+            ctx.fillStyle = isCurrentLocation ? 'rgba(245, 158, 11, 0.9)' : 'rgba(245, 158, 11, 0.7)'; // Amber/gold
+            ctx.strokeStyle = isCurrentLocation ? '#fbbf24' : '#f59e0b';
+            ctx.lineWidth = isCurrentLocation ? 3 : 2;
+            
+            ctx.beginPath();
+            ctx.roundRect(node.x, node.y, nw, nh, 8);
+            ctx.fill();
+            ctx.stroke();
+
+            // Draw a gift icon in the top-left corner
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 16px Inter, sans-serif';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillText('🎁', node.x + 5, node.y + 5);
+
+            // Draw node name (centered)
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '600 14px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(node.Node_name || `Gift ${node.index}`, cx, cy);
+
         } else {
             // 🟩 RENDER STANDARD NODE (Rectangle)
             ctx.fillStyle = isCurrentLocation ? 'rgba(59, 130, 246, 0.9)' : 'rgba(15, 23, 42, 0.9)'; 
@@ -1599,6 +1753,17 @@ onUnmounted(() => {
 // ================= ASSET PRELOADER ENGINE =================
 const isEngineLoading = ref(false)
 let backgroundPreloadPromise = Promise.resolve()
+
+watch(currentGiftReward, (newVal) => {
+    if (newVal && newVal.pixelData) {
+        nextTick(() => {
+            const canvas = document.querySelector('.gift-pixel-art');
+            if (canvas) {
+                drawMiniPixelArt(canvas, newVal.pixelData);
+            }
+        });
+    }
+}, { immediate: true });
 
 // Extracts all image, video, and audio URLs from a specific node
 const extractNodeAssets = (node) => {
@@ -1731,9 +1896,10 @@ const preloadUrls = (urls) => {
                         ⏸️ Pause / Exit
                     </button>
 
-                    <div class="player-container" @click="advanceScene"
-                        :key="`node-${currentNode?.index}-scene-${currentSceneIndex}`"
-                        :style="{
+                    <div class="player-container"  
+                         @click="!showGiftReward && advanceScene()"
+                         :key="`node-${currentNode?.index}-scene-${currentSceneIndex}`"
+                         :style="{
                             position: 'absolute',
                             left: '50%',
                             top: '50%',
@@ -1743,9 +1909,6 @@ const preloadUrls = (urls) => {
                             backgroundColor: currentSceneBg,
                             cursor: isBackgroundFading || isSceneExiting ? 'wait' : 'pointer',
                             overflow: 'hidden',
-                            /* If isSceneExiting is true, play fade out. 
-                            Otherwise, play fade in. 
-                            */
                             animation: isSceneExiting ? 'sceneBgFadeOut 1s forwards' : 'sceneBgFadeIn 1s ease-in-out forwards'
                         }"
                     >
@@ -1926,7 +2089,40 @@ const preloadUrls = (urls) => {
                             </template>
                         </template>
                     </div>
-                    
+                    <transition name="gift-reward">
+                      <div v-if="showGiftReward && currentGiftReward" 
+                           class="gift-reward-overlay" 
+                           @click.stop="continueAfterGift">
+                        <div class="gift-reward-container" :class="giftRewardAnimation" @click.stop>
+                          <!-- Halo effect behind the pixel art -->
+                          <div class="gift-halo"></div>
+                          
+                          <!-- Pixel Art Canvas -->
+                          <canvas 
+                            ref="giftPixelCanvas"
+                            width="128" 
+                            height="128" 
+                            class="gift-pixel-art"
+                          ></canvas>
+                          
+                          <!-- Gift Title -->
+                          <div class="gift-title" :style="{ fontFamily: currentGiftReward.giftFont || 'sans-serif' }">
+                            {{ giftRewardType === 'pfp' ? '✨ NEW PFP:' : '🏆 NEW BADGE:' }}
+                          </div>
+                          
+                          <!-- Gift Name -->
+                          <div class="gift-name" :style="{ fontFamily: currentGiftReward.giftFont || 'sans-serif' }">
+                            {{ currentGiftReward.giftName }}
+                          </div>
+                          
+                          <!-- Click to continue prompt - make entire area clickable -->
+                          <div class="gift-continue-prompt">
+                            <span class="continue-text">▼ Click anywhere to continue ▼</span>
+                            <div class="pulse-dot"></div>
+                          </div>
+                        </div>
+                      </div>
+                    </transition>
                 </div>
                 <div v-show="!isPlaying" style="display: flex; flex-direction: column; width: 100%; height: 100%;">
                     <div class="workspace-header">
@@ -2133,6 +2329,7 @@ const preloadUrls = (urls) => {
     <div class="spinner"></div>
     <h2 class="loading-text">Loading Assets...</h2>
   </div>
+  
 </template>
 
 <style scoped>
@@ -3276,6 +3473,257 @@ const preloadUrls = (urls) => {
 .social-btn.facebook { background: #1877F2; }
 .social-btn.twitter { background: #000000; border: 1px solid #333; }
 .social-btn.reddit { background: #FF4500; }
+/* ================= GIFT REWARD POPUP STYLES ================= */
+.gift-reward-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  animation: overlayFadeIn 0.5s ease-out;
+}
+
+.gift-reward-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 60px;
+  background: linear-gradient(135deg, #1e293b, #0f172a);
+  border: 2px solid rgba(255, 215, 0, 0.3);
+  border-radius: 32px;
+  box-shadow: 
+    0 20px 40px rgba(0, 0, 0, 0.8),
+    0 0 30px rgba(255, 215, 0, 0.3),
+    inset 0 0 30px rgba(255, 215, 0, 0.1);
+  transform-origin: center;
+  transition: all 0.3s ease;
+}
+
+/* Floating up and down animation */
+.gift-reward-container.float-up {
+  animation: floatUpDown 2s ease-in-out infinite;
+}
+
+/* Fade out animation when continuing */
+.gift-reward-container.fade-out {
+  animation: fadeOutGift 0.5s forwards !important;
+}
+
+/* Halo effect behind pixel art */
+.gift-halo {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 180px;
+  height: 180px;
+  background: radial-gradient(circle, 
+    rgba(255, 215, 0, 0.4) 0%,
+    rgba(255, 215, 0, 0.2) 30%,
+    rgba(255, 215, 0, 0.1) 50%,
+    transparent 70%
+  );
+  border-radius: 50%;
+  filter: blur(5px);
+  animation: haloPulse 2s ease-in-out infinite;
+  z-index: 1;
+}
+
+.gift-pixel-art {
+  width: 128px;
+  height: 128px;
+  image-rendering: pixelated;
+  background: #000;
+  border-radius: 16px;
+  box-shadow: 
+    0 10px 30px rgba(0, 0, 0, 0.5),
+    0 0 0 4px rgba(255, 215, 0, 0.3),
+    inset 0 0 10px rgba(255, 215, 0, 0.2);
+  margin-bottom: 20px;
+  z-index: 2;
+  transform: scale(1);
+  transition: transform 0.3s ease;
+}
+
+.gift-pixel-art:hover {
+  transform: scale(1.05);
+}
+
+.gift-title {
+  font-size: 1.2rem;
+  font-weight: bold;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  background: linear-gradient(135deg, #ffd700, #ffb347);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 8px;
+  z-index: 2;
+  text-shadow: 0 2px 10px rgba(255, 215, 0, 0.3);
+}
+
+.gift-name {
+  font-size: 2rem;
+  font-weight: bold;
+  color: #fff;
+  text-align: center;
+  margin-bottom: 30px;
+  z-index: 2;
+  text-shadow: 
+    0 2px 10px rgba(255, 215, 0, 0.5),
+    0 0 20px rgba(255, 215, 0, 0.3);
+  letter-spacing: 1px;
+}
+
+.gift-continue-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  z-index: 2;
+}
+
+.continue-text {
+  color: #94a3b8;
+  font-size: 0.9rem;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  animation: textPulse 2s ease-in-out infinite;
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  background: #ffd700;
+  border-radius: 50%;
+  animation: dotPulse 1.5s ease-in-out infinite;
+  box-shadow: 0 0 15px #ffd700;
+}
+
+/* ================= GIFT REWARD ANIMATIONS ================= */
+@keyframes floatUpDown {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-20px) scale(1.02);
+  }
+}
+
+@keyframes fadeOutGift {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+
+@keyframes overlayFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes haloPulse {
+  0%, 100% {
+    opacity: 0.5;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: translate(-50%, -50%) scale(1.2);
+  }
+}
+
+@keyframes textPulse {
+  0%, 100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes dotPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1.5);
+    opacity: 1;
+  }
+}
+
+/* ================= GIFT REWARD TRANSITIONS ================= */
+.gift-reward-enter-active {
+  animation: overlayFadeIn 0.5s ease-out;
+}
+
+.gift-reward-enter-active .gift-reward-container {
+  animation: floatUpDown 2s ease-in-out infinite;
+}
+
+.gift-reward-leave-active {
+  animation: overlayFadeIn 0.3s reverse;
+}
+
+.gift-reward-leave-active .gift-reward-container {
+  animation: fadeOutGift 0.3s forwards !important;
+}
+
+/* Responsive adjustments */
+@media screen and (max-width: 768px) {
+  .gift-reward-container {
+    padding: 30px 40px;
+    max-width: 90%;
+  }
+  
+  .gift-pixel-art {
+    width: 96px;
+    height: 96px;
+  }
+  
+  .gift-title {
+    font-size: 1rem;
+  }
+  
+  .gift-name {
+    font-size: 1.5rem;
+  }
+}
+
+@media screen and (max-height: 600px) {
+  .gift-reward-container {
+    padding: 20px 30px;
+  }
+  
+  .gift-pixel-art {
+    width: 80px;
+    height: 80px;
+    margin-bottom: 10px;
+  }
+  
+  .gift-name {
+    margin-bottom: 15px;
+    font-size: 1.2rem;
+  }
+}
 </style>
 <style>
 /* ================= GLOBAL KEYFRAMES (UNSCOPED) ================= */
@@ -3351,5 +3799,33 @@ const preloadUrls = (urls) => {
     0% { width: 100%; background-color: #4ade80; } /* Neon Green */
     50% { background-color: #facc15; } /* Warning Yellow */
     100% { width: 0%; background-color: #ef4444; } /* Critical Red */
+}
+@keyframes floatUpDown {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-20px) scale(1.02);
+  }
+}
+
+@keyframes fadeOutGift {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+
+@keyframes overlayFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 </style>
