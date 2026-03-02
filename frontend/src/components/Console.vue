@@ -59,6 +59,153 @@ const demoLimitMessage = ref('')
 const showPurchasePopup = ref(false)
 const purchaseMessage = ref('')
 
+const showPurchaseModal = ref(false)
+const selectedGameForPurchase = ref(null)
+const isProcessingPayment = ref(false)
+const paymentError = ref('')
+const purchasedGames = ref([])
+
+// Load user's purchased games on mount
+const fetchPurchasedGames = async () => {
+  try {
+    const res = await fetch('http://localhost:5000/payments/my-purchases', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (res.ok) {
+      purchasedGames.value = await res.json();
+    }
+  } catch (err) {
+    console.error("Failed to fetch purchases:", err);
+  }
+}
+
+// Check if user owns current game
+const hasPurchasedCurrentGame = computed(() => {
+  if (!activePostId.value) return false;
+  return purchasedGames.value.some(p => p.gameId === activePostId.value);
+});
+
+// Open purchase modal
+const openPurchaseModal = (game) => {
+  selectedGameForPurchase.value = game;
+  showPurchaseModal.value = true;
+  paymentError.value = '';
+}
+
+// Close purchase modal
+const closePurchaseModal = () => {
+  showPurchaseModal.value = false;
+  selectedGameForPurchase.value = null;
+  isProcessingPayment.value = false;
+  paymentError.value = '';
+}
+
+// Initialize Razorpay payment
+const initiatePurchase = async () => {
+  if (!selectedGameForPurchase.value || isProcessingPayment.value) return;
+  
+  isProcessingPayment.value = true;
+  paymentError.value = '';
+
+  try {
+    // 1. Create order on backend
+    const orderRes = await fetch('http://localhost:5000/payments/create-order', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ gameId: selectedGameForPurchase.value._id })
+    });
+
+    const orderData = await orderRes.json();
+    
+    if (!orderRes.ok) {
+      if (orderData.alreadyOwned) {
+        alert("You already own this game!");
+        closePurchaseModal();
+        // Refresh purchases
+        await fetchPurchasedGames();
+        return;
+      }
+      throw new Error(orderData.message || 'Failed to create order');
+    }
+
+    console.log("Order created:", orderData);
+
+    // 2. Configure Razorpay options
+    const options = {
+      key: orderData.order.key, // Razorpay Key ID
+      amount: orderData.order.amount,
+      currency: orderData.order.currency,
+      name: selectedGameForPurchase.value.name,
+      description: `Purchase ${selectedGameForPurchase.value.name}`,
+      image: selectedGameForPurchase.value.thumbnail || 'https://yourdomain.com/logo.png',
+      order_id: orderData.order.id,
+      handler: async (response) => {
+        console.log("Payment successful:", response);
+        
+        // 3. Verify payment on backend
+        const verifyRes = await fetch('http://localhost:5000/payments/verify', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature,
+            gameId: selectedGameForPurchase.value._id
+          })
+        });
+
+        const verifyData = await verifyRes.json();
+        
+        if (verifyData.success) {
+          // 4. Success! Refresh purchases and show success message
+          await fetchPurchasedGames();
+          alert("🎉 Purchase successful! You now own this game.");
+          closePurchaseModal();
+        } else {
+          throw new Error(verifyData.message || 'Payment verification failed');
+        }
+      },
+      prefill: {
+        name: "", // You can fetch from user profile
+        email: "",
+        contact: ""
+      },
+      theme: {
+        color: "#3b82f6" // Your brand color
+      },
+      modal: {
+        ondismiss: () => {
+          console.log("Payment modal closed");
+          isProcessingPayment.value = false;
+        }
+      }
+    };
+
+    // 4. Open Razorpay checkout
+    const razorpayInstance = new window.Razorpay(options);
+    razorpayInstance.open();
+
+  } catch (err) {
+    console.error("Purchase failed:", err);
+    paymentError.value = err.message || "Failed to initiate purchase. Please try again.";
+    isProcessingPayment.value = false;
+  }
+};
+
+// Call this on mount
+onMounted(() => {
+  fetchConsole();
+  fetchPurchasedGames(); // Add this
+  window.addEventListener('keydown', handleKeyDown);
+  document.addEventListener('fullscreenchange', handleFullscreenChange);
+});
+
 const startOptionTimer = (comp) => {
     // Prevent starting if already running or if the user already clicked
     if (activeOptionTimers.value[comp.id] || comp.isSubmitted) return;
@@ -135,7 +282,7 @@ const navigateToNode = (targetNodeId) => {
         
         if (!nextNode) {
             console.warn("Dead end reached or node missing:", currentId);
-            isPlaying.value = false; // Dead end reached
+            isPlaying.value = false;
             return;
         }
 
@@ -143,10 +290,10 @@ const navigateToNode = (targetNodeId) => {
 
         if (inst) {
             if (!inst.visitedNodes) inst.visitedNodes = [];
-            // Prevent pushing duplicate sequential nodes
+            // Only track visited nodes for history - doesn't affect gameplay
             if (inst.visitedNodes[inst.visitedNodes.length - 1] !== nextNode.index) {
                 inst.visitedNodes.push(nextNode.index);
-                Console_Status.value = { ...Console_Status.value }; // Save to Session Storage
+                Console_Status.value = { ...Console_Status.value };
             }
         }
 
@@ -388,7 +535,6 @@ const selectOption = (comp, opt) => {
 
     comp.isSubmitted = true; 
     
-    // 🚀 NEW: Clean up and stop the JS timers if the user successfully clicked in time
     if (activeOptionTimers.value[comp.id]) {
         clearTimeout(activeOptionTimers.value[comp.id]);
         delete activeOptionTimers.value[comp.id];
@@ -398,7 +544,7 @@ const selectOption = (comp, opt) => {
         delete optionTimerIntervals.value[comp.id];
     }
 
-    isSceneExiting.value = true; // Trigger fade out
+    isSceneExiting.value = true;
 
     setTimeout(() => {
         isSceneExiting.value = false;
@@ -407,18 +553,18 @@ const selectOption = (comp, opt) => {
         const nodeOptionConfig = nodeOptions.find(o => String(o.id) === String(opt.id));
         const nextId = nodeOptionConfig ? nodeOptionConfig.next : null;
         
-        // 🚨 NEW: Check if this navigation would exceed demo limit
         const game = filteredGames.value.find(g => g._id === activePostId.value)
         const inst = gameInstances.value.find(i => i.id === activeInstanceId.value)
         
-        if (game?.monetization?.isPaid && game?.monetization?.hasDemo && inst) {
-            // Count current General nodes (not including the one we're about to go to)
+        // 🚀 FIX: Skip demo limit check if user owns the game
+        const isOwned = hasPurchasedCurrentGame.value;
+        
+        if (!isOwned && game?.monetization?.isPaid && game?.monetization?.hasDemo && inst) {
             const currentCount = countVisitedGeneralNodes(inst)
             const limit = game.monetization.demoNodeLimit
             
             console.log(`Demo node check: ${currentCount}/${limit}, next node: ${nextId}`)
             
-            // If we're at the limit, show popup and don't navigate
             if (currentCount >= limit) {
                 console.log(`Demo limit reached: ${currentCount}/${limit}`)
                 showDemoLimitPopup.value = true
@@ -656,11 +802,13 @@ const advanceScene = () => {
                 return;
             }
             
-            // 🚨 NEW: Check demo limit before navigating to next node
             const game = filteredGames.value.find(g => g._id === activePostId.value)
             const inst = gameInstances.value.find(i => i.id === activeInstanceId.value)
             
-            if (game?.monetization?.isPaid && game?.monetization?.hasDemo && inst) {
+            // 🚀 FIX: Skip demo limit check if user owns the game
+            const isOwned = hasPurchasedCurrentGame.value;
+            
+            if (!isOwned && game?.monetization?.isPaid && game?.monetization?.hasDemo && inst) {
                 const currentCount = countVisitedGeneralNodes(inst)
                 const limit = game.monetization.demoNodeLimit
                 
@@ -1116,7 +1264,8 @@ const addGameInstance = async () => {
         id: newId,
         name: `Instance ${gameInstances.value.length + 1}`,
         variables: initialVars,
-        visitedNodes: [] // 🚀 NEW: Track discovered nodes independently
+        visitedNodes: [], // Actual traversal history
+        currentLocation: null // 🚨 NEW: Temporary location when clicking on map
     })
     
     isWorkspaceGameLoaded.value = true
@@ -1378,44 +1527,150 @@ const activeGameGiftCounts = computed(() => {
 /* ============================================================== */
 
 const startGame = async (game) => {
-    // NEW: Check if it's a paid game with no demo - show popup but don't start
-    if (game.monetization?.isPaid && !game.monetization?.hasDemo) {
-        console.log("Paid game with no demo - showing purchase popup");
-        showPurchasePopup.value = true;
-        purchaseMessage.value = `🔒 Purchase Required\n\n"${game.name}" is a paid game with no demo.\nPurchase the full version to play.`;
-        trackAction("START_DENIED_PAID_NO_DEMO", { gameId: game._id })
+    // 🚀 NEW: First check if user owns the game
+    if (hasPurchasedCurrentGame.value) {
+        console.log("User owns this game - granting full access");
+        trackAction("GAME_STARTED_OWNED", { gameId: game._id, instanceId: activeInstanceId.value })
+        isEngineLoading.value = true;
+        
+        try {
+            await backgroundPreloadPromise;
+            if (!activeEngineData.value || activeEngineData.value._id !== game._id) {
+                await loadGamePreview(game);
+            }
+            
+            const state = activeEngineData.value.canvasState;
+            const inst = gameInstances.value.find(i => i.id === activeInstanceId.value);
+            
+            // 🚀 FIX: Determine starting node
+            let targetNodeId = null;
+            
+            if (inst) {
+                // PRIORITY 1: Use currentLocation if set (user clicked on map)
+                if (inst.currentLocation !== null && inst.currentLocation !== undefined) {
+                    targetNodeId = inst.currentLocation;
+                    console.log(`Starting from map-selected node: ${targetNodeId}`);
+                    
+                    // ✅ Important: After using currentLocation, we should add it to visitedNodes
+                    // if it's not already there, to maintain history
+                    if (!inst.visitedNodes.includes(targetNodeId)) {
+                        inst.visitedNodes.push(targetNodeId);
+                    }
+                    
+                    // Clear currentLocation since we're now using it
+                    inst.currentLocation = null;
+                }
+                // PRIORITY 2: Use last visited node if no currentLocation
+                else if (inst.visitedNodes && inst.visitedNodes.length > 0) {
+                    targetNodeId = inst.visitedNodes[inst.visitedNodes.length - 1];
+                    console.log(`Resuming from last visited node: ${targetNodeId}`);
+                }
+            }
+            
+            // PRIORITY 3: Fallback to root node if nothing else
+            if (!targetNodeId) {
+                targetNodeId = state?.rootNodeId;
+                console.log(`Starting from root node: ${targetNodeId}`);
+            }
+            
+            const startNode = state?.nodes?.find(n => n.index === targetNodeId);
+            
+            if (startNode) {
+                currentNode.value = startNode;
+                
+                if (inst) {
+                    if (!inst.visitedNodes) inst.visitedNodes = [];
+                    
+                    // Ensure start node is in visited nodes (it should be by now)
+                    if (!inst.visitedNodes.includes(startNode.index)) {
+                        inst.visitedNodes.push(startNode.index);
+                        Console_Status.value = { ...Console_Status.value };
+                    }
+                }
+                
+                const activeNodeUrls = extractNodeAssets(currentNode.value);
+                await preloadUrls(activeNodeUrls);
+
+                currentSceneIndex.value = 0;
+                isPlaying.value = true;
+                isEngineRunning.value = true;
+                if (inst && !inst.variables) {
+                    inst.variables = JSON.parse(JSON.stringify(activeEngineData.value.canvasState.globalVariables || []));
+                }
+                startScene();
+            }
+        } catch (error) {
+            console.error("Failed to start game:", error);
+            alert("Failed to start game. Please try again.");
+        } finally {
+            isEngineLoading.value = false;
+        }
         return;
     }
 
-    // Original demo check (for paid games with demo)
-    if (game.monetization?.isPaid && !game.monetization?.hasDemo) {
-        alert("🔒 Purchase Required: This game is paid and has no demo.");
-        trackAction("START_DENIED_PAID", { gameId: game._id })
-        return;
+    // Original logic for non-owned games - also needs the same fix!
+    if (game.monetization?.isPaid) {
+        if (!game.monetization?.hasDemo) {
+            console.log("Paid game with no demo - showing purchase popup");
+            showPurchasePopup.value = true;
+            purchaseMessage.value = `🔒 Purchase Required\n\n"${game.name}" is a paid game with no demo.\nPurchase the full version to play.`;
+            trackAction("START_DENIED_PAID_NO_DEMO", { gameId: game._id })
+            return;
+        }
+        
+        const inst = gameInstances.value.find(i => i.id === activeInstanceId.value);
+        if (inst) {
+            const currentCount = countVisitedGeneralNodes(inst);
+            const limit = game.monetization.demoNodeLimit;
+            
+            if (currentCount >= limit) {
+                console.log(`Demo limit reached: ${currentCount}/${limit}`);
+                showDemoLimitPopup.value = true;
+                demoLimitMessage.value = `Demo Limit Reached\nYou've played ${currentCount} of ${limit} nodes.\nPurchase full version to continue.`;
+                return;
+            }
+        }
     }
 
+    // Free game or paid game with demo under limit - start normally
     trackAction("GAME_STARTED", { gameId: game._id, instanceId: activeInstanceId.value })
-    isEngineLoading.value = true; 
+    isEngineLoading.value = true;
 
     try {
-        // 1. Wait for the background preloader to finish its job!
         await backgroundPreloadPromise;
 
-        // 2. Ensure we have the engine data loaded just in case
         if (!activeEngineData.value || activeEngineData.value._id !== game._id) {
             await loadGamePreview(game);
         }
         
-        // Extract Canvas State
         const state = activeEngineData.value.canvasState;
-        
-        // 🚀 FIX: RESUME FROM LAST SAVED NODE INSTEAD OF ROOT NODE
         const inst = gameInstances.value.find(i => i.id === activeInstanceId.value);
-        let targetNodeId = state?.rootNodeId;
-
-        // If this instance already has history, RESUME from the last visited node!
-        if (inst && inst.visitedNodes && inst.visitedNodes.length > 0) {
-            targetNodeId = inst.visitedNodes[inst.visitedNodes.length - 1];
+        
+        // 🚀 FIX: Same priority system for non-owned games
+        let targetNodeId = null;
+        
+        if (inst) {
+            // PRIORITY 1: Use currentLocation if set
+            if (inst.currentLocation !== null && inst.currentLocation !== undefined) {
+                targetNodeId = inst.currentLocation;
+                console.log(`Starting from map-selected node: ${targetNodeId}`);
+                
+                if (!inst.visitedNodes.includes(targetNodeId)) {
+                    inst.visitedNodes.push(targetNodeId);
+                }
+                inst.currentLocation = null;
+            }
+            // PRIORITY 2: Use last visited node
+            else if (inst.visitedNodes && inst.visitedNodes.length > 0) {
+                targetNodeId = inst.visitedNodes[inst.visitedNodes.length - 1];
+                console.log(`Resuming from last visited node: ${targetNodeId}`);
+            }
+        }
+        
+        // PRIORITY 3: Fallback to root node
+        if (!targetNodeId) {
+            targetNodeId = state?.rootNodeId;
+            console.log(`Starting from root node: ${targetNodeId}`);
         }
         
         const startNode = state?.nodes?.find(n => n.index === targetNodeId);
@@ -1424,36 +1679,19 @@ const startGame = async (game) => {
             currentNode.value = startNode;
             
             if (inst) {
-                if (!inst.visitedNodes) inst.visitedNodes = []; // Backwards compatibility
+                if (!inst.visitedNodes) inst.visitedNodes = [];
                 
-                // 🚨 NEW: Check demo limit before adding root node
-                if (game.monetization?.isPaid && game.monetization?.hasDemo) {
-                    // Count current General nodes (excluding the one we're about to add)
-                    const currentCount = countVisitedGeneralNodes(inst)
-                    const limit = game.monetization.demoNodeLimit
-                    
-                    // If we're about to exceed limit, show popup and don't start
-                    if (currentCount >= limit) {
-                        console.log(`Demo limit reached: ${currentCount}/${limit}`)
-                        showDemoLimitPopup.value = true
-                        demoLimitMessage.value = `Demo Limit Reached\nYou've played ${currentCount} of ${limit} nodes.\nPurchase full version to continue.`
-                        isEngineLoading.value = false
-                        return
-                    }
-                }
-                
-                if (inst.visitedNodes[inst.visitedNodes.length - 1] !== startNode.index) {
+                if (!inst.visitedNodes.includes(startNode.index)) {
                     inst.visitedNodes.push(startNode.index);
-                    Console_Status.value = { ...Console_Status.value }; // Save to Session Storage
+                    Console_Status.value = { ...Console_Status.value };
                 }
             }
             
-            // 3. Preload the specific node we are about to see
             const activeNodeUrls = extractNodeAssets(currentNode.value);
             await preloadUrls(activeNodeUrls);
 
-            currentSceneIndex.value = 0; // Start at the first scene
-            isPlaying.value = true; // Launch the player overlay
+            currentSceneIndex.value = 0;
+            isPlaying.value = true;
             isEngineRunning.value = true;
             if (inst && !inst.variables) {
                 inst.variables = JSON.parse(JSON.stringify(activeEngineData.value.canvasState.globalVariables || []));
@@ -1464,9 +1702,9 @@ const startGame = async (game) => {
         }
     } catch (error) {
         console.error("Failed to start game:", error);
+        alert("Failed to start game. Please try again.");
     } finally {
-        // 4. Hide the loading screen, revealing the perfectly loaded scene
-        isEngineLoading.value = false; 
+        isEngineLoading.value = false;
     }
 }
 
@@ -1523,11 +1761,9 @@ const handleCanvasClick = (e) => {
     const canvas = viewportCanvasRef.value;
     const rect = canvas.getBoundingClientRect();
     
-    // 1. Get Mouse position relative to the screen
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    // 2. Convert Screen Coordinates to World Coordinates (Reverse Pan & Zoom)
     const worldX = (mouseX - viewportOffset.value.x) / viewportScale.value;
     const worldY = (mouseY - viewportOffset.value.y) / viewportScale.value;
 
@@ -1540,13 +1776,11 @@ const handleCanvasClick = (e) => {
 
     let clickedNodeId = null;
 
-    // Only allow clicking on VISIBLE nodes they have ALREADY visited (including Gift nodes)
     const visibleVisitedNodes = activeInst.visitedNodes.filter(nodeId => {
         const n = nodes.find(node => node.index === nodeId);
-        return n && n.node_type !== 'Set Variables'; // Gift nodes are now clickable
+        return n && n.node_type !== 'Set Variables';
     });
 
-    // 3. Search backwards through history to see if the mouse touches any node
     for (let i = visibleVisitedNodes.length - 1; i >= 0; i--) {
         const nodeId = visibleVisitedNodes[i];
         const node = nodes.find(n => n.index === nodeId);
@@ -1555,7 +1789,6 @@ const handleCanvasClick = (e) => {
         let isMatch = false;
 
         if (node.node_type === 'If-Else') {
-            // Check Diamond Bounding Box
             const cx = node.x + nw / 2;
             const cy = node.y + nh / 2;
             const radius = 30; 
@@ -1563,7 +1796,6 @@ const handleCanvasClick = (e) => {
                 isMatch = true;
             }
         } else {
-            // Check Rectangle Bounding Box (works for General and Gift nodes)
             if (worldX >= node.x && worldX <= node.x + nw && worldY >= node.y && worldY <= node.y + nh) {
                 isMatch = true;
             }
@@ -1575,14 +1807,22 @@ const handleCanvasClick = (e) => {
         }
     }
 
-    // 4. If a node was clicked, move the player there WITHOUT deleting history!
     if (clickedNodeId !== null) {
-        // Only update if they aren't already standing on this exact node
         if (activeInst.visitedNodes[activeInst.visitedNodes.length - 1] !== clickedNodeId) {
-            // Push the clicked node to the front of the timeline so it becomes the new "Current Location"
-            activeInst.visitedNodes.push(clickedNodeId);
-            Console_Status.value = { ...Console_Status.value }; // Save the jump to LocalStorage
-            drawViewport(); // Redraw the map instantly to move the "📍 CURRENT" marker
+            // 🚀 Set currentLocation to the clicked node
+            activeInst.currentLocation = clickedNodeId;
+            Console_Status.value = { ...Console_Status.value }; // Save to LocalStorage
+            drawViewport(); // Redraw the map to show the new "📍 CURRENT" marker
+            
+            console.log(`📍 Current location set to node: ${clickedNodeId}`);
+        } else {
+            // If clicking on the current node, clear the temporary location
+            if (activeInst.currentLocation !== null) {
+                activeInst.currentLocation = null;
+                Console_Status.value = { ...Console_Status.value };
+                drawViewport();
+                console.log(`📍 Cleared temporary location, returning to last visited node`);
+            }
         }
     }
 }
@@ -1780,10 +2020,16 @@ const drawViewport = () => {
 
         // Trace backward to find the absolute latest VISIBLE node the player is standing on
         let lastVisibleId = null;
-        for (let i = rawVisitedSequence.length - 1; i >= 0; i--) {
-            if (visibleVisitedNodes.has(rawVisitedSequence[i])) {
-                lastVisibleId = rawVisitedSequence[i];
-                break;
+        if (activeInst.currentLocation !== null && activeInst.currentLocation !== undefined) {
+            // If we have a temporary location from map click, use that
+            lastVisibleId = activeInst.currentLocation;
+        } else {
+            // Otherwise use the actual last visited node
+            for (let i = rawVisitedSequence.length - 1; i >= 0; i--) {
+                if (visibleVisitedNodes.has(rawVisitedSequence[i])) {
+                    lastVisibleId = rawVisitedSequence[i];
+                    break;
+                }
             }
         }
         const isCurrentLocation = (nodeId === lastVisibleId);
@@ -2277,21 +2523,31 @@ const preloadUrls = (urls) => {
                         <button class="close-modal-btn" @click="closeGameModal(false)">✕ Close</button>
                         <div class="workspace-header-title">Console Workspace</div>
                         <div class="workspace-header-actions">
-                            <!-- Purchase button for paid games -->
-                            <button v-if="isCurrentGamePaid" class="purchase-btn" @click="showPurchasePopup = true">
+                            <!-- Show owned badge if purchased -->
+                            <div v-if="isCurrentGamePaid && hasPurchasedCurrentGame" class="owned-badge">
+                                ✅ Owned
+                            </div>
+                            
+                            <!-- Show purchase button if not owned -->
+                            <button 
+                                v-else-if="isCurrentGamePaid && !hasPurchasedCurrentGame" 
+                                class="purchase-btn" 
+                                @click="openPurchaseModal(filteredGames.find(g => g._id === activePostId))"
+                            >
                                 💎 Purchase
                             </button>
-                            <!-- Start button - disabled for paid games with no demo -->
+                            
+                            <!-- Start button - disabled for paid games with no demo unless owned -->
                             <button 
                                 class="start-game-btn" 
-                                :disabled="!activeInstanceId || isCurrentGamePaidNoDemo"
-                                :class="{ 'disabled-paid': isCurrentGamePaidNoDemo }"
+                                :disabled="!activeInstanceId || (isCurrentGamePaidNoDemo && !hasPurchasedCurrentGame)"
+                                :class="{ 'disabled-paid': isCurrentGamePaidNoDemo && !hasPurchasedCurrentGame }"
                                 @click="startGame(filteredGames.find(g => g._id === activePostId))"
-                                :title="isCurrentGamePaidNoDemo ? 'Purchase required to play' : ''"
+                                :title="isCurrentGamePaidNoDemo && !hasPurchasedCurrentGame ? 'Purchase required to play' : ''"
                             >
                                 ▶ Start
                             </button>
-                        </div>       
+                            </div>      
                     </div>
 
                     <div class="workspace-grid">
@@ -2510,6 +2766,77 @@ const preloadUrls = (urls) => {
       </div>
     </div>
   </transition>
+  <transition name="fade">
+  <div v-if="showPurchaseModal" class="purchase-modal-overlay" @click="closePurchaseModal">
+    <div class="purchase-modal" @click.stop>
+      
+      <!-- Header -->
+      <div class="purchase-modal-header">
+        <h2>Complete Purchase</h2>
+        <button class="close-modal-btn" @click="closePurchaseModal">✕</button>
+      </div>
+
+      <!-- Game Info -->
+      <div class="purchase-game-info" v-if="selectedGameForPurchase">
+        <div class="purchase-game-thumb" 
+             :style="{ backgroundImage: `url(${selectedGameForPurchase.thumbnail || '/placeholder.jpg'})` }">
+        </div>
+        <div class="purchase-game-details">
+          <h3>{{ selectedGameForPurchase.name }}</h3>
+          <p class="game-author">by {{ selectedGameForPurchase.authorName }}</p>
+          <div class="game-price">
+            <span class="price-currency">{{ selectedGameForPurchase.monetization?.priceCurrency === 'INR' ? '₹' : '$' }}</span>
+            <span class="price-amount">{{ selectedGameForPurchase.monetization?.price?.toFixed(2) || '0.00' }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Payment Methods Info -->
+      <div class="payment-info">
+        <div class="payment-methods">
+          <span class="payment-badge">💳 Cards</span>
+          <span class="payment-badge">📱 UPI</span>
+          <span class="payment-badge">🏦 NetBanking</span>
+          <span class="payment-badge">🪙 Wallets</span>
+        </div>
+        <p class="payment-secure">🔒 Secure payment powered by Razorpay</p>
+      </div>
+
+      <!-- Error Message -->
+      <div v-if="paymentError" class="payment-error">
+        ⚠️ {{ paymentError }}
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="purchase-actions">
+        <button class="cancel-btn" @click="closePurchaseModal" :disabled="isProcessingPayment">
+          Cancel
+        </button>
+        <button 
+          class="pay-now-btn" 
+          @click="initiatePurchase" 
+          :disabled="isProcessingPayment"
+        >
+          <span v-if="!isProcessingPayment">💎 Pay Now</span>
+          <span v-else class="processing-spinner">
+            <span class="spinner-small"></span>
+            Processing...
+          </span>
+        </button>
+      </div>
+
+      <!-- Test Mode Notice -->
+      <div class="test-mode-notice">
+        <p>🔧 Test Mode - Use these test cards:</p>
+        <div class="test-cards">
+          <div class="test-card">💳 4111 1111 1111 1111</div>
+          <div class="test-card">📅 Any future date | 🔒 Any CVV</div>
+          <div class="test-card">🔑 OTP: 1234</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</transition>
 </template>
 
 <style scoped>
@@ -3917,6 +4244,253 @@ const preloadUrls = (urls) => {
 
 .gift-reward-leave-active .gift-reward-container {
   animation: fadeOutGift 0.3s forwards !important;
+}
+
+.purchase-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(8px);
+  z-index: 10000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: overlayFadeIn 0.3s ease;
+}
+
+.purchase-modal {
+  background: #0f172a;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 24px;
+  width: 90%;
+  max-width: 480px;
+  padding: 30px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  animation: modalSlideUp 0.3s ease;
+}
+
+.purchase-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 25px;
+}
+
+.purchase-modal-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: white;
+  font-weight: 700;
+}
+
+.purchase-game-info {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 25px;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.purchase-game-thumb {
+  width: 80px;
+  height: 80px;
+  border-radius: 12px;
+  background-size: cover;
+  background-position: center;
+  background-color: #1e293b;
+  flex-shrink: 0;
+}
+
+.purchase-game-details {
+  flex: 1;
+}
+
+.purchase-game-details h3 {
+  margin: 0 0 5px 0;
+  font-size: 1.2rem;
+  color: white;
+}
+
+.game-price {
+  margin-top: 10px;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.price-currency {
+  font-size: 1.2rem;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.price-amount {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: #3b82f6;
+  line-height: 1;
+}
+
+.payment-info {
+  margin-bottom: 25px;
+  text-align: center;
+}
+
+.payment-methods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
+.payment-badge {
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: #93c5fd;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.payment-secure {
+  color: #94a3b8;
+  font-size: 0.85rem;
+  margin: 5px 0 0;
+}
+
+.payment-error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.purchase-actions {
+  display: flex;
+  gap: 15px;
+}
+
+.cancel-btn {
+  flex: 1;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+  padding: 14px;
+  border-radius: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cancel-btn:hover:not(:disabled) {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.pay-now-btn {
+  flex: 2;
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  border: none;
+  color: white;
+  padding: 14px;
+  border-radius: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.pay-now-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px rgba(59, 130, 246, 0.5);
+}
+
+.pay-now-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.processing-spinner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spinner-small {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.test-mode-notice {
+  margin-top: 25px;
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.test-mode-notice p {
+  margin: 0 0 10px 0;
+  color: #94a3b8;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.test-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.test-card {
+  color: #cbd5e1;
+  font-size: 0.8rem;
+  padding: 5px 10px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+.owned-badge {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-weight: bold;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+@keyframes modalSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Responsive adjustments */

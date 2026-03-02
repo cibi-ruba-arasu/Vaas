@@ -21,6 +21,8 @@ import axios from "axios";
 import Razorpay from "razorpay";
 import PayoutRecipient from "./schema/PayoutRecipient.js";
 import ConsoleDB from "./schema/Console.js";
+import Purchase from "./schema/Purchase.js";
+
 
 dotenv.config()
 
@@ -1768,6 +1770,233 @@ app.get("/console", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("Console Fetch Error:", err);
     res.status(500).json({ message: "Failed to fetch console" });
+  }
+});
+
+app.post("/payments/create-order", authMiddleware, async (req, res) => {
+  const { gameId } = req.body;
+  const { mongoId } = req.user;
+
+  try {
+    // 1. Get game details
+    const game = await Publish.findById(gameId);
+    if (!game) {
+      return res.status(404).json({ message: "Game not found" });
+    }
+    
+    if (!game.monetization?.isPaid) {
+      return res.status(400).json({ message: "Game is free" });
+    }
+
+    // 2. Check if already purchased
+    const existingPurchase = await Purchase.findOne({
+      userId: mongoId,
+      gameId: gameId,
+      status: 'completed'
+    });
+
+    if (existingPurchase) {
+      return res.status(400).json({ 
+        message: "You already own this game",
+        alreadyOwned: true 
+      });
+    }
+
+    // 3. Calculate amount (convert to smallest currency unit - paise for INR)
+    const amount = Math.round(game.monetization.price * 100);
+
+    // 4. Generate a short, unique receipt (max 40 chars)
+    const shortGameId = gameId.toString().slice(-6);
+    const timestamp = Date.now().toString().slice(-6);
+    const receipt = `rcpt_${shortGameId}_${timestamp}`; // e.g., "rcpt_32d3_2416"
+
+    // 5. Create Razorpay order
+    const options = {
+      amount: amount,
+      currency: game.monetization.priceCurrency || "INR",
+      receipt: receipt,
+      notes: {
+        userId: mongoId.toString(),
+        gameId: gameId.toString(),
+        gameName: game.name.substring(0, 30)
+      }
+    };
+
+    console.log("Creating Razorpay order:", options);
+    const order = await razorpay.orders.create(options);
+    console.log("Order created:", order.id);
+
+    // 6. Create pending purchase record
+    await Purchase.create({
+      userId: mongoId,
+      gameId: gameId,
+      razorpayOrderId: order.id,
+      amount: game.monetization.price,
+      currency: game.monetization.priceCurrency || "INR",
+      status: 'pending'
+    });
+
+    res.json({
+      success: true,
+      order: {
+        id: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        key: process.env.RAZORPAY_KEY_ID
+      },
+      gameDetails: {
+        name: game.name,
+        thumbnail: game.thumbnail,
+        price: game.monetization.price
+      }
+    });
+
+  } catch (err) {
+    console.error("Order Creation Error:", err);
+    
+    // Handle specific Razorpay validation errors
+    if (err.statusCode === 400) {
+      return res.status(400).json({ 
+        message: err.error?.description || "Invalid payment request",
+        details: err.error
+      });
+    }
+    
+    res.status(500).json({ 
+      message: "Failed to create payment order",
+      error: err.message 
+    });
+  }
+});
+
+app.post("/payments/verify", authMiddleware, async (req, res) => {
+  const { 
+    razorpay_order_id, 
+    razorpay_payment_id, 
+    razorpay_signature,
+    gameId 
+  } = req.body;
+  
+  const { mongoId } = req.user;
+
+  try {
+    console.log("Verifying payment:", {
+      orderId: razorpay_order_id,
+      paymentId: razorpay_payment_id,
+      gameId
+    });
+
+    // 1. Verify signature using crypto
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
+    const expectedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(body.toString())
+      .digest("hex");
+
+    const isAuthentic = expectedSignature === razorpay_signature;
+
+    if (!isAuthentic) {
+      console.error("Payment signature verification failed");
+      return res.status(400).json({ 
+        success: false, 
+        message: "Payment verification failed" 
+      });
+    }
+
+    // 2. Update purchase record
+    const purchase = await Purchase.findOneAndUpdate(
+      { 
+        razorpayOrderId: razorpay_order_id,
+        userId: mongoId,
+        gameId: gameId 
+      },
+      {
+        razorpayPaymentId: razorpay_payment_id,
+        razorpaySignature: razorpay_signature,
+        status: 'completed',
+        updatedAt: new Date()
+      },
+      { new: true }
+    );
+
+    if (!purchase) {
+      console.error("Purchase record not found for order:", razorpay_order_id);
+      return res.status(404).json({ message: "Purchase record not found" });
+    }
+
+    // 3. Increment game's purchase count (optional analytics)
+    await Publish.findByIdAndUpdate(gameId, {
+      $inc: { purchases: 1 }
+    });
+
+    console.log("Payment verified successfully for user:", mongoId);
+
+    res.json({
+      success: true,
+      message: "Payment verified successfully",
+      purchase: {
+        gameId: purchase.gameId,
+        amount: purchase.amount,
+        purchasedAt: purchase.purchasedAt
+      }
+    });
+
+  } catch (err) {
+    console.error("Payment Verification Error:", err);
+    res.status(500).json({ 
+      message: "Failed to verify payment",
+      error: err.message 
+    });
+  }
+});
+
+app.get("/payments/check/:gameId", authMiddleware, async (req, res) => {
+  const { gameId } = req.params;
+  const { mongoId } = req.user;
+
+  try {
+    const purchase = await Purchase.findOne({
+      userId: mongoId,
+      gameId: gameId,
+      status: 'completed'
+    });
+
+    res.json({
+      owned: !!purchase,
+      purchase: purchase ? {
+        purchasedAt: purchase.purchasedAt,
+        amount: purchase.amount
+      } : null
+    });
+
+  } catch (err) {
+    console.error("Purchase Check Error:", err);
+    res.status(500).json({ message: "Failed to check purchase status" });
+  }
+});
+
+app.get("/payments/my-purchases", authMiddleware, async (req, res) => {
+  const { mongoId } = req.user;
+
+  try {
+    const purchases = await Purchase.find({ 
+      userId: mongoId, 
+      status: 'completed' 
+    }).populate('gameId', 'name thumbnail authorName monetization');
+
+    res.json(purchases.map(p => ({
+      gameId: p.gameId._id,
+      name: p.gameId.name,
+      thumbnail: p.gameId.thumbnail,
+      authorName: p.gameId.authorName,
+      purchasedAt: p.purchasedAt,
+      amount: p.amount,
+      currency: p.currency
+    })));
+
+  } catch (err) {
+    console.error("Fetch Purchases Error:", err);
+    res.status(500).json({ message: "Failed to fetch purchases" });
   }
 });
 
