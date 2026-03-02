@@ -53,6 +53,12 @@ const giftRewardType = ref('')
 const giftRewardAudio = ref(null)
 const giftRewardAnimation = ref('float-up')
 
+const showDemoLimitPopup = ref(false)
+const demoLimitMessage = ref('')
+
+const showPurchasePopup = ref(false)
+const purchaseMessage = ref('')
+
 const startOptionTimer = (comp) => {
     // Prevent starting if already running or if the user already clicked
     if (activeOptionTimers.value[comp.id] || comp.isSubmitted) return;
@@ -102,6 +108,23 @@ const startOptionTimer = (comp) => {
             selectOption(comp, chosenOpt); // Auto-click it!
         }
     }, totalTime);
+}
+
+const countVisitedGeneralNodes = (instance) => {
+    if (!instance || !instance.visitedNodes || !activeEngineData.value) return 0
+    
+    const nodes = activeEngineData.value.canvasState?.nodes || []
+    let count = 0
+    
+    // Count only General nodes in the visited history
+    instance.visitedNodes.forEach(nodeId => {
+        const node = nodes.find(n => n.index === nodeId)
+        if (node && String(node.node_type || node.Node_type || node.type || node.name || node.Node_name || "").toLowerCase() === 'general') {
+            count++
+        }
+    })
+    
+    return count
 }
 
 const navigateToNode = (targetNodeId) => {
@@ -384,6 +407,26 @@ const selectOption = (comp, opt) => {
         const nodeOptionConfig = nodeOptions.find(o => String(o.id) === String(opt.id));
         const nextId = nodeOptionConfig ? nodeOptionConfig.next : null;
         
+        // 🚨 NEW: Check if this navigation would exceed demo limit
+        const game = filteredGames.value.find(g => g._id === activePostId.value)
+        const inst = gameInstances.value.find(i => i.id === activeInstanceId.value)
+        
+        if (game?.monetization?.isPaid && game?.monetization?.hasDemo && inst) {
+            // Count current General nodes (not including the one we're about to go to)
+            const currentCount = countVisitedGeneralNodes(inst)
+            const limit = game.monetization.demoNodeLimit
+            
+            console.log(`Demo node check: ${currentCount}/${limit}, next node: ${nextId}`)
+            
+            // If we're at the limit, show popup and don't navigate
+            if (currentCount >= limit) {
+                console.log(`Demo limit reached: ${currentCount}/${limit}`)
+                showDemoLimitPopup.value = true
+                demoLimitMessage.value = `Demo Limit Reached\nYou've played ${currentCount} of ${limit} nodes.\nPurchase full version to continue.`
+                return
+            }
+        }
+        
         navigateToNode(nextId);
     }, 1000); 
 }
@@ -612,6 +655,25 @@ const advanceScene = () => {
                 startScene();
                 return;
             }
+            
+            // 🚨 NEW: Check demo limit before navigating to next node
+            const game = filteredGames.value.find(g => g._id === activePostId.value)
+            const inst = gameInstances.value.find(i => i.id === activeInstanceId.value)
+            
+            if (game?.monetization?.isPaid && game?.monetization?.hasDemo && inst) {
+                const currentCount = countVisitedGeneralNodes(inst)
+                const limit = game.monetization.demoNodeLimit
+                
+                console.log(`Advance scene node check: ${currentCount}/${limit}, next: ${currentNode.value.Next}`)
+                
+                if (currentCount >= limit) {
+                    console.log(`Demo limit reached at scene end: ${currentCount}/${limit}`)
+                    showDemoLimitPopup.value = true
+                    demoLimitMessage.value = `Demo Limit Reached\nYou've played ${currentCount} of ${limit} nodes.\nPurchase full version to continue.`
+                    return
+                }
+            }
+            
             navigateToNode(currentNode.value.Next);
             return; 
         }, 1000); 
@@ -638,6 +700,12 @@ const advanceScene = () => {
             }, waitTime);
         }
     }
+}
+
+const closeDemoLimitPopup = () => {
+    showDemoLimitPopup.value = false
+    // Optionally pause the game or exit
+    // isPlaying.value = false
 }
 
 const getAnimationCss = (comp) => {
@@ -1310,7 +1378,16 @@ const activeGameGiftCounts = computed(() => {
 /* ============================================================== */
 
 const startGame = async (game) => {
-    // Prevent unpurchased paid games
+    // NEW: Check if it's a paid game with no demo - show popup but don't start
+    if (game.monetization?.isPaid && !game.monetization?.hasDemo) {
+        console.log("Paid game with no demo - showing purchase popup");
+        showPurchasePopup.value = true;
+        purchaseMessage.value = `🔒 Purchase Required\n\n"${game.name}" is a paid game with no demo.\nPurchase the full version to play.`;
+        trackAction("START_DENIED_PAID_NO_DEMO", { gameId: game._id })
+        return;
+    }
+
+    // Original demo check (for paid games with demo)
     if (game.monetization?.isPaid && !game.monetization?.hasDemo) {
         alert("🔒 Purchase Required: This game is paid and has no demo.");
         trackAction("START_DENIED_PAID", { gameId: game._id })
@@ -1348,6 +1425,23 @@ const startGame = async (game) => {
             
             if (inst) {
                 if (!inst.visitedNodes) inst.visitedNodes = []; // Backwards compatibility
+                
+                // 🚨 NEW: Check demo limit before adding root node
+                if (game.monetization?.isPaid && game.monetization?.hasDemo) {
+                    // Count current General nodes (excluding the one we're about to add)
+                    const currentCount = countVisitedGeneralNodes(inst)
+                    const limit = game.monetization.demoNodeLimit
+                    
+                    // If we're about to exceed limit, show popup and don't start
+                    if (currentCount >= limit) {
+                        console.log(`Demo limit reached: ${currentCount}/${limit}`)
+                        showDemoLimitPopup.value = true
+                        demoLimitMessage.value = `Demo Limit Reached\nYou've played ${currentCount} of ${limit} nodes.\nPurchase full version to continue.`
+                        isEngineLoading.value = false
+                        return
+                    }
+                }
+                
                 if (inst.visitedNodes[inst.visitedNodes.length - 1] !== startNode.index) {
                     inst.visitedNodes.push(startNode.index);
                     Console_Status.value = { ...Console_Status.value }; // Save to Session Storage
@@ -1375,6 +1469,25 @@ const startGame = async (game) => {
         isEngineLoading.value = false; 
     }
 }
+
+const closePurchasePopup = () => {
+    showPurchasePopup.value = false
+}
+
+const isCurrentGamePaid = computed(() => {
+    const game = filteredGames.value.find(g => g._id === activePostId.value)
+    return game?.monetization?.isPaid || false
+})
+
+const isCurrentGamePaidWithDemo = computed(() => {
+    const game = filteredGames.value.find(g => g._id === activePostId.value)
+    return game?.monetization?.isPaid && game?.monetization?.hasDemo || false
+})
+
+const isCurrentGamePaidNoDemo = computed(() => {
+    const game = filteredGames.value.find(g => g._id === activePostId.value)
+    return game?.monetization?.isPaid && !game?.monetization?.hasDemo || false
+})
 
 const startPan = (e) => {
     isPanning.value = true
@@ -1474,8 +1587,6 @@ const handleCanvasClick = (e) => {
     }
 }
 
-
-
 const drawViewport = () => {
     if (!viewportCanvasRef.value || !isEngineRunning.value || !activeEngineData.value) return;
     
@@ -1524,6 +1635,8 @@ const drawViewport = () => {
     const activeInst = gameInstances.value.find(i => i.id === activeInstanceId.value);
     let rawVisitedSequence = activeInst?.visitedNodes || [];
     
+    console.log("🎯 Raw visited sequence:", JSON.stringify(rawVisitedSequence));
+    
     // If empty (brand new instance), just reveal the root node
     if (rawVisitedSequence.length === 0) {
         const rootId = activeEngineData.value.canvasState?.rootNodeId;
@@ -1538,8 +1651,36 @@ const drawViewport = () => {
         return n && n.node_type !== 'Set Variables';
     }));
 
+    console.log("👁️ Visible visited nodes:", Array.from(visibleVisitedNodes));
+
     const nw = 220; 
     const nh = 70;  
+
+    // 🚀 FIXED: Helper to find the ACTUAL traversed connections from player history
+    const getTraversedConnections = (sequence) => {
+        const connections = [];
+        // Remove any null/undefined values and ensure we have numbers
+        const cleanSequence = sequence.filter(id => id !== null && id !== undefined);
+        
+        for (let i = 0; i < cleanSequence.length - 1; i++) {
+            const fromId = cleanSequence[i];
+            const toId = cleanSequence[i + 1];
+            
+            // Only add if both nodes exist in the nodes array
+            const fromNode = nodes.find(n => n.index === fromId);
+            const toNode = nodes.find(n => n.index === toId);
+            
+            if (fromNode && toNode) {
+                connections.push({ from: fromId, to: toId });
+            }
+        }
+        return connections;
+    };
+
+    // Get the actual path the player took
+    const traversedConnections = getTraversedConnections(rawVisitedSequence);
+    
+    console.log("🔗 Traversed connections:", traversedConnections);
 
     // Helper: Find actual structural connections, passing THROUGH hidden logic nodes
     const getStructuralTargets = (node) => {
@@ -1578,51 +1719,58 @@ const drawViewport = () => {
         return targets;
     };
 
-    // --- 3. DRAW CONNECTING LINES (STRUCTURAL FLOW) ---
+    // --- 3. DRAW CONNECTING LINES (ONLY TRAVERSED PATHS) ---
     ctx.strokeStyle = '#4ade80'; // Neon green path
     ctx.lineWidth = 3;
     const drawnLines = new Set(); // Prevent double drawing
 
-    visibleVisitedNodes.forEach(fromNodeId => {
-        const fromNode = nodes.find(n => n.index === fromNodeId);
-        if (!fromNode) return;
+    // 🚀 FIXED: Only draw lines that exist in the player's actual path
+    traversedConnections.forEach(({ from: fromId, to: toId }) => {
+        // Only draw if both nodes are visible
+        if (!visibleVisitedNodes.has(fromId) || !visibleVisitedNodes.has(toId)) {
+            console.log(`⏭️ Skipping line ${fromId}->${toId} - one or both nodes not visible`);
+            return;
+        }
         
-        const targets = getStructuralTargets(fromNode);
+        const lineKey = `${fromId}->${toId}`;
+        if (drawnLines.has(lineKey)) {
+            console.log(`⏭️ Skipping duplicate line ${lineKey}`);
+            return;
+        }
+        drawnLines.add(lineKey);
+
+        const fromNode = nodes.find(n => n.index === fromId);
+        const toNode = nodes.find(n => n.index === toId);
         
-        targets.forEach(toNodeId => {
-            // ONLY draw the structural line if the target has actually been discovered
-            if (!visibleVisitedNodes.has(toNodeId)) return;
-            
-            const lineKey = `${fromNodeId}->${toNodeId}`;
-            if (drawnLines.has(lineKey)) return;
-            drawnLines.add(lineKey);
+        if (!fromNode || !toNode) {
+            console.log(`⏭️ Skipping line ${fromId}->${toId} - nodes not found`);
+            return;
+        }
 
-            const toNode = nodes.find(n => n.index === toNodeId);
-            if (!toNode) return;
+        console.log(`✅ Drawing line: ${fromNode.Node_name || fromId} → ${toNode.Node_name || toId}`);
 
-            const startX = fromNode.node_type === 'If-Else' ? fromNode.x + nw/2 + 30 : fromNode.x + nw;
-            const startY = fromNode.y + nh / 2;
-            
-            const endX = toNode.node_type === 'If-Else' ? toNode.x + nw/2 - 30 : toNode.x;
-            const endY = toNode.y + nh / 2;
+        const startX = fromNode.node_type === 'If-Else' ? fromNode.x + nw/2 + 30 : fromNode.x + nw;
+        const startY = fromNode.y + nh / 2;
+        
+        const endX = toNode.node_type === 'If-Else' ? toNode.x + nw/2 - 30 : toNode.x;
+        const endY = toNode.y + nh / 2;
 
-            ctx.beginPath();
-            ctx.moveTo(startX, startY);
-            
-            const cpOffset = Math.max(50, Math.abs(endX - startX) / 2);
-            ctx.bezierCurveTo(
-                startX + cpOffset, startY, 
-                endX - cpOffset, endY, 
-                endX, endY
-            );
-            ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        
+        const cpOffset = Math.max(50, Math.abs(endX - startX) / 2);
+        ctx.bezierCurveTo(
+            startX + cpOffset, startY, 
+            endX - cpOffset, endY, 
+            endX, endY
+        );
+        ctx.stroke();
 
-            // Arrow head / target dot
-            ctx.fillStyle = '#4ade80';
-            ctx.beginPath();
-            ctx.arc(endX, endY, 4, 0, Math.PI * 2);
-            ctx.fill();
-        });
+        // Arrow head / target dot
+        ctx.fillStyle = '#4ade80';
+        ctx.beginPath();
+        ctx.arc(endX, endY, 4, 0, Math.PI * 2);
+        ctx.fill();
     });
 
     // --- 4. DRAW THE NODE BOXES ---
@@ -2128,9 +2276,22 @@ const preloadUrls = (urls) => {
                     <div class="workspace-header">
                         <button class="close-modal-btn" @click="closeGameModal(false)">✕ Close</button>
                         <div class="workspace-header-title">Console Workspace</div>
-                        <button class="start-game-btn" :disabled="!activeInstanceId" @click="startGame(filteredGames.find(g => g._id === activePostId))">
-                            ▶ Start
-                        </button>       
+                        <div class="workspace-header-actions">
+                            <!-- Purchase button for paid games -->
+                            <button v-if="isCurrentGamePaid" class="purchase-btn" @click="showPurchasePopup = true">
+                                💎 Purchase
+                            </button>
+                            <!-- Start button - disabled for paid games with no demo -->
+                            <button 
+                                class="start-game-btn" 
+                                :disabled="!activeInstanceId || isCurrentGamePaidNoDemo"
+                                :class="{ 'disabled-paid': isCurrentGamePaidNoDemo }"
+                                @click="startGame(filteredGames.find(g => g._id === activePostId))"
+                                :title="isCurrentGamePaidNoDemo ? 'Purchase required to play' : ''"
+                            >
+                                ▶ Start
+                            </button>
+                        </div>       
                     </div>
 
                     <div class="workspace-grid">
@@ -2329,7 +2490,26 @@ const preloadUrls = (urls) => {
     <div class="spinner"></div>
     <h2 class="loading-text">Loading Assets...</h2>
   </div>
-  
+  <transition name="fade">
+    <div v-if="showPurchasePopup" class="demo-limit-overlay" @click="closePurchasePopup">
+      <div class="demo-limit-popup" @click.stop>
+        <div class="demo-limit-icon">💎</div>
+        <div class="demo-limit-title">Purchase Required</div>
+        <div class="demo-limit-message">{{ purchaseMessage }}</div>
+        <button class="demo-limit-btn purchase-btn" @click="closePurchasePopup">Close</button>
+      </div>
+    </div>
+  </transition>
+  <transition name="fade">
+    <div v-if="showDemoLimitPopup" class="demo-limit-overlay" @click="closeDemoLimitPopup">
+      <div class="demo-limit-popup" @click.stop>
+        <div class="demo-limit-icon">⚠️</div>
+        <div class="demo-limit-title">Demo Limit Reached</div>
+        <div class="demo-limit-message">{{ demoLimitMessage }}</div>
+        <button class="demo-limit-btn" @click="closeDemoLimitPopup">Close</button>
+      </div>
+    </div>
+  </transition>
 </template>
 
 <style scoped>
@@ -3592,6 +3772,58 @@ const preloadUrls = (urls) => {
   z-index: 2;
 }
 
+.workspace-header-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.purchase-btn {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: white;
+    border: none;
+    padding: 8px 20px;
+    border-radius: 20px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 0 15px rgba(245, 158, 11, 0.4);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.purchase-btn:hover {
+    transform: scale(1.05);
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    box-shadow: 0 0 20px rgba(245, 158, 11, 0.6);
+}
+
+/* Disabled Start Button for Paid No-Demo Games */
+.start-game-btn.disabled-paid {
+    background: #475569;
+    color: #94a3b8;
+    box-shadow: none;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.start-game-btn.disabled-paid:hover {
+    transform: none;
+    background: #475569;
+    box-shadow: none;
+}
+
+/* Purchase button in popup */
+.demo-limit-btn.purchase-btn {
+    background: #f59e0b;
+    color: white;
+}
+
+.demo-limit-btn.purchase-btn:hover {
+    background: #d97706;
+}
+
 .continue-text {
   color: #94a3b8;
   font-size: 0.9rem;
@@ -3722,6 +3954,130 @@ const preloadUrls = (urls) => {
   .gift-name {
     margin-bottom: 15px;
     font-size: 1.2rem;
+  }
+}
+
+.demo-limit-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  animation: overlayFadeIn 0.5s ease-out;
+}
+
+.demo-limit-popup {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 60px;
+  background: #ef4444; /* Pure red as requested */
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 32px;
+  box-shadow: 
+    0 20px 40px rgba(0, 0, 0, 0.8),
+    0 0 30px rgba(239, 68, 68, 0.5),
+    inset 0 0 30px rgba(255, 255, 255, 0.2);
+  transform-origin: center;
+  color: white;
+  text-align: center;
+  max-width: 500px;
+  width: 90%;
+}
+
+.demo-limit-icon {
+  font-size: 4rem;
+  margin-bottom: 20px;
+  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.5));
+}
+
+.demo-limit-title {
+  font-size: 2rem;
+  font-weight: bold;
+  margin-bottom: 15px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+.demo-limit-message {
+  font-size: 1.2rem;
+  margin-bottom: 30px;
+  line-height: 1.5;
+  white-space: pre-line;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.3);
+}
+
+.demo-limit-btn {
+  background: white;
+  color: #ef4444;
+  border: none;
+  padding: 12px 40px;
+  border-radius: 30px;
+  font-size: 1.1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.demo-limit-btn:hover {
+  transform: scale(1.05);
+  background: #fef2f2;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+/* Responsive adjustments */
+@media screen and (max-width: 768px) {
+  .demo-limit-popup {
+    padding: 30px 40px;
+  }
+  
+  .demo-limit-icon {
+    font-size: 3rem;
+  }
+  
+  .demo-limit-title {
+    font-size: 1.5rem;
+  }
+  
+  .demo-limit-message {
+    font-size: 1rem;
+  }
+  
+  .demo-limit-btn {
+    padding: 10px 30px;
+    font-size: 1rem;
+  }
+}
+
+@media screen and (max-height: 600px) {
+  .demo-limit-popup {
+    padding: 20px 30px;
+  }
+  
+  .demo-limit-icon {
+    font-size: 2.5rem;
+    margin-bottom: 10px;
+  }
+  
+  .demo-limit-title {
+    font-size: 1.2rem;
+    margin-bottom: 10px;
+  }
+  
+  .demo-limit-message {
+    font-size: 0.9rem;
+    margin-bottom: 15px;
   }
 }
 </style>

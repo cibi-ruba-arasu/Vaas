@@ -270,6 +270,103 @@ const calculateGiftCounts = (canvasState) => {
     return { pfp: pfpCount, badges: badgeCount };
 };
 
+/* ===== HELPER: Calculate Maximum Demo Nodes (Height of General Nodes) ===== */
+const calculateMaxDemoNodes = (canvasState) => {
+  if (!canvasState || !canvasState.nodes || !Array.isArray(canvasState.nodes)) {
+    return 0;
+  }
+
+  const nodes = canvasState.nodes;
+  const rootNodeId = canvasState.rootNodeId;
+  
+  if (rootNodeId === undefined || rootNodeId === null) return 0;
+
+  // Helper function to check if a node is a General node
+  const isGeneralNode = (node) => {
+    if (!node) return false;
+    const typeStr = String(node.node_type || node.Node_type || node.type || node.name || node.Node_name || "").toLowerCase();
+    return typeStr === 'general';
+  };
+
+  // Build adjacency list for General nodes only
+  const generalNodes = new Set();
+  const adjacencyMap = new Map(); // nodeIndex -> Set of connected General node indices
+  
+  nodes.forEach(node => {
+    if (isGeneralNode(node)) {
+      generalNodes.add(node.index);
+      adjacencyMap.set(node.index, new Set());
+    }
+  });
+
+  // If no General nodes found, return 0
+  if (generalNodes.size === 0) return 0;
+
+  // Populate connections between General nodes
+  nodes.forEach(node => {
+    if (!isGeneralNode(node)) return;
+
+    const targets = [];
+    
+    if (node.Next !== null && node.Next !== undefined) {
+      targets.push(node.Next);
+    }
+    
+    if (node.NextTrue !== null && node.NextTrue !== undefined) {
+      targets.push(node.NextTrue);
+    }
+    if (node.NextFalse !== null && node.NextFalse !== undefined) {
+      targets.push(node.NextFalse);
+    }
+    
+    if (node.options && Array.isArray(node.options)) {
+      node.options.forEach(opt => {
+        if (opt.next !== null && opt.next !== undefined) {
+          targets.push(opt.next);
+        }
+      });
+    }
+
+    const currentNodeAdj = adjacencyMap.get(node.index) || new Set();
+    targets.forEach(targetIndex => {
+      if (generalNodes.has(targetIndex)) {
+        currentNodeAdj.add(targetIndex);
+      }
+    });
+    adjacencyMap.set(node.index, currentNodeAdj);
+  });
+
+  // DFS with memoization to find longest path
+  const memo = new Map();
+
+  const dfs = (nodeIndex, visited = new Set()) => {
+    if (!generalNodes.has(nodeIndex)) return 0;
+    if (memo.has(nodeIndex)) return memo.get(nodeIndex);
+    if (visited.has(nodeIndex)) return 0; // Cycle detected
+    
+    visited.add(nodeIndex);
+    
+    let maxChildLength = 0;
+    const nextNodes = adjacencyMap.get(nodeIndex) || new Set();
+    
+    for (const nextIndex of nextNodes) {
+      const branchVisited = new Set(visited);
+      const childLength = dfs(nextIndex, branchVisited);
+      maxChildLength = Math.max(maxChildLength, childLength);
+    }
+    
+    const result = 1 + maxChildLength;
+    memo.set(nodeIndex, result);
+    return result;
+  };
+
+  const maxHeight = dfs(rootNodeId);
+  
+  // Demo limit should be maxHeight - 1 (prevent reaching final node)
+  // Ensure at least 1
+  return Math.max(1, maxHeight - 1);
+};
+
 /* ===== HELPER: RECURSIVE MEDIA PROCESSOR ===== */
 const processProjectAssets = async (nodes, userId, projectId) => {
   const usedFilePaths = new Set();
@@ -286,6 +383,8 @@ const processProjectAssets = async (nodes, userId, projectId) => {
     }
     return null; 
   };
+
+
 
   const trackExistingUrl = (url) => {
     if (url && url.includes(bucketName)) {
@@ -1269,85 +1368,97 @@ app.post("/publish", authMiddleware, async (req, res) => {
   const { 
     id, name, titleFont, description, language, categories, 
     customCategories, warnings, isThumbnailNSFW, monetization, 
-    updateCanvas // 👈 Catch the toggle from frontend
+    updateCanvas
   } = req.body;
 
-  // We grab 'thumbnail' separately because we might modify it
+ const price = monetization?.price || 0;
+  
   let { thumbnail } = req.body; 
-
   const { mongoId } = req.user;
 
   try {
-    if (monetization && monetization.isPaid) {
-      return res.status(400).json({ message: "This route currently only supports Free projects." });
-    }
+    // 🚫 REMOVE THIS BLOCK - PAID PROJECTS ARE NOW ALLOWED
+    // if (monetization && monetization.isPaid) {
+    //   return res.status(400).json({ message: "This route currently only supports Free projects." });
+    // }
 
     const author = await User.findById(mongoId).select("username followers"); 
     if (!author) return res.status(404).json({ message: "Author not found" });
 
     // =========================================================
-    // 📸 THUMBNAIL UPLOAD LOGIC (COPIED FROM /projects)
+    // 📸 THUMBNAIL UPLOAD LOGIC
     // =========================================================
     if (thumbnail && thumbnail.startsWith("data:")) {
-      // Define the folder: users/{uid}/projects/{pid}/thumbnail
       const thumbnailFolder = `users/${mongoId}/projects/${id}/thumbnail`;
-      
-      // Clean up old files first (Optional, but keeps bucket clean)
       await deleteFolderContent(thumbnailFolder);
-
-      // Upload new file
       const uploadResult = await uploadToGCS(thumbnail, thumbnailFolder, "cover");
-      
       if (uploadResult) {
-          thumbnail = uploadResult.url; // Replace Base64 with GCS URL
-      } else {
-          console.error("Failed to upload publish thumbnail to GCS");
-          // Fallback: If upload fails, maybe don't save the massive string? 
-          // For now, we keep it or set to null to prevent DB crash.
-          // thumbnail = null; 
+          thumbnail = uploadResult.url;
       }
     }
-    // =========================================================
 
     // 1. Check if it's already published
     const existingPublish = await Publish.findOne({ projectId: id });
 
-    // 2. Prepare Base Metadata (Use the potentially updated 'thumbnail' variable)
+    // 2. Prepare Base Metadata
     const publishData = {
       projectId: id,
       authorId: mongoId,
       authorName: author.username,
       name, titleFont, description, language, categories, customCategories, warnings, 
-      isThumbnailNSFW, monetization, 
-      thumbnail, // 👈 Uses the GCS URL now
+      isThumbnailNSFW, 
+      monetization: {
+        isPaid: monetization?.isPaid || false,
+        price: monetization?.price || 0,
+        priceCurrency: monetization?.priceCurrency || "USD", // ← ADD THIS
+        hasDemo: monetization?.hasDemo || false,
+        demoNodeLimit: monetization?.demoNodeLimit || 10,
+      },
+      thumbnail,
       publishedAt: new Date()
     };
 
-    // 3. Conditional Engine Content Overwrite
-    // Always grab canvas if it's new OR if the user explicitly clicked the Update Canvas toggle
-    if (!existingPublish || updateCanvas) {
-      const liveCanvasState = await CanvasState.findOne({ projectId: id }).lean();
-      if (!liveCanvasState) return res.status(400).json({ message: "No content found to publish." });
+    // 3. Always grab canvas for calculation
+    const liveCanvasState = await CanvasState.findOne({ projectId: id }).lean();
+    if (!liveCanvasState) {
+      return res.status(400).json({ message: "No content found to publish." });
+    }
+
+    // 4. Calculate max demo nodes (for paid projects with demo)
+    let maxDemoLimit = 0;
+    if (publishData.monetization.isPaid && publishData.monetization.hasDemo) {
+      maxDemoLimit = calculateMaxDemoNodes(liveCanvasState);
+      publishData.monetization.maxDemoLimit = maxDemoLimit;
       
+      // Validate the requested limit
+      const requestedLimit = publishData.monetization.demoNodeLimit;
+      if (requestedLimit > maxDemoLimit) {
+        return res.status(400).json({ 
+          message: `Demo limit cannot exceed ${maxDemoLimit} nodes`,
+          maxAllowed: maxDemoLimit
+        });
+      }
+    }
+
+    // 5. Conditionally include canvasState
+    if (!existingPublish || updateCanvas) {
       delete liveCanvasState._id;
       delete liveCanvasState.__v;
-      
       publishData.canvasState = liveCanvasState; 
     }
 
-    /* 🎁 4. CALCULATE GIFT COUNTS USING THE HELPER 🎁 */
+    /* 🎁 6. CALCULATE GIFT COUNTS USING THE HELPER 🎁 */
     const stateToScan = publishData.canvasState || (existingPublish ? existingPublish.canvasState : null);
     publishData.giftCounts = calculateGiftCounts(stateToScan);
-    /* ============================================== */
 
-    // 5. Save to Database using $set
+    // 7. Save to Database using $set
     const result = await Publish.findOneAndUpdate(
       { projectId: id }, 
       { $set: publishData },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
 
-    /* 🔔 NOTIFY FOLLOWERS (Only if it's a first-time publish) 🔔 */
+    /* 🔔 NOTIFY FOLLOWERS (Only if it's a first-time publish) */
     if (!existingPublish && author.followers && author.followers.length > 0) {
       const notifications = author.followers.map(followerId => ({
         recipient: followerId,
@@ -1360,8 +1471,7 @@ app.post("/publish", authMiddleware, async (req, res) => {
       await Notification.insertMany(notifications);
     }
 
-    // 6. SYNC BACK TO PROJECT BUCKET (OPTIONAL BUT RECOMMENDED)
-    // If the thumbnail changed, update the original Project Draft too so they match
+    // 8. SYNC BACK TO PROJECT BUCKET
     if (thumbnail && thumbnail.startsWith("http")) {
        const projectBucket = await Project.findOne({ userId: mongoId });
        if (projectBucket) {
@@ -1377,7 +1487,8 @@ app.post("/publish", authMiddleware, async (req, res) => {
       success: true, 
       message: updateCanvas ? "Project and Content updated!" : "Metadata updated successfully!",
       publishedAt: result.publishedAt,
-      thumbnail: thumbnail // Send back the new URL
+      thumbnail: thumbnail,
+      maxDemoLimit // Send back for frontend validation
     });
 
   } catch (err) {
@@ -1567,7 +1678,20 @@ app.post("/payouts/wise/create-recipient", authMiddleware, async (req, res) => {
 
         console.log(`✅ Wise Recipient Created: ${wiseRes.data.id}`);
         res.json({ success: true, recipientId: wiseRes.data.id });
-
+        if (wiseRes.data.id) {
+          await PayoutRecipient.findOneAndUpdate(
+            { userId: req.user.mongoId, currency },
+            {
+              userId: req.user.mongoId,
+              currency,
+              accountHolderName,
+              wiseRecipientId: wiseRes.data.id,
+              method: 'wise',
+              updatedAt: new Date()
+            },
+            { upsert: true }
+          );
+        }
     } catch (err) {
         console.error("Wise Create Error:", err.response?.data || err.message);
         const msg = err.response?.data?.errors?.map(e => e.message).join(", ") || "Invalid bank details";

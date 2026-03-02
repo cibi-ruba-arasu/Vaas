@@ -21,8 +21,11 @@ const publishSchema = new mongoose.Schema({
   
   monetization: {
     isPaid: { type: Boolean, default: false },
+    price: { type: Number, min: 0, default: 0 },
+    priceCurrency: { type: String, default: "USD" }, // ← ADD THIS
     hasDemo: { type: Boolean, default: false },
-    demoNodeLimit: { type: Number, default: 10 }
+    demoNodeLimit: { type: Number, default: 10 },
+    maxDemoLimit: { type: Number, default: 0 } 
   },
   giftCounts: {
     pfp: { type: Number, default: -1 },

@@ -354,6 +354,48 @@ const containerStyle = computed(() => ({
   background: getGradient(containerColors.value, containerAngle.value)
 }));
 
+const gamePrice = ref(0.00);
+const priceError = ref('');
+
+// Price validation method
+const validatePrice = (event) => {
+  let value = event.target.value;
+  
+  // Remove any non-numeric characters except decimal
+  value = value.replace(/[^\d.]/g, '');
+  
+  // Ensure only one decimal point
+  const decimalCount = (value.match(/\./g) || []).length;
+  if (decimalCount > 1) {
+    value = value.substring(0, value.lastIndexOf('.'));
+  }
+  
+  // Limit to 2 decimal places
+  if (value.includes('.')) {
+    const parts = value.split('.');
+    if (parts[1].length > 2) {
+      parts[1] = parts[1].substring(0, 2);
+      value = parts.join('.');
+    }
+  }
+  
+  // Convert to number and validate range
+  const numValue = parseFloat(value) || 0;
+  if (numValue < 0) {
+    gamePrice.value = 0;
+    priceError.value = 'Price cannot be negative';
+  } else if (numValue > 9999.99) {
+    gamePrice.value = 9999.99;
+    priceError.value = 'Maximum price is 9999.99';
+  } else {
+    gamePrice.value = numValue;
+    priceError.value = '';
+  }
+  
+  // Format to 2 decimal places on blur
+  event.target.value = gamePrice.value.toFixed(2);
+};
+
 /* --- PUBLISH STATUS TRACKER --- */
 const Publish_Status = computed(() => {
   return {
@@ -369,6 +411,8 @@ const Publish_Status = computed(() => {
     isThumbnailNSFW: isThumbnailNSFW.value,
     monetization: {
       isPaid: isPaid.value,
+      price: isPaid.value ? gamePrice.value : 0,
+      priceCurrency: isPaid.value ? payoutCurrency.value : "USD", // ← ADD THIS
       hasDemo: hasDemo.value,
       demoNodeLimit: demoNodeLimit.value,
       payoutCurrency: payoutCurrency.value
@@ -381,13 +425,28 @@ watch(Publish_Status, (newStatus) => {
   console.log("Publish_Status Update:", newStatus);
 }, { deep: true });
 
-/* --- FORM VALIDATION --- */
+// Update your form validation to include demo limit check
 const isFormValid = computed(() => {
   if (!localName.value || localName.value.trim() === "") return false;
   if (selectedCategories.value.length === 0) return false;
   if (!isSafeContent.value && selectedWarnings.value.length === 0) return false;
   if (blocks.value.length === 0) return false;
-  if (isPaid.value && !wiseRecipientId.value) return false; // Must have bank linked if paid
+  if (isPaid.value && !wiseRecipientId.value) return false;
+  
+  // ✅ Price validation
+  if (isPaid.value) {
+    if (gamePrice.value <= 0) return false; // Must be greater than 0
+    if (priceError.value) return false; // Must have no validation errors
+  }
+  
+  // Demo limit validation
+  if (isPaid.value && hasDemo.value) {
+    if (demoNodeLimit.value < 1) return false;
+    if (maxDemoLimit.value > 0 && demoNodeLimit.value > maxDemoLimit.value) {
+      return false;
+    }
+  }
+  
   return true;
 });
 
@@ -445,6 +504,173 @@ watch(blocks, async () => {
 const addColor = (array) => { array.push('#3b82f6'); };
 const removeColor = (array, index) => { if (array.length > 1) array.splice(index, 1); };
 
+const canvasState = ref(null);
+
+const maxDemoLimit = ref(0);
+
+// Function to calculate max height through General nodes only
+const calculateMaxDemoNodes = (canvasState) => {
+  if (!canvasState || !canvasState.nodes || !Array.isArray(canvasState.nodes)) {
+    return 0;
+  }
+
+  const nodes = canvasState.nodes;
+  const rootNodeId = canvasState.rootNodeId;
+  
+  if (rootNodeId === undefined || rootNodeId === null) return 0;
+
+  // Create a map for quick node lookup
+  const nodeMap = new Map();
+  nodes.forEach(node => {
+    nodeMap.set(node.index, node);
+  });
+
+  // Helper function to check if a node is a General node
+  const isGeneralNode = (node) => {
+    if (!node) return false;
+    const typeStr = String(node.node_type || node.Node_type || node.type || node.name || node.Node_name || "").toLowerCase();
+    return typeStr === 'general';
+  };
+
+  // Build adjacency list for General nodes only
+  const generalNodes = new Set();
+  const adjacencyMap = new Map(); // nodeIndex -> Set of connected General node indices
+  
+  nodes.forEach(node => {
+    if (isGeneralNode(node)) {
+      generalNodes.add(node.index);
+      adjacencyMap.set(node.index, new Set());
+    }
+  });
+
+  // If no General nodes found, return 0
+  if (generalNodes.size === 0) return 0;
+
+  // Populate connections between General nodes
+  nodes.forEach(node => {
+    if (!isGeneralNode(node)) return; // Skip non-General nodes
+
+    const targets = [];
+    
+    // Direct Next connections
+    if (node.Next !== null && node.Next !== undefined) {
+      targets.push(node.Next);
+    }
+    
+    // If-Else branches
+    if (node.NextTrue !== null && node.NextTrue !== undefined) {
+      targets.push(node.NextTrue);
+    }
+    if (node.NextFalse !== null && node.NextFalse !== undefined) {
+      targets.push(node.NextFalse);
+    }
+    
+    // Options array
+    if (node.options && Array.isArray(node.options)) {
+      node.options.forEach(opt => {
+        if (opt.next !== null && opt.next !== undefined) {
+          targets.push(opt.next);
+        }
+      });
+    }
+
+    // Add only targets that are General nodes
+    const currentNodeAdj = adjacencyMap.get(node.index) || new Set();
+    targets.forEach(targetIndex => {
+      if (generalNodes.has(targetIndex)) {
+        currentNodeAdj.add(targetIndex);
+      }
+    });
+    adjacencyMap.set(node.index, currentNodeAdj);
+  });
+
+  // DFS with memoization to find longest path (with cycle detection via visited set)
+  const memo = new Map(); // nodeIndex -> longest path from this node
+
+  const dfs = (nodeIndex, visited = new Set()) => {
+    // If not a General node, path length is 0
+    if (!generalNodes.has(nodeIndex)) return 0;
+    
+    // Check memo
+    if (memo.has(nodeIndex)) return memo.get(nodeIndex);
+    
+    // Detect cycle: if we've seen this node in current path, return 0 to break cycle
+    if (visited.has(nodeIndex)) {
+      console.warn(`Cycle detected at node ${nodeIndex}, breaking cycle`);
+      return 0;
+    }
+    
+    visited.add(nodeIndex);
+    
+    let maxChildLength = 0;
+    const nextNodes = adjacencyMap.get(nodeIndex) || new Set();
+    
+    // For each possible next node, explore
+    for (const nextIndex of nextNodes) {
+      // Create a new visited set for each branch to avoid cross-branch contamination
+      // This allows different paths to share nodes, just not the same node twice in a single path
+      const branchVisited = new Set(visited);
+      const childLength = dfs(nextIndex, branchVisited);
+      maxChildLength = Math.max(maxChildLength, childLength);
+    }
+    
+    // Current node counts as 1, plus the longest child path
+    const result = 1 + maxChildLength;
+    memo.set(nodeIndex, result);
+    return result;
+  };
+
+  // Start DFS from root node
+  const maxHeight = dfs(rootNodeId);
+  
+  // Demo limit should be maxHeight - 1 (to prevent reaching the final node)
+  // But ensure at least 1
+  const demoLimit = Math.max(1, maxHeight - 1);
+  
+  console.log(`📊 Canvas Analysis:`, {
+    totalNodes: nodes.length,
+    generalNodes: generalNodes.size,
+    rootNode: rootNodeId,
+    maxHeight,
+    recommendedDemoLimit: demoLimit
+  });
+  
+  return demoLimit;
+};
+
+// Add this method after fetchProjectDetails()
+const fetchCanvasState = async () => {
+  try {
+    const res = await fetch(`http://localhost:5000/canvas/load/${projectId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (res.ok) {
+      canvasState.value = await res.json();
+      console.log("Canvas State loaded:", canvasState.value);
+      
+      // Calculate max demo limit
+      maxDemoLimit.value = calculateMaxDemoNodes(canvasState.value);
+      
+      // Optional: Auto-adjust demoNodeLimit if it exceeds max
+      if (hasDemo.value && demoNodeLimit.value > maxDemoLimit.value) {
+        demoNodeLimit.value = maxDemoLimit.value;
+      }
+    }
+  } catch (e) {
+    console.error("Failed to fetch canvas state", e);
+  }
+};
+
+
+
+// Update onMounted to call both
+onMounted(() => {
+  if (!projectId) return router.push("/create");
+  fetchProjectDetails().then(() => {
+    fetchCanvasState(); // Fetch canvas data after project details
+  });
+});
+
 /* --- API CALLS --- */
 const fetchProjectDetails = async () => {
   try {
@@ -465,6 +691,7 @@ const fetchProjectDetails = async () => {
 
       if (project.value.monetization) {
         isPaid.value = project.value.monetization.isPaid || false;
+        gamePrice.value = project.value.monetization.price || 0; // ← Load price
         hasDemo.value = project.value.monetization.hasDemo || false;
         demoNodeLimit.value = project.value.monetization.demoNodeLimit || 10;
         if (project.value.monetization.payoutCurrency) {
@@ -514,7 +741,7 @@ const updateThumbnail = async (base64) => {
 
 const publishProject = async () => {
   if (isPaid.value && !wiseRecipientId.value) {
-    showCurrencyModal.value = true; // Force setup
+    showCurrencyModal.value = true;
     return;
   }
 
@@ -532,10 +759,21 @@ const publishProject = async () => {
     const data = await res.json();
     
     if (res.ok) {
+      // Update maxDemoLimit if returned
+      if (data.maxDemoLimit) {
+        maxDemoLimit.value = data.maxDemoLimit;
+      }
       alert("🎉 Successfully Published to the Feed!");
       router.push('/profile');
     } else {
-      alert("Publishing Failed: " + data.message);
+      // Handle validation errors (like demo limit exceeded)
+      if (data.maxAllowed) {
+        alert(`Demo limit cannot exceed ${data.maxAllowed} nodes. Please adjust.`);
+        // Optionally auto-correct the limit
+        demoNodeLimit.value = data.maxAllowed;
+      } else {
+        alert("Publishing Failed: " + data.message);
+      }
     }
   } catch (e) {
     console.error("Publish error", e);
@@ -935,15 +1173,48 @@ const activeBlock = computed(() => {
                    <span class="slider"></span>
                 </label>
               </div>
-
+              
               <div v-if="hasDemo" class="demo-limit-row">
                 <label class="input-label mb-0">Demo Limit (Nodes)</label>
                 <div class="number-input-wrap">
-                  <input type="number" v-model="demoNodeLimit" class="demo-num-input" min="1" />
-                  <span class="limit-desc">Users can play up to {{ demoNodeLimit }} nodes.</span>
+                  <input 
+                    type="number" 
+                    v-model="demoNodeLimit" 
+                    class="demo-num-input" 
+                    min="1" 
+                    :max="maxDemoLimit"
+                  />
+                  <span class="limit-desc">
+                    Users can play up to {{ demoNodeLimit }} nodes.
+                    <span v-if="maxDemoLimit > 0" class="max-hint">
+                      (Max allowed: {{ maxDemoLimit }})
+                    </span>
+                  </span>
+                </div>
+                <div v-if="demoNodeLimit > maxDemoLimit && maxDemoLimit > 0" class="validation-error">
+                  ⚠️ Demo limit cannot exceed {{ maxDemoLimit }} nodes
                 </div>
               </div>
-              
+              <div class="price-input-row">
+                <div class="price-label-group">
+                  <span class="nsfw-label">Game Price</span>
+                  <p class="nsfw-desc">Set the price users will pay to unlock the full game.</p>
+                </div>
+                <div class="price-input-wrapper">
+                  <span class="currency-symbol">{{ payoutCurrency === 'INR' ? '₹' : '$' }}</span>
+                  <input 
+                    type="number" 
+                    v-model="gamePrice" 
+                    class="price-input"
+                    step="0.01"
+                    min="0"
+                    max="9999.99"
+                    @input="validatePrice"
+                    placeholder="0.00"
+                  />
+                </div>
+                <div v-if="priceError" class="price-error">{{ priceError }}</div>
+              </div>
               <div class="currency-display" @click="showCurrencyModal = true">
                  <span class="label">Payout Currency:</span>
                  <span class="val">{{ payoutCurrency }} (Click to Change)</span>
@@ -1411,5 +1682,102 @@ input:checked + .slider:before { transform: translateX(24px); }
 @media (max-width: 900px) {
   .publish-container { flex-direction: column; }
   .left-panel { position: static; width: 100%; }
+}
+.max-hint {
+  color: #94a3b8;
+  font-size: 0.8rem;
+  margin-left: 5px;
+}
+
+.validation-error {
+  color: #ef4444;
+  font-size: 0.8rem;
+  margin-top: 5px;
+  padding: 5px 10px;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 4px;
+  border-left: 2px solid #ef4444;
+}
+
+.price-input-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 15px;
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 12px;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.price-label-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.price-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 5px 15px;
+  width: fit-content;
+}
+
+.currency-symbol {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #94a3b8;
+}
+
+.price-input {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 1.5rem;
+  font-weight: 700;
+  width: 120px;
+  outline: none;
+  padding: 8px 0;
+}
+
+.price-input:focus {
+  outline: none;
+}
+
+/* Remove spinner arrows for number input */
+.price-input::-webkit-inner-spin-button,
+.price-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.price-input[type=number] {
+  -moz-appearance: textfield;
+}
+
+.price-error {
+  color: #ef4444;
+  font-size: 0.8rem;
+  padding: 5px 10px;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 4px;
+  border-left: 2px solid #ef4444;
+}
+
+/* Responsive */
+@media (min-width: 768px) {
+  .price-input-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+  
+  .price-label-group {
+    flex: 1;
+  }
 }
 </style>
