@@ -25,10 +25,23 @@ const user = ref({
   description: { blocks: [], container: { colors: ['transparent'], angle: 135 } },
   profilePic: null,
   verified: 'normal',
-  stats: { followers: 0, following: 0, rating: 0.0, weaves: 0 }
+  stats: { followers: 0, following: 0, rating: 0.0, weaves: 0 },
+  badges: []
 })
 
 const projects = ref([])
+
+const loadGoogleFont = (fontFamily) => {
+  if (!fontFamily || fontFamily === 'sans-serif' || fontFamily === 'Inter') return;
+  const fontId = `font-${fontFamily.replace(/\s+/g, '-')}`;
+  if (!document.getElementById(fontId)) {
+    const link = document.createElement('link');
+    link.id = fontId;
+    link.rel = 'stylesheet';
+    link.href = `https://fonts.googleapis.com/css2?family=${fontFamily.replace(/\s+/g, '+')}&display=swap`;
+    document.head.appendChild(link);
+  }
+};
 
 /* --- HELPER: Gradient Generator --- */
 const getGradient = (colors, angle) => {
@@ -124,6 +137,10 @@ onMounted(() => {
 watch(() => route.params.userid, () => {
     fetchUserProfile();
 });
+
+watch(() => user.value, (newVal) => {
+   if (newVal.badges) newVal.badges.forEach(b => loadGoogleFont(b.giftFont));
+}, { deep: true, immediate: true });
 </script>
 
 <template>
@@ -212,7 +229,19 @@ watch(() => route.params.userid, () => {
             </div>
          </div>
       </div>
-
+      <div class="badges-section" v-if="user.badges && user.badges.length > 0">
+        <h3 class="section-title">Achievements</h3>
+        <div class="badge-grid">
+          <div v-for="(badge, index) in user.badges" :key="index" class="badge-card">
+            <div class="badge-img-wrapper">
+              <img :src="badge.base64" alt="Badge" class="badge-img" />
+            </div>
+            <span class="badge-name" :style="{ fontFamily: badge.giftFont || 'sans-serif' }">
+              {{ badge.giftName }}
+            </span>
+          </div>
+        </div>
+      </div>
       <div class="projects-section">
         <h3 class="section-title">Published Weaves</h3>
         <div v-if="projects.length > 0" class="projects-grid">
@@ -312,5 +341,85 @@ watch(() => route.params.userid, () => {
   .header-content { flex-direction: column; align-items: center; text-align: center; }
   .identity-col { flex-direction: column; }
   .actions-col { align-items: center; width: 100%; }
+}
+
+.badges-section {
+  margin-bottom: 1rem;
+}
+
+.badge-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.badge-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 15px;
+  width: 140px;
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s;
+}
+
+.badge-card:hover {
+  transform: translateY(-5px) scale(1.05);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5), 0 0 15px rgba(245, 158, 11, 0.2);
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.badge-img-wrapper {
+  width: 80px;
+  height: 80px;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 10px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  background: #000;
+}
+
+.badge-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated; /* Keeps 8-bit art sharp */
+}
+
+.badge-name {
+  color: #fbbf24;
+  font-size: 1.1rem;
+  text-align: center;
+  line-height: 1.2;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+}
+
+/* Remove Button for Edit Mode (Only applies in UserProfile.vue) */
+.remove-badge-btn {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #ef4444;
+  color: white;
+  border: 2px solid #0f172a;
+  font-weight: bold;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  transition: transform 0.2s, background 0.2s;
+}
+
+.remove-badge-btn:hover {
+  transform: scale(1.2);
+  background: #dc2626;
 }
 </style>

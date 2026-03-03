@@ -42,14 +42,46 @@ const goToUser = (userid) => {
   router.push(`/user/${userid}`)
 }
 
+const showPfpInventory = ref(false)
+const inventoryTab = ref('custom') // 'custom' or 'earned'
+
 const user = ref({
   username: "Weaver",
   description: { blocks: [], container: { colors: ['transparent'], angle: 135 } },
   profilePic: null,
   verified: 'normal',
   pfp_status: { matrix: [], background: { colors: ['#ffffff'], angle: 90 } }, 
+  pfp_inventory: { custom: [], earned: [] },
+  active_pfp_type: 'custom',
+  active_earned_ref: null,
+  badges: [], // 🚀 NEW: Badges state
   stats: { followers: 0, following: 0, rating: 0.0, weaves: 0 }
 })
+
+// 🚀 NEW: Dynamic Google Font Loader
+const loadGoogleFont = (fontFamily) => {
+  if (!fontFamily || fontFamily === 'sans-serif' || fontFamily === 'Inter') return;
+  const fontId = `font-${fontFamily.replace(/\s+/g, '-')}`;
+  if (!document.getElementById(fontId)) {
+    const link = document.createElement('link');
+    link.id = fontId;
+    link.rel = 'stylesheet';
+    link.href = `https://fonts.googleapis.com/css2?family=${fontFamily.replace(/\s+/g, '+')}&display=swap`;
+    document.head.appendChild(link);
+  }
+};
+
+watch(() => user.value, (newVal) => {
+   if (newVal.badges) newVal.badges.forEach(b => loadGoogleFont(b.giftFont));
+   if (newVal.pfp_inventory?.earned) newVal.pfp_inventory.earned.forEach(p => loadGoogleFont(p.giftFont));
+}, { deep: true, immediate: true });
+
+// 🚀 NEW: Remove Badge Function
+const removeBadge = async (index) => {
+    if (!confirm("Remove this badge from your profile display?")) return;
+    user.value.badges.splice(index, 1);
+    await saveProfile();
+}
 
 const publishedProjects = ref([])
 
@@ -139,10 +171,36 @@ watch(showPfpEditor, (newVal) => {
     }
 });
 
-const openPfpEditor = () => {
+const openPfpInventory = () => {
   if (!isEditing.value) return; 
-  showPfpEditor.value = true;
+  showPfpInventory.value = true;
 }
+
+const openPixelStudio = () => {
+  showPfpInventory.value = false; // Close collection
+  
+  // Wipe the editor state clean for a 64x64 canvas (4096 pixels)
+  editorState.value.matrix = Array(4096).fill(null);
+  editorState.value.bgColors = ['#ffffff'];
+  editorState.value.bgAngle = 90;
+  currentPaintColor.value = '#000000'; // Default brush to black
+  
+  showPfpEditor.value = true; // Open pixel studio
+
+  nextTick(() => {
+    if (typeof drawCanvas === 'function') drawCanvas(); // Paint the blank canvas safely
+  });
+}
+
+// Watch for modal opening to trigger render
+watch(showPfpEditor, (newVal) => {
+    if (newVal) {
+        initMatrix(); // Load data
+        nextTick(() => {
+            drawCanvas(); // Paint data to canvas
+        });
+    }
+});
 
 const drawCanvas = () => {
   const canvas = pfpCanvasRef.value;
@@ -224,21 +282,70 @@ const applyPfpChanges = () => {
     }
   }
 
-  // 2. Save Visual Image (Base64)
-  user.value.profilePic = tempCanvas.toDataURL('image/png'); 
-  
-  // 3. Compress & Save Data for DB
+  // 2. Export Image and Compress Data
+  const base64Image = tempCanvas.toDataURL('image/png'); 
   const compressedMatrix = packMatrix(editorState.value.matrix);
   
-  user.value.pfp_status = { 
+  // 3. Create new Custom PFP Object
+  const newCustomPfp = {
+    id: Date.now().toString(),
     matrix: compressedMatrix,
     background: {
       colors: [...editorState.value.bgColors],
       angle: editorState.value.bgAngle
-    }
+    },
+    base64: base64Image
+  };
+
+  // 4. Ensure inventory arrays exist, then push
+  if (!user.value.pfp_inventory) user.value.pfp_inventory = { custom: [], earned: [] };
+  if (!user.value.pfp_inventory.custom) user.value.pfp_inventory.custom = [];
+  
+  user.value.pfp_inventory.custom.push(newCustomPfp);
+
+  // 5. Set it as active immediately
+  user.value.active_pfp_type = 'custom';
+  user.value.active_earned_ref = null;
+  user.value.profilePic = base64Image;
+  
+  // Legacy support fallback
+  user.value.pfp_status = { 
+    matrix: compressedMatrix,
+    background: newCustomPfp.background
   };
   
   showPfpEditor.value = false;
+  saveProfile(); // Auto-save to DB when a new one is created
+}
+
+const equipPfp = async (type, item) => {
+    user.value.active_pfp_type = type;
+    user.value.profilePic = item.base64;
+
+    if (type === 'custom') {
+        user.value.active_earned_ref = null;
+        user.value.pfp_status = { matrix: item.matrix, background: item.background };
+    } else if (type === 'earned') {
+        user.value.active_earned_ref = { publishId: item.publishId, giftName: item.giftName };
+    }
+    
+    showPfpInventory.value = false;
+    await saveProfile();
+}
+
+// 🚀 NEW: Delete a custom design
+const deleteCustomPfp = async (id, event) => {
+    event.stopPropagation();
+    if(!confirm("Are you sure you want to delete this design?")) return;
+    
+    user.value.pfp_inventory.custom = user.value.pfp_inventory.custom.filter(p => p.id !== id);
+    
+    // If they deleted what they were wearing, clear it
+    if (user.value.active_pfp_type === 'custom' && user.value.pfp_inventory.custom.length === 0) {
+        user.value.profilePic = null;
+    }
+    
+    await saveProfile();
 }
 
 const addPfpBgColor = () => editorState.value.bgColors.push('#ffffff');
@@ -320,9 +427,15 @@ const fetchData = async () => {
       const data = await profileRes.json()
       user.value = data
       
-      // Ensure structure exists
+      // Ensure structures exist for legacy accounts
       if (!user.value.pfp_status || typeof user.value.pfp_status !== 'object') {
           user.value.pfp_status = { matrix: [], background: { colors: ['#ffffff'], angle: 90 } };
+      }
+      if (!user.value.pfp_inventory) {
+          user.value.pfp_inventory = { custom: [], earned: [] };
+      }
+      if (!user.value.active_pfp_type) {
+          user.value.active_pfp_type = 'custom';
       }
 
       // Legacy Description Handler
@@ -360,10 +473,15 @@ const fetchData = async () => {
 const saveProfile = async () => {
   isSaving.value = true
   try {
+    // 🚀 NEW: Payload includes the inventory state
     const payload = {
       username: user.value.username,
       profilePic: user.value.profilePic, 
       pfp_status: user.value.pfp_status, 
+      pfp_inventory: user.value.pfp_inventory,
+      active_pfp_type: user.value.active_pfp_type,
+      active_earned_ref: user.value.active_earned_ref,
+      badges: user.value.badges, // 🚀 Save badge array
       description: {
         container: { colors: containerColors.value, angle: containerAngle.value },
         blocks: blocks.value
@@ -417,70 +535,123 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
   <div class="profile-page">
     <div class="bg-orb orb-1"></div>
     <div class="bg-orb orb-2"></div>
-
-    <div v-if="showPfpEditor" class="modal-overlay">
+    <div v-if="showPfpEditor" class="modal-overlay" @click.self="showPfpEditor = false">
       <div class="pfp-editor-modal glass-panel">
         <div class="modal-header">
           <h3>Pixel Studio (64x64)</h3>
           <button @click="showPfpEditor = false" class="close-btn">×</button>
         </div>
-        
+
         <div class="editor-body">
           <div class="visual-section">
-            <div 
-              class="matrix-container"
-              :style="{ background: getGradient(editorState.bgColors, editorState.bgAngle) }"
-            >
-              <canvas 
-                ref="pfpCanvasRef"
-                width="64" 
-                height="64"
-                class="pixel-canvas"
-                @mousedown="startPainting"
-                @mousemove="handleCanvasAction"
-                @mouseup="stopPainting"
-                @mouseleave="stopPainting"
-              ></canvas>
+            <div class="matrix-container"
+                 @mousedown="startPainting"
+                 @mousemove="handleCanvasAction"
+                 @mouseup="stopPainting"
+                 @mouseleave="stopPainting"
+                 :style="{ background: getGradient(editorState.bgColors, editorState.bgAngle) }">
+              <canvas ref="pfpCanvasRef" width="64" height="64" class="pixel-canvas"></canvas>
             </div>
-            <p class="hint">Draw on the grid. It scales automatically.</p>
+            <span class="hint">Click and drag to draw your custom design</span>
           </div>
-
+          
           <div class="settings-section">
-            
             <div class="setting-group">
               <label>Brush Color</label>
               <div class="color-picker-row">
                 <div class="color-preview" :style="{ backgroundColor: currentPaintColor || 'transparent' }"></div>
-                <input type="color" v-model="currentPaintColor" class="main-color-input" />
-                <button @click="currentPaintColor = null" class="eraser-btn" :class="{ active: currentPaintColor === null }">
+                <input type="color" v-model="currentPaintColor" class="main-color-input" v-if="currentPaintColor !== null" />
+                <button class="eraser-btn" :class="{ active: currentPaintColor === null }" @click="currentPaintColor = null">
                   Eraser
                 </button>
               </div>
-              <button @click="clearMatrix" class="btn outline-btn tiny">Clear All</button>
             </div>
 
-            <hr class="divider"/>
+            <hr class="divider" />
 
             <div class="setting-group">
               <label>Background Gradient</label>
               <div class="gradient-controls">
-                <div v-for="(col, idx) in editorState.bgColors" :key="idx" class="color-wrap">
+                <div v-for="(color, idx) in editorState.bgColors" :key="idx" class="color-wrap">
                   <input type="color" v-model="editorState.bgColors[idx]" />
                   <button v-if="editorState.bgColors.length > 1" @click="removePfpBgColor(idx)" class="tiny-del">×</button>
                 </div>
                 <button class="add-color-btn" @click="addPfpBgColor">+</button>
               </div>
-              <div class="angle-wrap mt-2">
-                <span>Angle: {{ editorState.bgAngle }}°</span>
+              <div class="angle-wrap">
+                <span>Angle</span>
                 <input type="range" v-model="editorState.bgAngle" min="0" max="360" class="full-range" />
               </div>
             </div>
 
             <div class="modal-actions">
-              <button @click="showPfpEditor = false" class="btn outline-btn">Cancel</button>
-              <button @click="applyPfpChanges" class="btn primary-btn">Apply & Save</button>
+              <button class="btn outline-btn" @click="clearMatrix">Clear Canvas</button>
+              <button class="btn save-btn" @click="applyPfpChanges">Save Design</button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+    <div v-if="showPfpInventory" class="modal-overlay" @click.self="showPfpInventory = false">
+      <div class="inventory-modal glass-panel">
+        <div class="modal-header">
+          <h3>Profile Picture Collection</h3>
+          <button @click="showPfpInventory = false" class="close-btn">×</button>
+        </div>
+
+        <div class="inventory-body">
+          <div class="inventory-tabs">
+            <button :class="{ active: inventoryTab === 'custom' }" @click="inventoryTab = 'custom'">My Designs</button>
+            <button :class="{ active: inventoryTab === 'earned' }" @click="inventoryTab = 'earned'">Unlocked Rewards</button>
+          </div>
+
+          <div v-if="inventoryTab === 'custom'" class="inventory-content">
+            <div class="pfp-grid">
+              
+              <div class="pfp-card create-new" @click="openPixelStudio">
+                <span class="plus-icon">+</span>
+                <span>Create New</span>
+              </div>
+
+              <div v-for="item in user.pfp_inventory?.custom" :key="item.id" class="pfp-card">
+                <div class="pfp-preview" :style="{ backgroundImage: `url(${item.base64})` }"></div>
+                <div class="pfp-actions">
+                  <button class="equip-btn" @click="equipPfp('custom', item)">Equip</button>
+                  <button class="delete-btn" @click="deleteCustomPfp(item.id, $event)" title="Delete Design">🗑️</button>
+                </div>
+                
+                <div v-if="user.active_pfp_type === 'custom' && user.profilePic === item.base64" class="active-badge">
+                  ✓ Equipped
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <div v-if="inventoryTab === 'earned'" class="inventory-content">
+            <div v-if="!user.pfp_inventory?.earned?.length" class="empty-inventory">
+              <p>You haven't unlocked any profile pictures yet.<br/>Play games and collect gifts to expand your collection!</p>
+            </div>
+            
+            <div v-else class="pfp-grid">
+              <div v-for="(item, idx) in user.pfp_inventory.earned" :key="idx" class="pfp-card earned-card">
+                <div class="pfp-preview" :style="{ backgroundImage: `url(${item.base64})` }"></div>
+                <div class="earned-info">
+                  <span class="gift-name" :style="{ fontFamily: item.giftFont || 'sans-serif' }">
+                    {{ item.giftName }}
+                  </span>
+                </div>
+                <div class="pfp-actions">
+                  <button class="equip-btn earned-equip" @click="equipPfp('earned', item)">Equip</button>
+                </div>
+                
+                <div v-if="user.active_pfp_type === 'earned' && user.active_earned_ref?.giftName === item.giftName && user.active_earned_ref?.publishId === item.publishId" class="active-badge earned-badge">
+                  ✓ Equipped
+                </div>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
@@ -523,15 +694,13 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
                 <div 
                   class="pfp-circle" 
                   :class="{ editable: isEditing }"
-                  @click="openPfpEditor"
-                >
+                  @click="openPfpInventory" >
                    <span v-if="!user.profilePic" class="initial">{{ user.username.charAt(0) }}</span>
                    
                    <img v-else :src="user.profilePic" class="pfp-img" />
                    
                    <div v-if="isEditing" class="pfp-overlay">
-                     <span class="edit-icon">🎨</span>
-                     <span>Edit Pixels</span>
+                     <span class="edit-icon">🖼️</span> <span>Collection</span>
                    </div>
                 </div>
               </div>
@@ -694,7 +863,27 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
             <span class="plus-icon">+</span>
         </button>
       </header>
+      <div class="badges-section" v-if="user.badges && user.badges.length > 0">
+        <h3 class="section-title">Achievements</h3>
+        <div class="badge-grid">
+          <div v-for="(badge, index) in user.badges" :key="index" class="badge-card">
+            
+            <button 
+              v-if="isEditing" 
+              @click="removeBadge(index)" 
+              class="remove-badge-btn"
+              title="Remove from Showcase"
+            >×</button>
 
+            <div class="badge-img-wrapper">
+              <img :src="badge.base64" alt="Badge" class="badge-img" />
+            </div>
+            <span class="badge-name" :style="{ fontFamily: badge.giftFont || 'sans-serif' }">
+              {{ badge.giftName }}
+            </span>
+          </div>
+        </div>
+      </div>
       <section class="publishes-section">
         <h2 class="section-title">Published Weaves</h2>
         <div v-if="publishedProjects.length > 0" class="projects-grid">
@@ -979,5 +1168,291 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
   .visual-section { height: 50vh; border-right: none; border-bottom: 1px solid rgba(255,255,255,0.1); }
   .matrix-container { width: 280px; height: 280px; }
   .settings-section { width: 100%; height: auto; }
+}
+.inventory-modal {
+  width: 100%;
+  max-width: 850px;
+  height: 75vh;
+  background: #0f172a;
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 25px 60px rgba(0,0,0,0.8), inset 0 0 20px rgba(59, 130, 246, 0.1);
+}
+
+.inventory-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.inventory-tabs {
+  display: flex;
+  background: rgba(0,0,0,0.4);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.inventory-tabs button {
+  flex: 1;
+  padding: 18px;
+  background: transparent;
+  border: none;
+  color: #64748b;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border-bottom: 3px solid transparent;
+  letter-spacing: 1px;
+}
+
+.inventory-tabs button:hover:not(.active) {
+  color: #cbd5e1;
+  background: rgba(255,255,255,0.02);
+}
+
+.inventory-tabs button.active {
+  color: #3b82f6;
+  border-bottom-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.inventory-content {
+  flex: 1;
+  padding: 25px;
+  overflow-y: auto;
+}
+.inventory-content::-webkit-scrollbar { width: 6px; }
+.inventory-content::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+.inventory-content::-webkit-scrollbar-thumb { background: rgba(59,130,246,0.3); border-radius: 4px; }
+
+.pfp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 25px;
+}
+
+.pfp-card {
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.2s, box-shadow 0.2s;
+}
+
+.pfp-card:hover {
+  transform: translateY(-8px);
+  border-color: #3b82f6;
+  box-shadow: 0 12px 25px rgba(0,0,0,0.5), 0 0 15px rgba(59, 130, 246, 0.2);
+}
+
+.pfp-preview {
+  width: 100%;
+  aspect-ratio: 1/1;
+  background-size: cover;
+  background-position: center;
+  image-rendering: pixelated;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.pfp-actions {
+  display: flex;
+  padding: 12px;
+  gap: 8px;
+  background: rgba(0,0,0,0.5);
+  margin-top: auto;
+}
+
+.equip-btn {
+  flex: 1;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+}
+.equip-btn:hover { background: #2563eb; }
+
+.delete-btn {
+  background: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.delete-btn:hover { background: #ef4444; color: white; }
+
+.create-new {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed rgba(59, 130, 246, 0.4);
+  background: rgba(59, 130, 246, 0.05);
+  cursor: pointer;
+  min-height: 220px;
+  color: #3b82f6;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.create-new:hover { 
+  background: rgba(59, 130, 246, 0.15); 
+  border-color: #60a5fa; 
+  transform: scale(1.02);
+}
+.create-new .plus-icon { 
+  font-size: 3.5rem; 
+  margin-bottom: 10px; 
+  font-weight: 300; 
+  line-height: 1;
+}
+
+.active-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  background: rgba(16, 185, 129, 0.9);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: bold;
+  padding: 4px 10px;
+  border-radius: 20px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+  backdrop-filter: blur(4px);
+}
+
+/* Specific styling for Earned Rewards Tab */
+.earned-card {
+  border-color: rgba(245, 158, 11, 0.3);
+}
+.earned-card:hover {
+  border-color: #f59e0b;
+  box-shadow: 0 12px 25px rgba(0,0,0,0.5), 0 0 15px rgba(245, 158, 11, 0.2);
+}
+
+.earned-info {
+  padding: 10px;
+  text-align: center;
+  background: rgba(0,0,0,0.3);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.gift-name {
+  font-size: 0.85rem;
+  color: #fbbf24;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+.earned-equip { background: #f59e0b; }
+.earned-equip:hover { background: #d97706; }
+.earned-badge { background: rgba(245, 158, 11, 0.9); }
+
+.empty-inventory {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #64748b;
+  font-style: italic;
+  text-align: center;
+  padding: 3rem;
+  line-height: 1.6;
+  font-size: 1.1rem;
+}
+.badges-section {
+  margin-bottom: 1rem;
+}
+
+.badge-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.badge-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 15px;
+  width: 140px;
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s;
+}
+
+.badge-card:hover {
+  transform: translateY(-5px) scale(1.05);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5), 0 0 15px rgba(245, 158, 11, 0.2);
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.badge-img-wrapper {
+  width: 80px;
+  height: 80px;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 10px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  background: #000;
+}
+
+.badge-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated; /* Keeps 8-bit art sharp */
+}
+
+.badge-name {
+  color: #fbbf24;
+  font-size: 1.1rem;
+  text-align: center;
+  line-height: 1.2;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+}
+
+/* Remove Button for Edit Mode (Only applies in UserProfile.vue) */
+.remove-badge-btn {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #ef4444;
+  color: white;
+  border: 2px solid #0f172a;
+  font-weight: bold;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  transition: transform 0.2s, background 0.2s;
+}
+
+.remove-badge-btn:hover {
+  transform: scale(1.2);
+  background: #dc2626;
 }
 </style>

@@ -787,14 +787,110 @@ const closeAchievementPopup = () => {
     isShareMenuOpen.value = false
 }
 
-const setAsPfp = () => {
-    alert(`Success! "${selectedAchievement.value.name}" has been set as your Profile Picture.`)
-    closeAchievementPopup()
+const setAsPfp = async () => {
+    if (!selectedAchievement.value) return;
+
+    try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 256; 
+        canvas.height = 256;
+        const ctx = canvas.getContext('2d');
+        
+        ctx.imageSmoothingEnabled = false;
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const pixels = selectedAchievement.value.pixels;
+        const rows = pixels.length;
+        const cols = pixels[0].length;
+        const scaleX = canvas.width / cols;
+        const scaleY = canvas.height / rows;
+
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                if (pixels[y][x]) {
+                    ctx.fillStyle = pixels[y][x];
+                    ctx.fillRect(Math.floor(x * scaleX), Math.floor(y * scaleY), Math.ceil(scaleX), Math.ceil(scaleY));
+                }
+            }
+        }
+        const base64Image = canvas.toDataURL('image/png');
+
+        const res = await fetch('http://localhost:5000/user/pfp/earned', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+                publishId: route.params.id, // 🚀 FIX: Use the correct Vue Router parameter
+                giftName: selectedAchievement.value.name,
+                giftFont: selectedAchievement.value.giftFont || 'sans-serif',
+                base64: base64Image
+            })
+        });
+
+        if (res.ok) {
+            alert(`Success! "${selectedAchievement.value.name}" has been equipped as your Profile Picture.`);
+            closeAchievementPopup();
+        } else {
+            const data = await res.json();
+            alert(`Error: ${data.message}`);
+        }
+    } catch (err) {
+        console.error("Failed to set PFP:", err);
+        alert("Failed to equip Profile Picture.");
+    }
 }
 
-const addToAchievements = () => {
-    alert(`Success! "${selectedAchievement.value.name}" has been pinned to your public showcase.`)
-    closeAchievementPopup()
+const addToAchievements = async () => {
+    if (!selectedAchievement.value) return;
+
+    try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 256; 
+        canvas.height = 256;
+        const ctx = canvas.getContext('2d');
+        
+        ctx.imageSmoothingEnabled = false;
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const pixels = selectedAchievement.value.pixels;
+        const rows = pixels.length;
+        const cols = pixels[0].length;
+        const scaleX = canvas.width / cols;
+        const scaleY = canvas.height / rows;
+
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                if (pixels[y][x]) {
+                    ctx.fillStyle = pixels[y][x];
+                    ctx.fillRect(Math.floor(x * scaleX), Math.floor(y * scaleY), Math.ceil(scaleX), Math.ceil(scaleY));
+                }
+            }
+        }
+        const base64Image = canvas.toDataURL('image/png');
+
+        const res = await fetch('http://localhost:5000/user/badge/earned', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+                publishId: route.params.id, // 🚀 FIX: Use the correct Vue Router parameter
+                giftName: selectedAchievement.value.name,
+                giftFont: selectedAchievement.value.giftFont || 'sans-serif',
+                base64: base64Image
+            })
+        });
+
+        if (res.ok) {
+            alert(`Success! "${selectedAchievement.value.name}" badge added to your profile showcase.`);
+            closeAchievementPopup();
+        } else {
+            const data = await res.json();
+            alert(`Error: ${data.message}`);
+        }
+    } catch (err) {
+        console.error("Failed to add badge:", err);
+        alert("Failed to add badge.");
+    }
 }
 
 const shareToSocial = (platform) => {

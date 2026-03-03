@@ -822,10 +822,11 @@ app.get("/user/profile", authMiddleware, async (req, res) => {
       userid: user.userid,
       description: user.description,
       profilePic: user.profilePic,
-      
-      // ✅ THE MISSING PIECE: Send the matrix data back to frontend
       pfp_status: user.pfp_status, 
-
+      pfp_inventory: user.pfp_inventory,
+      active_pfp_type: user.active_pfp_type,
+      active_earned_ref: user.active_earned_ref,
+      badges: user.badges || [], // 🚀 Send badges to frontend
       verified: user.verified,
       stats: {
         followers: user.followersCount || 0,
@@ -835,7 +836,6 @@ app.get("/user/profile", authMiddleware, async (req, res) => {
       }
     });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -882,25 +882,16 @@ app.post("/console/add/:postId", authMiddleware, async (req, res) => {
 /* ===== UPDATE USER PROFILE ===== */
 app.put("/user/profile", authMiddleware, async (req, res) => {
   const { mongoId } = req.user;
-  
-  // ✅ FIX: Verify pfp_status is included here
-  const { username, description, profilePic, pfp_status } = req.body; 
+  const { username, description, profilePic, pfp_status, pfp_inventory, active_pfp_type, active_earned_ref, badges } = req.body; 
 
   try {
     const updatedUser = await User.findByIdAndUpdate(
       mongoId,
-      { 
-        username, 
-        description, 
-        profilePic, 
-        pfp_status // ✅ Pass the raw matrix data to DB
-      },
+      { username, description, profilePic, pfp_status, pfp_inventory, active_pfp_type, active_earned_ref, badges }, // 🚀 Save badges changes
       { new: true }
     ).select("-password");
-
     res.json(updatedUser);
   } catch (err) {
-    console.error(err);
     res.status(500).json({ message: "Update failed" });
   }
 });
@@ -2082,6 +2073,58 @@ app.get("/posts/:id/like-status", authMiddleware, async (req, res) => {
     res.status(500).json({ message: "Failed to fetch like status" });
   }
 });
+
+app.post("/user/pfp/earned", authMiddleware, async (req, res) => {
+  const { publishId, giftName, base64, giftFont } = req.body; // 🚀 Added giftFont
+  try {
+    const user = await User.findById(req.user.mongoId);
+    if (!user.pfp_inventory || !user.pfp_inventory.earned) {
+      user.pfp_inventory = { custom: [], earned: [] };
+    }
+
+    const alreadyOwned = user.pfp_inventory.earned.find(e => 
+      e.publishId && e.publishId.toString() === publishId && e.giftName === giftName
+    );
+    
+    if (!alreadyOwned) {
+      user.pfp_inventory.earned.push({ publishId, giftName, base64, giftFont }); // Save font
+    }
+
+    user.profilePic = base64; 
+    user.active_pfp_type = 'earned';
+    user.active_earned_ref = { publishId, giftName };
+    await user.save();
+
+    res.json({ success: true, message: "Earned PFP added to inventory and equipped!" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to equip earned PFP" });
+  }
+});
+
+app.post("/user/badge/earned", authMiddleware, async (req, res) => {
+  const { publishId, giftName, base64, giftFont } = req.body;
+  try {
+    const user = await User.findById(req.user.mongoId);
+    if (!user.badges) user.badges = [];
+    
+    // Prevent adding duplicates
+    const alreadyOwned = user.badges.find(b => 
+      b.publishId && b.publishId.toString() === publishId && b.giftName === giftName
+    );
+    
+    if (!alreadyOwned) {
+      user.badges.push({ publishId, giftName, base64, giftFont });
+      await user.save();
+    }
+
+    res.json({ success: true, message: "Badge added to your profile showcase!" });
+  } catch (err) {
+    console.error("Badge Error:", err);
+    res.status(500).json({ message: "Failed to add badge" });
+  }
+});
+
+
 
 mongoose
   .connect(process.env.MONGO_URI)
