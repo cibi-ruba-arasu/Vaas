@@ -1849,9 +1849,11 @@ const handleCanvasClick = (e) => {
     const canvas = viewportCanvasRef.value;
     const rect = canvas.getBoundingClientRect();
     
+    // 1. Get Mouse position relative to the screen
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
+    // 2. Convert Screen Coordinates to World Coordinates (Reverse Pan & Zoom)
     const worldX = (mouseX - viewportOffset.value.x) / viewportScale.value;
     const worldY = (mouseY - viewportOffset.value.y) / viewportScale.value;
 
@@ -1864,11 +1866,14 @@ const handleCanvasClick = (e) => {
 
     let clickedNodeId = null;
 
+    // Only allow clicking on VISIBLE nodes they have ALREADY visited
     const visibleVisitedNodes = activeInst.visitedNodes.filter(nodeId => {
         const n = nodes.find(node => node.index === nodeId);
+        // 🚀 UPDATE: Allow clicking on Gift nodes too by removing them from the exclusion list
         return n && n.node_type !== 'Set Variables';
     });
 
+    // 3. Search backwards through history to see if the mouse touches any node
     for (let i = visibleVisitedNodes.length - 1; i >= 0; i--) {
         const nodeId = visibleVisitedNodes[i];
         const node = nodes.find(n => n.index === nodeId);
@@ -1877,6 +1882,7 @@ const handleCanvasClick = (e) => {
         let isMatch = false;
 
         if (node.node_type === 'If-Else') {
+            // Check Diamond Bounding Box
             const cx = node.x + nw / 2;
             const cy = node.y + nh / 2;
             const radius = 30; 
@@ -1884,6 +1890,7 @@ const handleCanvasClick = (e) => {
                 isMatch = true;
             }
         } else {
+            // Check Rectangle Bounding Box (Supports both General and Gift nodes)
             if (worldX >= node.x && worldX <= node.x + nw && worldY >= node.y && worldY <= node.y + nh) {
                 isMatch = true;
             }
@@ -1895,22 +1902,14 @@ const handleCanvasClick = (e) => {
         }
     }
 
+    // 4. If a node was clicked, move the player there WITHOUT deleting history!
     if (clickedNodeId !== null) {
+        // Only update if they aren't already standing on this exact node
         if (activeInst.visitedNodes[activeInst.visitedNodes.length - 1] !== clickedNodeId) {
-            // 🚀 Set currentLocation to the clicked node
-            activeInst.currentLocation = clickedNodeId;
-            Console_Status.value = { ...Console_Status.value }; // Save to LocalStorage
-            drawViewport(); // Redraw the map to show the new "📍 CURRENT" marker
-            
-            console.log(`📍 Current location set to node: ${clickedNodeId}`);
-        } else {
-            // If clicking on the current node, clear the temporary location
-            if (activeInst.currentLocation !== null) {
-                activeInst.currentLocation = null;
-                Console_Status.value = { ...Console_Status.value };
-                drawViewport();
-                console.log(`📍 Cleared temporary location, returning to last visited node`);
-            }
+            // Push the clicked node to the front of the timeline so it becomes the new "Current Location"
+            activeInst.visitedNodes.push(clickedNodeId);
+            Console_Status.value = { ...Console_Status.value }; // Save the jump to LocalStorage
+            drawViewport(); // Redraw the map instantly to move the "📍 CURRENT" marker
         }
     }
 }
@@ -1958,12 +1957,10 @@ const drawViewport = () => {
     }
     ctx.stroke();
 
-    // --- 2. IDENTIFY DISCOVERED NODES ---
+    // --- 2. IDENTIFY DISCOVERED NODES & TRAVERSED EDGES ---
     const nodes = activeEngineData.value.canvasState?.nodes || [];
     const activeInst = gameInstances.value.find(i => i.id === activeInstanceId.value);
     let rawVisitedSequence = activeInst?.visitedNodes || [];
-    
-    console.log("🎯 Raw visited sequence:", JSON.stringify(rawVisitedSequence));
     
     // If empty (brand new instance), just reveal the root node
     if (rawVisitedSequence.length === 0) {
@@ -1973,42 +1970,24 @@ const drawViewport = () => {
         }
     }
 
-    // Include Gift nodes, but still hide Set Variables (they are backend only)
-    const visibleVisitedNodes = new Set(rawVisitedSequence.filter(nodeId => {
+    // 🚀 NEW: Create an ordered history of VISIBLE nodes chronologically
+    const visibleHistory = rawVisitedSequence.filter(nodeId => {
         const n = nodes.find(node => node.index === nodeId);
+        // Allow 'Gift' nodes to be visible on the map alongside General and If-Else
         return n && n.node_type !== 'Set Variables';
-    }));
+    });
 
-    console.log("👁️ Visible visited nodes:", Array.from(visibleVisitedNodes));
+    // Create a set of uniquely visited visible nodes for block rendering
+    const visibleVisitedNodes = new Set(visibleHistory);
+
+    // 🚀 BUG FIX: Record the EXACT edges the player traversed in gameplay
+    const traversedEdges = new Set();
+    for (let i = 0; i < visibleHistory.length - 1; i++) {
+        traversedEdges.add(`${visibleHistory[i]}->${visibleHistory[i+1]}`);
+    }
 
     const nw = 220; 
     const nh = 70;  
-
-    // 🚀 FIXED: Helper to find the ACTUAL traversed connections from player history
-    const getTraversedConnections = (sequence) => {
-        const connections = [];
-        // Remove any null/undefined values and ensure we have numbers
-        const cleanSequence = sequence.filter(id => id !== null && id !== undefined);
-        
-        for (let i = 0; i < cleanSequence.length - 1; i++) {
-            const fromId = cleanSequence[i];
-            const toId = cleanSequence[i + 1];
-            
-            // Only add if both nodes exist in the nodes array
-            const fromNode = nodes.find(n => n.index === fromId);
-            const toNode = nodes.find(n => n.index === toId);
-            
-            if (fromNode && toNode) {
-                connections.push({ from: fromId, to: toId });
-            }
-        }
-        return connections;
-    };
-
-    // Get the actual path the player took
-    const traversedConnections = getTraversedConnections(rawVisitedSequence);
-    
-    console.log("🔗 Traversed connections:", traversedConnections);
 
     // Helper: Find actual structural connections, passing THROUGH hidden logic nodes
     const getStructuralTargets = (node) => {
@@ -2024,13 +2003,13 @@ const drawViewport = () => {
                 const n = nodes.find(x => x.index === currId);
                 if (!n) break;
                 
-                // If we found a visible node (General, If-Else, Gift), it's our structural target!
+                // If we found a visible node, it's our structural target!
                 if (n.node_type !== 'Set Variables') {
                     targets.push(currId);
                     break;
                 }
                 
-                // If it's a hidden node (Set Variables), pass right through it to find the real target
+                // If it's a hidden node, pass right through it to find the real target
                 currId = n.Next;
                 safety++;
             }
@@ -2047,58 +2026,51 @@ const drawViewport = () => {
         return targets;
     };
 
-    // --- 3. DRAW CONNECTING LINES (ONLY TRAVERSED PATHS) ---
+    // --- 3. DRAW CONNECTING LINES (STRUCTURAL FLOW) ---
     ctx.strokeStyle = '#4ade80'; // Neon green path
     ctx.lineWidth = 3;
     const drawnLines = new Set(); // Prevent double drawing
 
-    // 🚀 FIXED: Only draw lines that exist in the player's actual path
-    traversedConnections.forEach(({ from: fromId, to: toId }) => {
-        // Only draw if both nodes are visible
-        if (!visibleVisitedNodes.has(fromId) || !visibleVisitedNodes.has(toId)) {
-            console.log(`⏭️ Skipping line ${fromId}->${toId} - one or both nodes not visible`);
-            return;
-        }
+    visibleVisitedNodes.forEach(fromNodeId => {
+        const fromNode = nodes.find(n => n.index === fromNodeId);
+        if (!fromNode) return;
         
-        const lineKey = `${fromId}->${toId}`;
-        if (drawnLines.has(lineKey)) {
-            console.log(`⏭️ Skipping duplicate line ${lineKey}`);
-            return;
-        }
-        drawnLines.add(lineKey);
-
-        const fromNode = nodes.find(n => n.index === fromId);
-        const toNode = nodes.find(n => n.index === toId);
+        const targets = getStructuralTargets(fromNode);
         
-        if (!fromNode || !toNode) {
-            console.log(`⏭️ Skipping line ${fromId}->${toId} - nodes not found`);
-            return;
-        }
+        targets.forEach(toNodeId => {
+            // 🚀 BUG FIX: ONLY draw the line if the player ACTUALLY traveled this exact path in history
+            const edgeKey = `${fromNodeId}->${toNodeId}`;
+            if (!traversedEdges.has(edgeKey)) return;
+            
+            if (drawnLines.has(edgeKey)) return;
+            drawnLines.add(edgeKey);
 
-        console.log(`✅ Drawing line: ${fromNode.Node_name || fromId} → ${toNode.Node_name || toId}`);
+            const toNode = nodes.find(n => n.index === toNodeId);
+            if (!toNode) return;
 
-        const startX = fromNode.node_type === 'If-Else' ? fromNode.x + nw/2 + 30 : fromNode.x + nw;
-        const startY = fromNode.y + nh / 2;
-        
-        const endX = toNode.node_type === 'If-Else' ? toNode.x + nw/2 - 30 : toNode.x;
-        const endY = toNode.y + nh / 2;
+            const startX = fromNode.node_type === 'If-Else' ? fromNode.x + nw/2 + 30 : fromNode.x + nw;
+            const startY = fromNode.y + nh / 2;
+            
+            const endX = toNode.node_type === 'If-Else' ? toNode.x + nw/2 - 30 : toNode.x;
+            const endY = toNode.y + nh / 2;
 
-        ctx.beginPath();
-        ctx.moveTo(startX, startY);
-        
-        const cpOffset = Math.max(50, Math.abs(endX - startX) / 2);
-        ctx.bezierCurveTo(
-            startX + cpOffset, startY, 
-            endX - cpOffset, endY, 
-            endX, endY
-        );
-        ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            
+            const cpOffset = Math.max(50, Math.abs(endX - startX) / 2);
+            ctx.bezierCurveTo(
+                startX + cpOffset, startY, 
+                endX - cpOffset, endY, 
+                endX, endY
+            );
+            ctx.stroke();
 
-        // Arrow head / target dot
-        ctx.fillStyle = '#4ade80';
-        ctx.beginPath();
-        ctx.arc(endX, endY, 4, 0, Math.PI * 2);
-        ctx.fill();
+            // Arrow head / target dot
+            ctx.fillStyle = '#4ade80';
+            ctx.beginPath();
+            ctx.arc(endX, endY, 4, 0, Math.PI * 2);
+            ctx.fill();
+        });
     });
 
     // --- 4. DRAW THE NODE BOXES ---
@@ -2108,16 +2080,10 @@ const drawViewport = () => {
 
         // Trace backward to find the absolute latest VISIBLE node the player is standing on
         let lastVisibleId = null;
-        if (activeInst.currentLocation !== null && activeInst.currentLocation !== undefined) {
-            // If we have a temporary location from map click, use that
-            lastVisibleId = activeInst.currentLocation;
-        } else {
-            // Otherwise use the actual last visited node
-            for (let i = rawVisitedSequence.length - 1; i >= 0; i--) {
-                if (visibleVisitedNodes.has(rawVisitedSequence[i])) {
-                    lastVisibleId = rawVisitedSequence[i];
-                    break;
-                }
+        for (let i = rawVisitedSequence.length - 1; i >= 0; i--) {
+            if (visibleVisitedNodes.has(rawVisitedSequence[i])) {
+                lastVisibleId = rawVisitedSequence[i];
+                break;
             }
         }
         const isCurrentLocation = (nodeId === lastVisibleId);
@@ -2148,9 +2114,9 @@ const drawViewport = () => {
             ctx.fillText('?', cx, cy);
 
         } else if (node.node_type === 'Gift') {
-            // 🎁 RENDER GIFT NODE (Gold rectangle with gift icon)
-            ctx.fillStyle = isCurrentLocation ? 'rgba(245, 158, 11, 0.9)' : 'rgba(245, 158, 11, 0.7)'; // Amber/gold
-            ctx.strokeStyle = isCurrentLocation ? '#fbbf24' : '#f59e0b';
+            // 🎁 RENDER GIFT NODE
+            ctx.fillStyle = isCurrentLocation ? '#facc15' : '#8b5cf6'; // Purple for Gift
+            ctx.strokeStyle = isCurrentLocation ? '#fef08a' : '#a78bfa'; 
             ctx.lineWidth = isCurrentLocation ? 3 : 2;
             
             ctx.beginPath();
@@ -2158,19 +2124,15 @@ const drawViewport = () => {
             ctx.fill();
             ctx.stroke();
 
-            // Draw a gift icon in the top-left corner
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 16px Inter, sans-serif';
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'top';
-            ctx.fillText('🎁', node.x + 5, node.y + 5);
-
-            // Draw node name (centered)
-            ctx.fillStyle = '#ffffff';
+            ctx.fillStyle = isCurrentLocation ? '#000000' : '#ffffff';
             ctx.font = '600 14px Inter, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(node.Node_name || `Gift ${node.index}`, cx, cy);
+            ctx.fillText(node.giftName || `Gift`, cx + 10, cy);
+            
+            // Add a little emoji to distinguish between PFP and Badges
+            ctx.font = '16px sans-serif';
+            ctx.fillText(node.giftMode === 'badge' ? '🎖️' : '🖼️', cx - 80, cy);
 
         } else {
             // 🟩 RENDER STANDARD NODE (Rectangle)
