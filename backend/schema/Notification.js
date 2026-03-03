@@ -5,7 +5,7 @@ const notificationSchema = new mongoose.Schema({
   sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // Who caused it
   type: { 
     type: String, 
-    enum: ['follow', 'publish', 'update'], 
+    enum: ['follow', 'publish', 'update', 'like'], // 👈 ADDED 'like' HERE
     required: true 
   },
   message: { type: String, required: true }, // e.g., "X followed you"

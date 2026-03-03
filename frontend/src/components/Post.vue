@@ -11,6 +11,10 @@ let currentUserId = null
 
 const inConsole = ref(false)
 
+const liked = ref(false)
+const likesCount = ref(0)
+const isLiking = ref(false)
+
 if (token) {
   try {
     const payload = JSON.parse(atob(token.split('.')[1]))
@@ -103,13 +107,19 @@ const fetchPost = async () => {
           post.value.views = data.stats.views
           post.value.visits = data.stats.visits
           post.value.plays = data.stats.plays
+          post.value.likes = data.stats.likes
+          likesCount.value = data.stats.likes
       }
 
-      // NEW: Assign console status
+      // Assign console status
       if (data.inConsole !== undefined) {
-          inConsole.value = data.inConsole // <--- CRASHED HERE
+          inConsole.value = data.inConsole
       }
 
+      // NEW: Assign like status
+      if (data.liked !== undefined) {
+          liked.value = data.liked
+      }
     } else {
       error.value = "The scroll you seek has crumbled to dust."
     }
@@ -121,13 +131,40 @@ const fetchPost = async () => {
   }
 }
 
+const toggleLike = async () => {
+  if (isLiking.value) return; // Prevent double-clicks
+  isLiking.value = true;
+
+  try {
+    const res = await fetch(`http://localhost:5000/posts/${postId}/like`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      liked.value = data.liked;
+      likesCount.value = data.likes;
+      
+      // Optional: Show a small feedback
+      if (data.liked) {
+        // Subtle animation or nothing at all
+      }
+    }
+  } catch (err) {
+    console.error("Like failed:", err);
+  } finally {
+    isLiking.value = false;
+  }
+};
+
 const handlePlay = async () => {
   if (isAuthor.value) {
     alert("Creators cannot add their own project to the console. Use Preview in Create mode.")
     return
   }
 
-  // NEW: If already in console, just take them there instead of re-adding
+  // If already in console, just take them there instead of re-adding
   if (inConsole.value) {
     router.push('/console')
     return
@@ -141,6 +178,18 @@ const handlePlay = async () => {
     
     if (res.ok) {
         inConsole.value = true // Update UI instantly
+        
+        // 🚀 NEW: Track play when added to console
+        // For free games: This counts as a play
+        // For paid games: Play will be counted when purchased and played
+        if (!post.value.monetization?.isPaid) {
+          // Track play for free games
+          await fetch(`http://localhost:5000/posts/${postId}/play`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` }
+          });
+        }
+        
         alert("Added to your Console! 🎮")
     } else {
         alert("Failed to add to console.")
@@ -149,6 +198,7 @@ const handlePlay = async () => {
       console.error("Add to Console failed") 
   }
 }
+
 onMounted(() => {
   fetchPost()
 })
@@ -216,11 +266,20 @@ onMounted(() => {
                 <span class="count">{{ post.visits || 0 }}</span>
                 <span class="label">Visits</span>
               </div>
-              <div class="stat-badge" title="Likes">
-                <span class="icon">❤️</span>
-                <span class="count">{{ post.likes || 0 }}</span>
-                <span class="label">Likes</span>
+              
+              <!-- NEW: Like Button Stat Badge -->
+              <div 
+                class="stat-badge like-badge" 
+                :class="{ 'liked': liked }"
+                @click="toggleLike"
+                :style="{ cursor: isLiking ? 'wait' : 'pointer' }"
+                title="Like this weave"
+              >
+                <span class="icon">{{ liked ? '❤️' : '🤍' }}</span>
+                <span class="count">{{ likesCount }}</span>
+                <span class="label">{{ liked ? 'Liked' : 'Like' }}</span>
               </div>
+              
               <span class="lang-badge">{{ post.language ? post.language.toUpperCase() : 'EN' }}</span>
             </div>
 
@@ -256,9 +315,10 @@ onMounted(() => {
           :style="inConsole ? 'background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);' : ''"
         >
           <span class="icon" v-if="inConsole">✔️</span>
-          <span class="icon" v-else>🎮</span>
+          <span class="icon" v-else>📀</span>
           <span class="text" v-if="inConsole">Open in Console</span>
-          <span class="text" v-else>{{ post.monetization.isPaid ? 'Purchase Access' : 'Add to Console' }}</span>
+          <!-- 🚀 ALWAYS "Add to Console" regardless of paid/free -->
+          <span class="text" v-else>Add to Console</span>
         </button>
       </div>
 
@@ -425,5 +485,30 @@ onMounted(() => {
   .action-bar { flex-direction: column; gap: 1rem; text-align: center; padding: 1rem; }
   .price-info { width: 100%; display: flex; flex-direction: column; align-items: center; }
   .action-btn { width: 100%; justify-content: center; }
+}
+.like-badge {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.like-badge:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.like-badge.liked {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: #ef4444;
+}
+
+.like-badge.liked .icon {
+  animation: heartPop 0.3s ease;
+}
+
+@keyframes heartPop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.3); }
+  100% { transform: scale(1); }
 }
 </style>

@@ -1554,6 +1554,9 @@ app.get("/posts/:id", authMiddleware, async (req, res) => {
     const author = await User.findById(post.authorId).select("userid");
     const authorUserId = author ? author.userid : post.authorId;
 
+    // 👇 NEW: Check if user liked this post
+    const hasLiked = post.likedBy.includes(mongoId);
+
     // Convert the mongoose document to a plain object and inject the new ID
     const postResponse = {
         ...post.toObject(),
@@ -1565,9 +1568,11 @@ app.get("/posts/:id", authMiddleware, async (req, res) => {
         stats: {
             views: post.views,
             visits: post.visits,
-            plays: post.plays
+            plays: post.plays,
+            likes: post.likes // 👈 ADDED likes count
         },
-        inConsole 
+        inConsole,
+        liked: hasLiked // 👈 ADDED liked status
     });
 
   } catch (err) {
@@ -1584,25 +1589,43 @@ app.post("/posts/:id/play", authMiddleware, async (req, res) => {
     if (!post) return res.status(404).json({ message: "Post not found" });
 
     const isAuthor = post.authorId.toString() === mongoId;
-
     // Do not count author plays
     if (isAuthor) {
-        return res.json({ success: false, message: "Author play not counted" });
+      return res.json({ success: false, message: "Author play not counted" });
     }
 
     // Check if user already played
     const hasPlayed = post.playedBy && post.playedBy.includes(mongoId);
 
-    if (!hasPlayed) {
-        await Publish.findByIdAndUpdate(id, {
-            $inc: { plays: 1 },
-            $push: { playedBy: mongoId }
+    // 🚀 NEW LOGIC: For paid games, only count if purchased
+    if (post.monetization?.isPaid) {
+      // Check if user purchased this game
+      const purchase = await Purchase.findOne({
+        userId: mongoId,
+        gameId: id,
+        status: 'completed'
+      });
+      
+      // If paid game and not purchased, DO NOT count play
+      if (!purchase) {
+        return res.json({ 
+          success: true, 
+          newPlay: false, 
+          message: "Play not counted - purchase required" 
         });
-        return res.json({ success: true, newPlay: true });
+      }
+    }
+
+    // If not already played, increment play count
+    if (!hasPlayed) {
+      await Publish.findByIdAndUpdate(id, {
+        $inc: { plays: 1 },
+        $push: { playedBy: mongoId }
+      });
+      return res.json({ success: true, newPlay: true });
     }
 
     res.json({ success: true, newPlay: false });
-
   } catch (err) {
     console.error("Play tracking error:", err);
     res.status(500).json({ message: "Error tracking play" });
@@ -1997,6 +2020,66 @@ app.get("/payments/my-purchases", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("Fetch Purchases Error:", err);
     res.status(500).json({ message: "Failed to fetch purchases" });
+  }
+});
+
+app.post("/posts/:id/like", authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { mongoId } = req.user;
+
+  try {
+    const post = await Publish.findById(id);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    const hasLiked = post.likedBy.includes(mongoId);
+
+    if (hasLiked) {
+      // Unlike: Remove from array and decrement count
+      await Publish.findByIdAndUpdate(id, {
+        $pull: { likedBy: mongoId },
+        $inc: { likes: -1 }
+      });
+      return res.json({ liked: false, likes: post.likes - 1 });
+    } else {
+      // Like: Add to array and increment count
+      await Publish.findByIdAndUpdate(id, {
+        $push: { likedBy: mongoId },
+        $inc: { likes: 1 }
+      });
+      
+      // 🔔 Optional: Send notification to author
+      if (post.authorId.toString() !== mongoId) {
+        await Notification.create({
+          recipient: post.authorId,
+          sender: mongoId,
+          type: 'like',
+          message: `${req.user.username || 'Someone'} liked your weave: "${post.name}"`,
+          link: `/post/${id}`
+        });
+      }
+      
+      return res.json({ liked: true, likes: post.likes + 1 });
+    }
+  } catch (err) {
+    console.error("Like error:", err);
+    res.status(500).json({ message: "Failed to process like" });
+  }
+});
+
+/* ===== CHECK IF USER LIKED POST ===== */
+app.get("/posts/:id/like-status", authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { mongoId } = req.user;
+
+  try {
+    const post = await Publish.findById(id).select("likedBy likes");
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    const liked = post.likedBy.includes(mongoId);
+    res.json({ liked, likes: post.likes });
+  } catch (err) {
+    console.error("Like status error:", err);
+    res.status(500).json({ message: "Failed to fetch like status" });
   }
 });
 

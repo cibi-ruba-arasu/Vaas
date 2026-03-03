@@ -65,6 +65,10 @@ const isProcessingPayment = ref(false)
 const paymentError = ref('')
 const purchasedGames = ref([])
 
+const likedGames = ref(new Map()) // Map of gameId -> liked status
+const likesCountMap = ref(new Map()) // Map of gameId -> likes count
+const isLikingGame = ref(new Map()) // Prevent double-liking
+
 // Load user's purchased games on mount
 const fetchPurchasedGames = async () => {
   try {
@@ -99,6 +103,57 @@ const closePurchaseModal = () => {
   isProcessingPayment.value = false;
   paymentError.value = '';
 }
+
+const fetchLikeStatuses = async () => {
+  if (!myGames.value.length) return;
+  
+  try {
+    const promises = myGames.value.map(async (game) => {
+      const res = await fetch(`http://localhost:5000/posts/${game._id}/like-status`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        likedGames.value.set(game._id, data.liked);
+        likesCountMap.value.set(game._id, data.likes);
+      }
+    });
+    
+    await Promise.all(promises);
+  } catch (err) {
+    console.error("Failed to fetch like statuses:", err);
+  }
+};
+
+const toggleLikeGame = async (gameId, event) => {
+  event.stopPropagation(); // Prevent triggering the game click
+  
+  if (isLikingGame.value.get(gameId)) return;
+  isLikingGame.value.set(gameId, true);
+  
+  try {
+    const res = await fetch(`http://localhost:5000/posts/${gameId}/like`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      likedGames.value.set(gameId, data.liked);
+      likesCountMap.value.set(gameId, data.likes);
+      
+      // Update the game object itself for consistency
+      const game = myGames.value.find(g => g._id === gameId);
+      if (game) {
+        game.likes = data.likes;
+      }
+    }
+  } catch (err) {
+    console.error("Like failed:", err);
+  } finally {
+    isLikingGame.value.set(gameId, false);
+  }
+};
 
 // Initialize Razorpay payment
 const initiatePurchase = async () => {
@@ -902,6 +957,9 @@ const fetchConsole = async () => {
     if (res.ok) {
       myGames.value = await res.json()
       trackAction("FETCHED_LIBRARY", { totalGames: myGames.value.length })
+      
+      // 🚀 NEW: Fetch like statuses for all games
+      await fetchLikeStatuses();
     }
   } catch (err) {
     console.error("Failed to load console:", err)
@@ -1064,25 +1122,44 @@ watch(() => route.hash, (newHash) => {
 })
 
 const handlePlayClick = async (id) => {
-    isInsertingCD.value = true
-    insertingGameId.value = id
-    trackAction("CD_INSERTION_STARTED", { gameId: id })
+  if (isInsertingCD.value) return; // Prevent double-clicks
+  
+  isInsertingCD.value = true
+  insertingGameId.value = id
+  trackAction("CD_INSERTION_STARTED", { gameId: id })
 
+  // Track play for free games
+  const game = myGames.value.find(g => g._id === id);
+  if (game && !game.monetization?.isPaid) {
     try {
-        if (!document.fullscreenElement) {
-            await document.documentElement.requestFullscreen()
-        }
+      await fetch(`http://localhost:5000/posts/${id}/play`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` }
+      });
     } catch (err) {
-        console.warn("Fullscreen request blocked/failed:", err)
+      console.warn("Play tracking failed:", err);
     }
+  }
 
-    lockLandscape()
+  try {
+    if (!document.fullscreenElement) {
+      await document.documentElement.requestFullscreen()
+    }
+  } catch (err) {
+    console.warn("Fullscreen request blocked/failed:", err)
+  }
 
+  lockLandscape()
+
+  // Wait for CD insertion animation to complete before opening modal
+  setTimeout(() => {
+    openGameModal(id)
+    // Reset insertion state after modal opens
     setTimeout(() => {
-        openGameModal(id)
-        isInsertingCD.value = false
-        insertingGameId.value = null
-    }, 2000)
+      isInsertingCD.value = false
+      insertingGameId.value = null
+    }, 300)
+  }, 1500) // Match animation duration
 }
 
 const openGameModal = (gameId) => {
@@ -2273,11 +2350,34 @@ const preloadUrls = (urls) => {
         <p class="game-author">by {{ filteredGames[currentIndex]?.authorName }}</p>
         
         <div class="action-buttons">
-            <button class="play-btn" :disabled="isInsertingCD" @click="handlePlayClick(filteredGames[currentIndex]._id)">
-                {{ isInsertingCD ? 'Loading...' : '▶ Play Game' }}
+            <!-- 🚀 NEW: Like button integrated into action buttons -->
+            <button 
+                class="action-btn like-btn" 
+                :class="{ 
+                    'liked': likedGames.get(filteredGames[currentIndex]?._id),
+                    'liking': isLikingGame.get(filteredGames[currentIndex]?._id)
+                }"
+                @click="toggleLikeGame(filteredGames[currentIndex]._id, $event)"
+                :disabled="isLikingGame.get(filteredGames[currentIndex]?._id)"
+            >
+                <span class="btn-icon" :class="{ 'heart-pop': likedGames.get(filteredGames[currentIndex]?._id) && !isLikingGame.get(filteredGames[currentIndex]?._id) }">
+                    {{ likedGames.get(filteredGames[currentIndex]?._id) ? '❤️' : '🤍' }}
+                </span>
+                <span class="btn-text">{{ likedGames.get(filteredGames[currentIndex]?._id) ? 'Liked' : 'Like' }}</span>
+                <span class="btn-count" :class="{ 'count-bounce': isLikingGame.get(filteredGames[currentIndex]?._id) }">{{ likesCountMap.get(filteredGames[currentIndex]?._id) || 0 }}</span>
+                
+                <!-- Ripple effect when clicking -->
+                <span v-if="isLikingGame.get(filteredGames[currentIndex]?._id)" class="like-ripple"></span>
             </button>
-            <button class="remove-btn" :disabled="isInsertingCD" @click="removeGame(filteredGames[currentIndex]._id)">
-                ⏏ Remove
+            
+            <button class="action-btn play-btn" :disabled="isInsertingCD" @click="handlePlayClick(filteredGames[currentIndex]._id)">
+                <span class="btn-icon">▶</span>
+                <span class="btn-text">{{ isInsertingCD ? 'Loading...' : 'Play Game' }}</span>
+            </button>
+            
+            <button class="action-btn remove-btn" :disabled="isInsertingCD" @click="removeGame(filteredGames[currentIndex]._id)">
+                <span class="btn-icon">⏏</span>
+                <span class="btn-text">Remove</span>
             </button>
         </div>
     </div>
@@ -3760,6 +3860,157 @@ const preloadUrls = (urls) => {
     transform: translateY(-2px) scale(1.05);
     border-color: rgba(59, 130, 246, 0.5);
     box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+}
+
+.like-btn {
+    position: relative;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #cbd5e1;
+    padding: 12px 30px;
+    border-radius: 30px;
+    font-weight: 700;
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+}
+
+.like-btn:not(:disabled):hover {
+    transform: translateY(-3px);
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(236, 72, 153, 0.5);
+    box-shadow: 0 8px 20px rgba(236, 72, 153, 0.3);
+}
+
+.like-btn.liked {
+    background: rgba(236, 72, 153, 0.15);
+    border-color: #ec4899;
+    color: #ec4899;
+    box-shadow: 0 0 20px rgba(236, 72, 153, 0.4);
+}
+
+.like-btn.liked:not(:disabled):hover {
+    background: rgba(236, 72, 153, 0.25);
+    transform: translateY(-3px) scale(1.02);
+    box-shadow: 0 8px 25px rgba(236, 72, 153, 0.5);
+}
+
+.like-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: scale(0.95);
+}
+
+/* Heart icon animation */
+.btn-icon {
+    display: inline-block;
+    font-size: 1.2rem;
+    transition: transform 0.2s ease;
+}
+
+.heart-pop {
+    animation: heartPop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes heartPop {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.4); }
+    75% { transform: scale(0.9); }
+    100% { transform: scale(1); }
+}
+
+/* Count number animation */
+.btn-count {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 4px 8px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    min-width: 32px;
+    text-align: center;
+    transition: all 0.2s ease;
+}
+
+.liked .btn-count {
+    background: rgba(236, 72, 153, 0.3);
+    color: #fff;
+}
+
+.count-bounce {
+    animation: countBounce 0.3s ease;
+}
+
+@keyframes countBounce {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.2); }
+}
+
+/* Ripple effect on click */
+.like-ripple {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 5px;
+    height: 5px;
+    background: rgba(236, 72, 153, 0.5);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    animation: rippleEffect 0.6s ease-out;
+    pointer-events: none;
+}
+
+@keyframes rippleEffect {
+    0% {
+        width: 0;
+        height: 0;
+        opacity: 0.5;
+    }
+    100% {
+        width: 300px;
+        height: 300px;
+        opacity: 0;
+    }
+}
+
+/* Optional: Add floating hearts when liked */
+.like-btn.liked::after {
+    content: '❤️';
+    position: absolute;
+    font-size: 1rem;
+    opacity: 0;
+    animation: floatHeart 1s ease-out forwards;
+    pointer-events: none;
+}
+
+@keyframes floatHeart {
+    0% {
+        opacity: 0.8;
+        transform: translateY(0) translateX(-50%);
+    }
+    50% {
+        opacity: 1;
+        transform: translateY(-20px) translateX(-50%) rotate(10deg);
+    }
+    100% {
+        opacity: 0;
+        transform: translateY(-40px) translateX(-50%) rotate(-10deg);
+    }
+}
+
+/* Confetti effect for multiple likes (optional) */
+@keyframes confettiPop {
+    0% {
+        opacity: 1;
+        transform: translateY(0) rotate(0deg);
+    }
+    100% {
+        opacity: 0;
+        transform: translateY(-100px) rotate(720deg);
+    }
 }
 
 .ach-canvas {
