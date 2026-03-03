@@ -179,7 +179,6 @@ const initiatePurchase = async () => {
       if (orderData.alreadyOwned) {
         alert("You already own this game!");
         closePurchaseModal();
-        // Refresh purchases
         await fetchPurchasedGames();
         return;
       }
@@ -190,7 +189,7 @@ const initiatePurchase = async () => {
 
     // 2. Configure Razorpay options
     const options = {
-      key: orderData.order.key, // Razorpay Key ID
+      key: orderData.order.key,
       amount: orderData.order.amount,
       currency: orderData.order.currency,
       name: selectedGameForPurchase.value.name,
@@ -218,8 +217,21 @@ const initiatePurchase = async () => {
         const verifyData = await verifyRes.json();
         
         if (verifyData.success) {
-          // 4. Success! Refresh purchases and show success message
+          // 4. Success! Refresh purchases
           await fetchPurchasedGames();
+          
+          // 🚀 NEW: Track the first play for this paid game
+          try {
+            await fetch(`http://localhost:5000/posts/${selectedGameForPurchase.value._id}/play`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            console.log("First play tracked for purchased game");
+          } catch (playErr) {
+            console.warn("Failed to track first play:", playErr);
+            // Don't fail the purchase if play tracking fails
+          }
+          
           alert("🎉 Purchase successful! You now own this game.");
           closePurchaseModal();
         } else {
@@ -227,12 +239,12 @@ const initiatePurchase = async () => {
         }
       },
       prefill: {
-        name: "", // You can fetch from user profile
+        name: "",
         email: "",
         contact: ""
       },
       theme: {
-        color: "#3b82f6" // Your brand color
+        color: "#3b82f6"
       },
       modal: {
         ondismiss: () => {
@@ -242,7 +254,6 @@ const initiatePurchase = async () => {
       }
     };
 
-    // 4. Open Razorpay checkout
     const razorpayInstance = new window.Razorpay(options);
     razorpayInstance.open();
 
