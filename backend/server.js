@@ -763,10 +763,43 @@ app.get("/user/theme", authMiddleware, async (req, res) => {
   let pref = await UserPreference.findOne({ userId: mongoId })
 
   if (!pref) {
-    return res.json({ themeColor: "#808080" }) // default grey
+    return res.json({ 
+      themeColor: "#808080", 
+      includedCategories: [], 
+      excludedCategories: [] 
+    }) // default
   }
 
-  res.json({ themeColor: pref.themeColor })
+  res.json({ 
+    themeColor: pref.themeColor,
+    includedCategories: pref.includedCategories || [],
+    excludedCategories: pref.excludedCategories || []
+  })
+})
+
+/* ===== UPDATE USER PREFERENCES ===== */
+app.post("/user/theme", authMiddleware, async (req, res) => {
+  const { mongoId } = req.user
+  const { color, includedCategories, excludedCategories } = req.body
+
+  let pref = await UserPreference.findOne({ userId: mongoId })
+
+  if (!pref) {
+    pref = new UserPreference({
+      userId: mongoId,
+      themeColor: color,
+      includedCategories: includedCategories || [],
+      excludedCategories: excludedCategories || []
+    })
+  } else {
+    if (color) pref.themeColor = color;
+    // Update arrays if they are provided in the request
+    if (includedCategories !== undefined) pref.includedCategories = includedCategories;
+    if (excludedCategories !== undefined) pref.excludedCategories = excludedCategories;
+  }
+
+  await pref.save()
+  res.json({ success: true })
 })
 
 // 2. Get User's Console Items
@@ -791,24 +824,102 @@ app.get("/console", authMiddleware, async (req, res) => {
   }
 });
 
-app.post("/user/theme", authMiddleware, async (req, res) => {
-  const { mongoId } = req.user
-  const { color } = req.body
 
-  let pref = await UserPreference.findOne({ userId: mongoId })
+app.get("/publish/explore", async (req, res) => {
+  try {
+    // 🚀 FIX: Accept 'categories' (plural) from the query
+    const { categories } = req.query;
+    
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 12;
 
-  if (!pref) {
-    pref = new UserPreference({
-      userId: mongoId,
-      themeColor: color
-    })
-  } else {
-    pref.themeColor = color
+    let includedPrefs = [];
+    let excludedPrefs = [];
+
+    // 1. Identify User Preferences
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.split(" ")[1];
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const pref = await UserPreference.findOne({ userId: decoded.mongoId });
+        if (pref) {
+          includedPrefs = pref.includedCategories || [];
+          excludedPrefs = pref.excludedCategories || [];
+        }
+      } catch (e) {}
+    }
+
+    // 2. Base Query
+    let query = {};
+    
+    // 🚀 FIX: Handle multiple categories via the $in operator
+    if (categories) {
+      const catArray = categories.split(','); // Convert "Action,Sci-Fi" into ["Action", "Sci-Fi"]
+      query.$or = [
+        { categories: { $in: catArray } },
+        { customCategories: { $in: catArray } }
+      ];
+    }
+    
+    if (excludedPrefs.length > 0) {
+      query.$and = [
+        { categories: { $nin: excludedPrefs } },
+        { customCategories: { $nin: excludedPrefs } },
+        { warnings: { $nin: excludedPrefs } }
+      ];
+    }
+
+    const weaves = await Publish.find(query).lean();
+
+    // 3. The Scoring Engine
+    const now = new Date();
+    const scoredWeaves = weaves.map(weave => {
+      const likes = weave.likes || 0;
+      const plays = weave.plays || 0;
+      const visits = weave.visits || 0;
+      const views = weave.views || 0;
+
+      const baseScore = (likes * 10) + (plays * 5) + (visits * 2) + (views * 1);
+      const conversionRatio = (plays + likes) / (visits + 1);
+      const qualityScore = baseScore * (1 + conversionRatio);
+
+      const publishDate = new Date(weave.publishedAt || weave._id.getTimestamp());
+      const ageInHours = Math.max(1, (now - publishDate) / (1000 * 60 * 60));
+      const gravity = 1.2; 
+      let finalScore = qualityScore / Math.pow(ageInHours + 2, gravity);
+
+      if (includedPrefs.length > 0) {
+        let matchCount = 0;
+        if (weave.categories) matchCount += weave.categories.filter(c => includedPrefs.includes(c)).length;
+        if (weave.customCategories) matchCount += weave.customCategories.filter(c => includedPrefs.includes(c)).length;
+        if (matchCount > 0) finalScore *= (1 + (0.5 * matchCount));
+      }
+
+      return { ...weave, rankScore: finalScore };
+    });
+
+    // 4. Sort highest score first
+    scoredWeaves.sort((a, b) => b.rankScore - a.rankScore);
+
+    // 🚀 NEW: Pagination Logic
+    const startIndex = (page - 1) * limit;
+    const endIndex = page * limit;
+    const paginatedWeaves = scoredWeaves.slice(startIndex, endIndex);
+    const totalPages = Math.ceil(scoredWeaves.length / limit);
+
+    res.json({
+      weaves: paginatedWeaves,
+      currentPage: page,
+      totalPages: totalPages,
+      totalItems: scoredWeaves.length
+    });
+
+  } catch (err) {
+    console.error("Recommendation Engine Error:", err);
+    res.status(500).json({ message: "Failed to compile feed" });
   }
-
-  await pref.save()
-  res.json({ success: true })
-})
+});
 
 app.get("/user/profile", authMiddleware, async (req, res) => {
   try {
@@ -1357,6 +1468,8 @@ app.get("/users/:userid", async (req, res) => {
         userid: targetUser.userid,
         description: targetUser.description,
         profilePic: targetUser.profilePic,
+        active_pfp_type: targetUser.active_pfp_type || 'custom',
+        active_earned_ref: targetUser.active_earned_ref || null,
         badges: targetUser.badges || [], // 🚀 Badges are safely included here
         verified: targetUser.verified,
         stats: {
@@ -2150,6 +2263,27 @@ app.post("/user/badge/earned", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("Badge Error:", err);
     res.status(500).json({ message: "Failed to add badge" });
+  }
+});
+
+app.get("/badges/source/:publishId", async (req, res) => {
+  try {
+    // 🚀 FIX: Added titleFont to the select projection
+    const post = await Publish.findById(req.params.publishId).select("name authorId authorName titleFont");
+    if (!post) return res.status(404).json({ message: "Source weave not found" });
+
+    // Fetch the author's custom @userid for frontend routing
+    const author = await User.findById(post.authorId).select("userid");
+
+    res.json({
+      gameName: post.name,
+      gameFont: post.titleFont, // 🚀 FIX: Sending the font down to the client
+      authorName: post.authorName,
+      authorUserId: author ? author.userid : post.authorId
+    });
+  } catch (err) {
+    console.error("Badge Source Error:", err);
+    res.status(500).json({ message: "Server error fetching badge source" });
   }
 });
 

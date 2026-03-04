@@ -10,6 +10,15 @@ const userPreferenceSchema = new mongoose.Schema({
   themeColor: {
     type: String,
     default: "#808080" // grey
+  },
+  // 🚀 NEW: Arrays for feed filtering
+  includedCategories: {
+    type: [String],
+    default: []
+  },
+  excludedCategories: {
+    type: [String],
+    default: []
   }
 })
 

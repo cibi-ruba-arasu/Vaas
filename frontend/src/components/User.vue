@@ -151,6 +151,72 @@ const toggleFollow = async () => {
 
 const isMe = computed(() => user.value._id === myUserId);
 
+const selectedBadge = ref(null);
+const badgeSource = ref(null);
+const isLoadingBadgeSource = ref(false);
+
+const openBadgeModal = async (badge) => {
+  selectedBadge.value = badge;
+  badgeSource.value = null; // reset previous data
+  isLoadingBadgeSource.value = true;
+
+  try {
+    const res = await fetch(`http://localhost:5000/badges/source/${badge.publishId}`);
+    if (res.ok) {
+      badgeSource.value = await res.json();
+      
+      // 🚀 FIX: Load the game's custom font if it exists
+      if (badgeSource.value.gameFont) {
+        loadGoogleFont(badgeSource.value.gameFont);
+      }
+    }
+  } catch (err) {
+    console.error("Failed to unearth badge origins", err);
+  } finally {
+    isLoadingBadgeSource.value = false;
+  }
+};
+
+const closeBadgeModal = () => {
+  selectedBadge.value = null;
+  badgeSource.value = null;
+};
+
+/* --- MODAL STATE FOR PFP --- */
+const showPfpModal = ref(false);
+const pfpSource = ref(null);
+const isLoadingPfpSource = ref(false);
+
+const openPfpModal = async () => {
+  if (!user.value.profilePic) return; // Don't open if no pic exists
+
+  showPfpModal.value = true;
+  pfpSource.value = null;
+
+  // Only fetch data if it's an earned PFP from a game
+  if (user.value.active_pfp_type === 'earned' && user.value.active_earned_ref) {
+    isLoadingPfpSource.value = true;
+    try {
+      const res = await fetch(`http://localhost:5000/badges/source/${user.value.active_earned_ref.publishId}`);
+      if (res.ok) {
+        pfpSource.value = await res.json();
+        if (pfpSource.value.gameFont) {
+          loadGoogleFont(pfpSource.value.gameFont);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to unearth PFP origins", err);
+    } finally {
+      isLoadingPfpSource.value = false;
+    }
+  }
+};
+
+const closePfpModal = () => {
+  showPfpModal.value = false;
+  pfpSource.value = null;
+};
+
 onMounted(() => {
   if (route.params.userid) fetchUserProfile()
 })
@@ -176,7 +242,102 @@ watch(() => projects.value, (newVal) => {
 <template>
   <div class="public-profile-page">
     <div class="bg-orb"></div>
+    <Transition name="fade">
+      <div v-if="selectedBadge" class="lightbox" @click.self="closeBadgeModal">
+        <div class="badge-modal glass-panel">
+          <button class="close-modal-btn" @click="closeBadgeModal">✕</button>
+          
+          <div class="modal-badge-img-wrapper">
+            <img :src="selectedBadge.base64" class="modal-badge-img" />
+          </div>
 
+          <h2 
+            class="modal-badge-name" 
+            :style="{ fontFamily: selectedBadge.giftFont ? `'${selectedBadge.giftFont}', sans-serif` : 'Inter' }"
+          >
+            {{ selectedBadge.giftName }}
+          </h2>
+
+          <div class="modal-badge-origins">
+            <div v-if="isLoadingBadgeSource" class="spinner origin-spinner"></div>
+            
+            <div v-else-if="badgeSource" class="origin-content">
+              <span class="origin-label">Discovered in</span>
+              <a class="origin-link game-link" @click="router.push(`/post/${selectedBadge.publishId}`)"
+                :style="{ fontFamily: badgeSource.gameFont ? `'${badgeSource.gameFont}', sans-serif` : 'inherit' }">
+                {{ badgeSource.gameName }}
+              </a>
+              
+              <span class="origin-label">Woven by</span>
+              <a class="origin-link artist-link" @click="router.push(`/user/${badgeSource.authorUserId}`); closeBadgeModal()">
+                @{{ badgeSource.authorName }}
+              </a>
+            </div>
+            
+            <div v-else class="origin-lost">
+              <p>The weave this badge belonged to has faded into the void.</p>
+            </div>
+          </div>
+          
+        </div>
+      </div>
+    </Transition>
+    <Transition name="fade">
+      <div v-if="showPfpModal" class="lightbox" @click.self="closePfpModal">
+        <div class="badge-modal glass-panel">
+          <button class="close-modal-btn" @click="closePfpModal">✕</button>
+          
+          <div class="modal-pfp-img-wrapper">
+            <img :src="user.profilePic" class="modal-pfp-img" />
+          </div>
+
+          <h2 
+            v-if="user.active_pfp_type === 'earned' && user.active_earned_ref"
+            class="modal-badge-name" 
+            :style="{ fontFamily: user.active_earned_ref.giftFont ? `'${user.active_earned_ref.giftFont}', sans-serif` : 'Inter' }"
+          >
+            {{ user.active_earned_ref.giftName }}
+          </h2>
+          <h2 v-else class="modal-badge-name" style="font-family: 'Cinzel', sans-serif;">
+            Custom Identity
+          </h2>
+
+          <div class="modal-badge-origins">
+            
+            <template v-if="user.active_pfp_type === 'earned'">
+              <div v-if="isLoadingPfpSource" class="spinner origin-spinner"></div>
+              
+              <div v-else-if="pfpSource" class="origin-content">
+                <span class="origin-label">Discovered in</span>
+                <a class="origin-link game-link" @click="router.push(`/post/${user.active_earned_ref.publishId}`); closePfpModal()"
+                  :style="{ fontFamily: pfpSource.gameFont ? `'${pfpSource.gameFont}', sans-serif` : 'inherit' }">
+                  {{ pfpSource.gameName }}
+                </a>
+                
+                <span class="origin-label">Woven by</span>
+                <a class="origin-link artist-link" @click="router.push(`/user/${pfpSource.authorUserId}`); closePfpModal()">
+                  @{{ pfpSource.authorName }}
+                </a>
+              </div>
+              
+              <div v-else class="origin-lost">
+                <p>The weave this identity belonged to has faded into the void.</p>
+              </div>
+            </template>
+
+            <template v-else>
+               <div class="origin-content">
+                  <p style="color: #cbd5e1; font-style: italic; font-size: 0.95rem; margin: 0;">
+                    This identity was woven by the Weaver themselves.
+                  </p>
+               </div>
+            </template>
+
+          </div>
+          
+        </div>
+      </div>
+    </Transition>
     <div v-if="loading" class="center-msg"><div class="spinner"></div></div>
     
     <div v-else-if="error" class="center-msg">
@@ -191,7 +352,7 @@ watch(() => projects.value, (newVal) => {
         <div class="header-content">
           
           <div class="identity-col">
-            <div class="pfp-wrapper">
+            <div class="pfp-wrapper" @click="openPfpModal">
                <img v-if="user.profilePic" :src="user.profilePic" class="pfp-img" />
                <div v-else class="pfp-placeholder">{{ user.username.charAt(0) }}</div>
             </div>
@@ -262,7 +423,13 @@ watch(() => projects.value, (newVal) => {
       <div class="badges-section" v-if="user.badges && user.badges.length > 0">
         <h3 class="section-title">Achievements</h3>
         <div class="badge-grid">
-          <div v-for="badge in user.badges" :key="badge.giftName" class="badge-card">
+          <div 
+            v-for="badge in user.badges" 
+            :key="badge.giftName" 
+            class="badge-card"
+            @click="openBadgeModal(badge)"
+            style="cursor: pointer;"
+          >
             <div class="badge-img-wrapper">
               <img :src="badge.base64" class="badge-img" />
             </div>
@@ -454,5 +621,131 @@ watch(() => projects.value, (newVal) => {
 .remove-badge-btn:hover {
   transform: scale(1.2);
   background: #dc2626;
+}
+
+.lightbox { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); display: flex; align-items: center; justify-content: center; }
+.fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+
+.badge-modal {
+  position: relative;
+  width: 90%;
+  max-width: 400px;
+  padding: 3rem 2rem 2.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  background: rgba(15, 23, 42, 0.85);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  transform: translateY(0);
+  animation: modalFloat 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes modalFloat {
+  0% { transform: translateY(30px) scale(0.95); opacity: 0; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.close-modal-btn {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  background: rgba(255,255,255,0.05);
+  border: none;
+  color: #94a3b8;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.close-modal-btn:hover { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+
+.modal-badge-img-wrapper {
+  width: 180px;  /* 🚀 Increased from 120px */
+  height: 180px; /* 🚀 Increased from 120px */
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 🚀 Removed the background, padding, and box-shadow completely */
+}
+
+.modal-badge-img { 
+  width: 100%; 
+  height: 100%; 
+  object-fit: contain; 
+  image-rendering: pixelated; 
+  /* 🚀 Slightly boosted the drop-shadow so the floating badge pops more */
+  filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.6)); 
+}
+.modal-badge-name {
+  font-size: 1.8rem;
+  color: #fbbf24;
+  margin: 0 0 2rem 0;
+  text-shadow: 0 2px 10px rgba(245, 158, 11, 0.3);
+  line-height: 1.2;
+}
+
+.modal-badge-origins {
+  width: 100%;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  padding-top: 1.5rem;
+}
+
+.origin-spinner { width: 24px; height: 24px; margin: 0 auto; border-width: 2px; }
+
+.origin-content { display: flex; flex-direction: column; gap: 8px; }
+.origin-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin-top: 8px; }
+.origin-link { 
+  font-size: 1.1rem; 
+  font-weight: 600; 
+  color: #e2e8f0; 
+  cursor: pointer; 
+  text-decoration: none; 
+  transition: all 0.2s ease; 
+}
+.game-link { color: #3b82f6; text-shadow: 0 0 10px rgba(59, 130, 246, 0.2); }
+.game-link:hover { color: #60a5fa; text-shadow: 0 0 15px rgba(59, 130, 246, 0.5); transform: translateY(-1px); }
+
+.artist-link { color: #a855f7; }
+.artist-link:hover { color: #c084fc; text-shadow: 0 0 15px rgba(168, 85, 247, 0.4); transform: translateY(-1px); }
+
+.origin-lost { font-style: italic; color: #64748b; font-size: 0.9rem; }
+
+/* --- PFP MODAL STYLES --- */
+.pfp-wrapper {
+  /* Existing styles are kept, we just add pointer and hover effects */
+  cursor: pointer;
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s;
+}
+
+.pfp-wrapper:hover {
+  transform: scale(1.05);
+  box-shadow: 0 15px 35px rgba(59, 130, 246, 0.4);
+}
+
+.modal-pfp-img-wrapper {
+  width: 160px;
+  height: 160px;
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-pfp-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%; /* Keeps it circular like a standard PFP */
+  border: 3px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6);
+  image-rendering: pixelated;
 }
 </style>
