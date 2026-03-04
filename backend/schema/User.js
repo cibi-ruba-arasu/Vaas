@@ -33,7 +33,12 @@ const userSchema = new mongoose.Schema(
       publishId: { type: mongoose.Schema.Types.ObjectId, ref: 'Publish' },
       giftName: String
     },
-    
+    badges: [{
+      publishId: { type: mongoose.Schema.Types.ObjectId, ref: 'Publish' },
+      giftName: String,
+      base64: String,
+      giftFont: String
+    }],
     // ✅ NEW: Social Graph Arrays
     // We store ObjectIds to easily populate lists later
     followers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],

@@ -14,6 +14,8 @@ const networkType = ref('followers') // 'followers' or 'following'
 const networkList = ref({ followers: [], following: [] })
 const isNetworkLoading = ref(false)
 
+
+
 const fetchNetwork = async () => {
   if (isNetworkLoading.value) return
   isNetworkLoading.value = true
@@ -51,10 +53,13 @@ const user = ref({
   profilePic: null,
   verified: 'normal',
   pfp_status: { matrix: [], background: { colors: ['#ffffff'], angle: 90 } }, 
+  
+  // Initialize safe arrays
   pfp_inventory: { custom: [], earned: [] },
   active_pfp_type: 'custom',
   active_earned_ref: null,
-  badges: [], // 🚀 NEW: Badges state
+  badges: [], 
+  
   stats: { followers: 0, following: 0, rating: 0.0, weaves: 0 }
 })
 
@@ -97,6 +102,7 @@ const getTotalTagCount = (pub) => {
 
 /* --- PFP EDITOR STATE --- */
 const showPfpEditor = ref(false)
+
 const pfpCanvasRef = ref(null)
 
 // ✅ 64x64 Grid (4096 Pixels total)
@@ -178,18 +184,7 @@ const openPfpInventory = () => {
 
 const openPixelStudio = () => {
   showPfpInventory.value = false; // Close collection
-  
-  // Wipe the editor state clean for a 64x64 canvas (4096 pixels)
-  editorState.value.matrix = Array(4096).fill(null);
-  editorState.value.bgColors = ['#ffffff'];
-  editorState.value.bgAngle = 90;
-  currentPaintColor.value = '#000000'; // Default brush to black
-  
-  showPfpEditor.value = true; // Open pixel studio
-
-  nextTick(() => {
-    if (typeof drawCanvas === 'function') drawCanvas(); // Paint the blank canvas safely
-  });
+  showPfpEditor.value = true;     // Open pixel studio
 }
 
 // Watch for modal opening to trigger render
@@ -1411,8 +1406,11 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: 10px;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-  background: #000;
+  /* 🚀 FIX: Removed the solid black background, making it transparent */
+  background: transparent;
+  /* Optional: You can remove the box-shadow entirely if you want the badge to truly float, 
+     or keep it to add a glow effect to the bounding box */
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3); 
 }
 
 .badge-img {

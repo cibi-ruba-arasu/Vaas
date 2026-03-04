@@ -823,10 +823,13 @@ app.get("/user/profile", authMiddleware, async (req, res) => {
       description: user.description,
       profilePic: user.profilePic,
       pfp_status: user.pfp_status, 
-      pfp_inventory: user.pfp_inventory,
+      
+      // ✅ Send the arrays to the frontend securely
+      pfp_inventory: user.pfp_inventory || { custom: [], earned: [] },
       active_pfp_type: user.active_pfp_type,
       active_earned_ref: user.active_earned_ref,
-      badges: user.badges || [], // 🚀 Send badges to frontend
+      badges: user.badges || [], 
+      
       verified: user.verified,
       stats: {
         followers: user.followersCount || 0,
@@ -836,6 +839,7 @@ app.get("/user/profile", authMiddleware, async (req, res) => {
       }
     });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -885,13 +889,22 @@ app.put("/user/profile", authMiddleware, async (req, res) => {
   const { username, description, profilePic, pfp_status, pfp_inventory, active_pfp_type, active_earned_ref, badges } = req.body; 
 
   try {
+    const updateData = { username, description, profilePic, pfp_status, active_pfp_type };
+    
+    // ✅ SAFETY CHECK: Only update arrays if the frontend actually sent them. Prevents accidental wiping.
+    if (pfp_inventory) updateData.pfp_inventory = pfp_inventory;
+    if (active_earned_ref !== undefined) updateData.active_earned_ref = active_earned_ref;
+    if (badges) updateData.badges = badges;
+
     const updatedUser = await User.findByIdAndUpdate(
       mongoId,
-      { username, description, profilePic, pfp_status, pfp_inventory, active_pfp_type, active_earned_ref, badges }, // 🚀 Save badges changes
+      updateData,
       { new: true }
     ).select("-password");
+
     res.json(updatedUser);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Update failed" });
   }
 });
@@ -1315,45 +1328,50 @@ app.get("/search/suggestions", authMiddleware, async (req, res) => {
 });
 
 /* ===== GET PUBLIC USER PROFILE (By Custom UserID) ===== */
-app.get("/users/:userid", authMiddleware, async (req, res) => {
+app.get("/users/:userid", async (req, res) => {
   const { userid } = req.params;
-  const requesterId = req.user.mongoId; // ID of the person looking
-
   try {
-    const user = await User.findOne({ userid }).select("-password -email");
+    const targetUser = await User.findOne({ userid }).select("-password");
+    if (!targetUser) return res.status(404).json({ message: "User not found" });
 
-    if (!user) {
-      return res.status(404).json({ message: "Weaver not found in this timeline." });
+    // 1. Fetch the user's published projects
+    const publishedCount = await Publish.countDocuments({ authorId: targetUser._id });
+    const userProjects = await Publish.find({ authorId: targetUser._id }).sort({ publishedAt: -1 });
+
+    // 2. Check if the person viewing is following this user
+    let isFollowing = false;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        isFollowing = targetUser.followers.includes(decoded.mongoId);
+      } catch (e) { /* ignore invalid token */ }
     }
 
-    const publishes = await Publish.find({ authorId: user._id }).sort({ publishedAt: -1 });
-
-    // ✅ CHECK: Am I following this user?
-    const isFollowing = user.followers.includes(requesterId);
-
+    // ✅ FIX: Restore the { user, projects, isFollowing } wrapper structure!
     res.json({
       user: {
-        _id: user._id,
-        username: user.username,
-        userid: user.userid,
-        description: user.description,
-        profilePic: user.profilePic,
-        country: user.country,
-        verified: user.verified,
+        _id: targetUser._id,
+        username: targetUser.username,
+        userid: targetUser.userid,
+        description: targetUser.description,
+        profilePic: targetUser.profilePic,
+        badges: targetUser.badges || [], // 🚀 Badges are safely included here
+        verified: targetUser.verified,
         stats: {
-          followers: user.followersCount || 0,
-          following: user.followingCount || 0,
-          rating: user.rating || 0.0,
-          weaves: publishes.length
+          followers: targetUser.followersCount || 0,
+          following: targetUser.followingCount || 0,
+          rating: targetUser.rating || 5.0,
+          weaves: publishedCount
         }
       },
-      projects: publishes,
-      isFollowing // ✅ Send this flag to frontend
+      projects: userProjects,
+      isFollowing: isFollowing
     });
-
   } catch (err) {
-    console.error("Fetch User Error:", err);
-    res.status(500).json({ message: "Server error searching for weaver." });
+    console.error("Fetch user error:", err);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
@@ -2075,36 +2093,57 @@ app.get("/posts/:id/like-status", authMiddleware, async (req, res) => {
 });
 
 app.post("/user/pfp/earned", authMiddleware, async (req, res) => {
-  const { publishId, giftName, base64, giftFont } = req.body; // 🚀 Added giftFont
+  const { publishId, giftName, base64, giftFont } = req.body;
   try {
     const user = await User.findById(req.user.mongoId);
-    if (!user.pfp_inventory || !user.pfp_inventory.earned) {
+
+    // 🚀 FIX: Safely initialize nested objects WITHOUT wiping existing data
+    if (!user.pfp_inventory) {
       user.pfp_inventory = { custom: [], earned: [] };
     }
+    if (!user.pfp_inventory.earned) {
+      user.pfp_inventory.earned = [];
+    }
+    if (!user.pfp_inventory.custom) {
+      user.pfp_inventory.custom = [];
+    }
 
+    // Check if the user already has this specific reward in their inventory
     const alreadyOwned = user.pfp_inventory.earned.find(e => 
       e.publishId && e.publishId.toString() === publishId && e.giftName === giftName
     );
     
+    // Only push if it's a brand new unlock
     if (!alreadyOwned) {
-      user.pfp_inventory.earned.push({ publishId, giftName, base64, giftFont }); // Save font
+      user.pfp_inventory.earned.push({ publishId, giftName, base64, giftFont });
     }
 
+    // Equip it globally across the platform
     user.profilePic = base64; 
     user.active_pfp_type = 'earned';
     user.active_earned_ref = { publishId, giftName };
+    
+    // 🚀 THE MAGIC FIX: Explicitly tell Mongoose that this nested object has changed!
+    // Without these lines, Mongoose ignores nested array pushes and deletes data.
+    user.markModified('pfp_inventory');
+    user.markModified('active_earned_ref');
+
     await user.save();
 
     res.json({ success: true, message: "Earned PFP added to inventory and equipped!" });
   } catch (err) {
+    console.error("Earned PFP Error:", err);
     res.status(500).json({ message: "Failed to equip earned PFP" });
   }
 });
 
+/* ===== BADGE INVENTORY: ADD TO ACHIEVEMENTS ===== */
 app.post("/user/badge/earned", authMiddleware, async (req, res) => {
   const { publishId, giftName, base64, giftFont } = req.body;
   try {
     const user = await User.findById(req.user.mongoId);
+    
+    // 🚀 FIX: Safely initialize without wiping
     if (!user.badges) user.badges = [];
     
     // Prevent adding duplicates
@@ -2114,6 +2153,10 @@ app.post("/user/badge/earned", authMiddleware, async (req, res) => {
     
     if (!alreadyOwned) {
       user.badges.push({ publishId, giftName, base64, giftFont });
+      
+      // 🚀 FIX: Explicitly tell Mongoose the array was modified
+      user.markModified('badges');
+      
       await user.save();
     }
 
@@ -2123,8 +2166,6 @@ app.post("/user/badge/earned", authMiddleware, async (req, res) => {
     res.status(500).json({ message: "Failed to add badge" });
   }
 });
-
-
 
 mongoose
   .connect(process.env.MONGO_URI)

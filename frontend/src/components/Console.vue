@@ -788,7 +788,7 @@ const closeAchievementPopup = () => {
 }
 
 const setAsPfp = async () => {
-    if (!selectedAchievement.value) return;
+    if (!selectedAchievement.value || !activePostId.value) return;
 
     try {
         const canvas = document.createElement('canvas');
@@ -820,9 +820,9 @@ const setAsPfp = async () => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({
-                publishId: route.params.id, // 🚀 FIX: Use the correct Vue Router parameter
+                publishId: activePostId.value,
                 giftName: selectedAchievement.value.name,
-                giftFont: selectedAchievement.value.giftFont || 'sans-serif',
+                giftFont: selectedAchievement.value.giftFont || 'sans-serif', // 🚀 Post the specific Font
                 base64: base64Image
             })
         });
@@ -841,17 +841,19 @@ const setAsPfp = async () => {
 }
 
 const addToAchievements = async () => {
-    if (!selectedAchievement.value) return;
+    if (!selectedAchievement.value || !activePostId.value) return;
 
     try {
+        // 1. Generate the High-Res Base64 Badge Image
         const canvas = document.createElement('canvas');
         canvas.width = 256; 
         canvas.height = 256;
         const ctx = canvas.getContext('2d');
         
         ctx.imageSmoothingEnabled = false;
-        ctx.fillStyle = '#000000';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // 🚀 FIX: Clear the canvas to make it completely transparent instead of painting it black
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         const pixels = selectedAchievement.value.pixels;
         const rows = pixels.length;
@@ -861,21 +863,25 @@ const addToAchievements = async () => {
 
         for (let y = 0; y < rows; y++) {
             for (let x = 0; x < cols; x++) {
+                // null values will be ignored, leaving the transparent background untouched
                 if (pixels[y][x]) {
                     ctx.fillStyle = pixels[y][x];
                     ctx.fillRect(Math.floor(x * scaleX), Math.floor(y * scaleY), Math.ceil(scaleX), Math.ceil(scaleY));
                 }
             }
         }
+        
+        // Exporting as 'image/png' preserves the transparency
         const base64Image = canvas.toDataURL('image/png');
 
+        // 2. Post the Badge to the backend
         const res = await fetch('http://localhost:5000/user/badge/earned', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({
-                publishId: route.params.id, // 🚀 FIX: Use the correct Vue Router parameter
+                publishId: activePostId.value,
                 giftName: selectedAchievement.value.name,
-                giftFont: selectedAchievement.value.giftFont || 'sans-serif',
+                giftFont: selectedAchievement.value.giftFont || 'sans-serif', 
                 base64: base64Image
             })
         });
@@ -2666,7 +2672,8 @@ const preloadUrls = (urls) => {
                             width="128" 
                             height="128" 
                             class="gift-pixel-art"
-                          ></canvas>
+                            :style="{ background: giftRewardType === 'badge' ? 'transparent' : '#000' }"
+                            ></canvas>
                           
                           <!-- Gift Title -->
                           <div class="gift-title" :style="{ fontFamily: currentGiftReward.giftFont || 'sans-serif' }">
@@ -2810,7 +2817,7 @@ const preloadUrls = (urls) => {
                                         
                                         <div class="ach-gallery" v-if="unlockedBadgeList.length > 0">
                                             <div v-for="(item, idx) in unlockedBadgeList" :key="idx" class="ach-item interactable" @click="openAchievementPopup(item, 'badge')">
-                                                <canvas :ref="el => drawMiniPixelArt(el, item.pixels)" width="64" height="64" class="ach-canvas"></canvas>
+                                                <canvas :ref="el => drawMiniPixelArt(el, item.pixels)" width="64" height="64" class="ach-canvas" style="background: transparent; border: none; box-shadow: none;"></canvas>
                                                 <span class="ach-item-name" :style="{ fontFamily: item.font || 'sans-serif' }" :title="item.name">{{ item.name }}</span>
                                             </div>
                                         </div>
@@ -2877,8 +2884,7 @@ const preloadUrls = (urls) => {
             <button class="close-ach-btn" @click="closeAchievementPopup">✕</button>
             
             <div class="ach-modal-header">
-                <canvas :ref="el => drawMiniPixelArt(el, selectedAchievement?.pixels)" width="128" height="128" class="ach-modal-canvas"></canvas>
-                
+                <canvas :ref="el => drawMiniPixelArt(el, selectedAchievement?.pixels)" width="128" height="128" class="ach-modal-canvas" :style="{ background: achievementPopupType === 'badge' ? 'transparent' : '#000', border: achievementPopupType === 'badge' ? 'none' : '2px solid #334155', boxShadow: achievementPopupType === 'badge' ? 'none' : 'inset 0 0 10px rgba(255,255,255,0.1), 0 5px 15px rgba(0,0,0,0.5)' }"></canvas>
                 <h3 :style="{ fontFamily: selectedAchievement?.font || 'sans-serif' }">{{ selectedAchievement?.name }}</h3>
                 
                 <span class="ach-modal-type">{{ achievementPopupType === 'pfp' ? 'Profile Picture' : 'Badge' }}</span>

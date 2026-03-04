@@ -139,8 +139,10 @@ watch(() => route.params.userid, () => {
 });
 
 watch(() => user.value, (newVal) => {
-   if (newVal.badges) newVal.badges.forEach(b => loadGoogleFont(b.giftFont));
+   // ✅ FIX: Added a safety check to ensure newVal exists before reading badges
+   if (newVal && newVal.badges) newVal.badges.forEach(b => loadGoogleFont(b.giftFont));
 }, { deep: true, immediate: true });
+
 </script>
 
 <template>
@@ -378,8 +380,11 @@ watch(() => user.value, (newVal) => {
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: 10px;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-  background: #000;
+  /* 🚀 FIX: Removed the solid black background, making it transparent */
+  background: transparent;
+  /* Optional: You can remove the box-shadow entirely if you want the badge to truly float, 
+     or keep it to add a glow effect to the bounding box */
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3); 
 }
 
 .badge-img {
