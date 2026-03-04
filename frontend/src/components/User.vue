@@ -29,8 +29,11 @@ const user = ref({
   badges: []
 })
 
+
+
 const projects = ref([])
 
+// 1. Helper function to inject the font
 const loadGoogleFont = (fontFamily) => {
   if (!fontFamily || fontFamily === 'sans-serif' || fontFamily === 'Inter') return;
   const fontId = `font-${fontFamily.replace(/\s+/g, '-')}`;
@@ -42,6 +45,25 @@ const loadGoogleFont = (fontFamily) => {
     document.head.appendChild(link);
   }
 };
+
+// 2. Watcher to load fonts whenever user object updates
+watch(() => user.value, (newUser) => {
+  if (!newUser) return;
+  
+  // Load font for equipped Earned PFP
+  if (newUser.active_pfp_type === 'earned' && newUser.active_earned_ref?.giftFont) {
+    loadGoogleFont(newUser.active_earned_ref.giftFont);
+  }
+  
+  // Load fonts for all Badges
+  if (newUser.badges && newUser.badges.length > 0) {
+    newUser.badges.forEach(badge => {
+      if (badge.giftFont) {
+        loadGoogleFont(badge.giftFont);
+      }
+    });
+  }
+}, { deep: true, immediate: true });
 
 /* --- HELPER: Gradient Generator --- */
 const getGradient = (colors, angle) => {
@@ -143,6 +165,12 @@ watch(() => user.value, (newVal) => {
    if (newVal && newVal.badges) newVal.badges.forEach(b => loadGoogleFont(b.giftFont));
 }, { deep: true, immediate: true });
 
+watch(() => projects.value, (newVal) => {
+   if (newVal && newVal.length > 0) {
+      newVal.forEach(pub => loadGoogleFont(pub.titleFont));
+   }
+}, { deep: true, immediate: true });
+
 </script>
 
 <template>
@@ -234,13 +262,13 @@ watch(() => user.value, (newVal) => {
       <div class="badges-section" v-if="user.badges && user.badges.length > 0">
         <h3 class="section-title">Achievements</h3>
         <div class="badge-grid">
-          <div v-for="(badge, index) in user.badges" :key="index" class="badge-card">
+          <div v-for="badge in user.badges" :key="badge.giftName" class="badge-card">
             <div class="badge-img-wrapper">
-              <img :src="badge.base64" alt="Badge" class="badge-img" />
+              <img :src="badge.base64" class="badge-img" />
             </div>
-            <span class="badge-name" :style="{ fontFamily: badge.giftFont || 'sans-serif' }">
+            <div class="badge-name" :style="{ fontFamily: badge.giftFont ? `'${badge.giftFont}', sans-serif` : 'Inter' }">
               {{ badge.giftName }}
-            </span>
+            </div>
           </div>
         </div>
       </div>
@@ -255,7 +283,7 @@ watch(() => user.value, (newVal) => {
            >
               <div class="card-thumb" :style="{ backgroundImage: pub.thumbnail ? `url('${pub.thumbnail}')` : 'linear-gradient(to bottom, #1e293b, #000)' }"></div>
               <div class="card-info">
-                 <h3>{{ pub.name }}</h3>
+                 <h3 :style="{ fontFamily: pub.titleFont || 'sans-serif' }">{{ pub.name }}</h3>
                  <div class="preview-tags">
                    <span v-for="cat in pub.categories.slice(0,2)" :key="cat" class="tag">{{ cat }}</span>
                  </div>

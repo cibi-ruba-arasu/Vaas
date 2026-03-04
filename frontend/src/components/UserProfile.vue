@@ -14,7 +14,7 @@ const networkType = ref('followers') // 'followers' or 'following'
 const networkList = ref({ followers: [], following: [] })
 const isNetworkLoading = ref(false)
 
-
+const publishedProjects = ref([])
 
 const fetchNetwork = async () => {
   if (isNetworkLoading.value) return
@@ -64,6 +64,7 @@ const user = ref({
 })
 
 // 🚀 NEW: Dynamic Google Font Loader
+// 1. Helper function to inject the font
 const loadGoogleFont = (fontFamily) => {
   if (!fontFamily || fontFamily === 'sans-serif' || fontFamily === 'Inter') return;
   const fontId = `font-${fontFamily.replace(/\s+/g, '-')}`;
@@ -76,10 +77,31 @@ const loadGoogleFont = (fontFamily) => {
   }
 };
 
-watch(() => user.value, (newVal) => {
-   if (newVal.badges) newVal.badges.forEach(b => loadGoogleFont(b.giftFont));
-   if (newVal.pfp_inventory?.earned) newVal.pfp_inventory.earned.forEach(p => loadGoogleFont(p.giftFont));
+// 2. Watcher to load fonts whenever user object updates
+watch(() => user.value, (newUser) => {
+  if (!newUser) return;
+  
+  // 1. Load font for equipped Earned PFP
+  if (newUser.active_pfp_type === 'earned' && newUser.active_earned_ref?.giftFont) {
+    loadGoogleFont(newUser.active_earned_ref.giftFont);
+  }
+  
+  // 2. Load fonts for ALL Earned PFPs in the inventory
+  if (newUser.pfp_inventory?.earned) {
+    newUser.pfp_inventory.earned.forEach(p => {
+      if (p.giftFont) loadGoogleFont(p.giftFont);
+    });
+  }
+  
+  // 3. Load fonts for all Badges
+  if (newUser.badges && newUser.badges.length > 0) {
+    newUser.badges.forEach(badge => {
+      if (badge.giftFont) loadGoogleFont(badge.giftFont);
+    });
+  }
 }, { deep: true, immediate: true });
+
+
 
 // 🚀 NEW: Remove Badge Function
 const removeBadge = async (index) => {
@@ -88,7 +110,7 @@ const removeBadge = async (index) => {
     await saveProfile();
 }
 
-const publishedProjects = ref([])
+
 
 /* --- CARD HELPER FUNCTIONS --- */
 const getPreviewTags = (pub) => {
@@ -277,20 +299,23 @@ const applyPfpChanges = () => {
     }
   }
 
-  // 2. Export Image and Compress Data
+
   const base64Image = tempCanvas.toDataURL('image/png'); 
-  const compressedMatrix = packMatrix(editorState.value.matrix);
   
+  // 🚀 FIX: Convert the massive array into a single lightweight string
+  const compressedMatrix = JSON.stringify(packMatrix(editorState.value.matrix));
+
   // 3. Create new Custom PFP Object
   const newCustomPfp = {
     id: Date.now().toString(),
-    matrix: compressedMatrix,
+    matrix: compressedMatrix, // Now a string!
     background: {
       colors: [...editorState.value.bgColors],
       angle: editorState.value.bgAngle
     },
     base64: base64Image
   };
+  
 
   // 4. Ensure inventory arrays exist, then push
   if (!user.value.pfp_inventory) user.value.pfp_inventory = { custom: [], earned: [] };
@@ -317,9 +342,19 @@ const equipPfp = async (type, item) => {
     user.value.active_pfp_type = type;
     user.value.profilePic = item.base64;
 
+
     if (type === 'custom') {
         user.value.active_earned_ref = null;
-        user.value.pfp_status = { matrix: item.matrix, background: item.background };
+        
+        // 🚀 FIX: Safety check to parse the string back into an array if it was stringified
+        let parsedMatrix = [];
+        try {
+            parsedMatrix = typeof item.matrix === 'string' ? JSON.parse(item.matrix) : item.matrix;
+        } catch (e) {
+            parsedMatrix = [];
+        }
+
+        user.value.pfp_status = { matrix: parsedMatrix, background: item.background };
     } else if (type === 'earned') {
         user.value.active_earned_ref = { publishId: item.publishId, giftName: item.giftName };
     }
@@ -632,7 +667,7 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
               <div v-for="(item, idx) in user.pfp_inventory.earned" :key="idx" class="pfp-card earned-card">
                 <div class="pfp-preview" :style="{ backgroundImage: `url(${item.base64})` }"></div>
                 <div class="earned-info">
-                  <span class="gift-name" :style="{ fontFamily: item.giftFont || 'sans-serif' }">
+                  <span class="gift-name" :style="{ fontFamily: item.giftFont ? `'${item.giftFont}', sans-serif` : 'Inter' }">
                     {{ item.giftName }}
                   </span>
                 </div>
@@ -861,21 +896,19 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
       <div class="badges-section" v-if="user.badges && user.badges.length > 0">
         <h3 class="section-title">Achievements</h3>
         <div class="badge-grid">
-          <div v-for="(badge, index) in user.badges" :key="index" class="badge-card">
-            
+          <div v-for="badge in user.badges" :key="badge.giftName" class="badge-card">
             <button 
               v-if="isEditing" 
               @click="removeBadge(index)" 
               class="remove-badge-btn"
               title="Remove from Showcase"
             >×</button>
-
             <div class="badge-img-wrapper">
-              <img :src="badge.base64" alt="Badge" class="badge-img" />
+              <img :src="badge.base64" class="badge-img" />
             </div>
-            <span class="badge-name" :style="{ fontFamily: badge.giftFont || 'sans-serif' }">
+            <div class="badge-name" :style="{ fontFamily: badge.giftFont ? `'${badge.giftFont}', sans-serif` : 'Inter' }">
               {{ badge.giftName }}
-            </span>
+            </div>
           </div>
         </div>
       </div>
@@ -904,7 +937,7 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
               </div>
 
               <div class="card-info">
-                <h3>{{ pub.name }}</h3>
+                <h3 :style="{ fontFamily: pub.titleFont || 'sans-serif' }">{{ pub.name }}</h3>
                 
                 <div class="preview-tags">
                   <span v-if="pub.warnings.length" class="dot warning"></span>

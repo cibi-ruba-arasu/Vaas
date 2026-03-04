@@ -2093,43 +2093,29 @@ app.get("/posts/:id/like-status", authMiddleware, async (req, res) => {
 });
 
 app.post("/user/pfp/earned", authMiddleware, async (req, res) => {
-  const { publishId, giftName, base64, giftFont } = req.body;
+  // 👇 Ensure giftFont is destructured from req.body
+  const { publishId, giftName, base64, giftFont } = req.body; 
   try {
     const user = await User.findById(req.user.mongoId);
-
-    // 🚀 FIX: Safely initialize nested objects WITHOUT wiping existing data
-    if (!user.pfp_inventory) {
-      user.pfp_inventory = { custom: [], earned: [] };
-    }
-    if (!user.pfp_inventory.earned) {
-      user.pfp_inventory.earned = [];
-    }
-    if (!user.pfp_inventory.custom) {
-      user.pfp_inventory.custom = [];
-    }
-
-    // Check if the user already has this specific reward in their inventory
-    const alreadyOwned = user.pfp_inventory.earned.find(e => 
-      e.publishId && e.publishId.toString() === publishId && e.giftName === giftName
+    
+    if (!user.pfp_inventory) user.pfp_inventory = { custom: [], earned: [] };
+    if (!user.pfp_inventory.earned) user.pfp_inventory.earned = [];
+    
+    const alreadyOwned = user.pfp_inventory.earned.find(p => 
+      p.publishId && p.publishId.toString() === publishId && p.giftName === giftName
     );
     
-    // Only push if it's a brand new unlock
     if (!alreadyOwned) {
-      user.pfp_inventory.earned.push({ publishId, giftName, base64, giftFont });
+      user.pfp_inventory.earned.push({ publishId, giftName, base64, giftFont }); // 👈 Save it here
     }
 
-    // Equip it globally across the platform
-    user.profilePic = base64; 
     user.active_pfp_type = 'earned';
-    user.active_earned_ref = { publishId, giftName };
+    user.active_earned_ref = { publishId, giftName, giftFont }; // 👈 And here
     
-    // 🚀 THE MAGIC FIX: Explicitly tell Mongoose that this nested object has changed!
-    // Without these lines, Mongoose ignores nested array pushes and deletes data.
     user.markModified('pfp_inventory');
     user.markModified('active_earned_ref');
-
+    
     await user.save();
-
     res.json({ success: true, message: "Earned PFP added to inventory and equipped!" });
   } catch (err) {
     console.error("Earned PFP Error:", err);

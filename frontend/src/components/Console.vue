@@ -822,7 +822,7 @@ const setAsPfp = async () => {
             body: JSON.stringify({
                 publishId: activePostId.value,
                 giftName: selectedAchievement.value.name,
-                giftFont: selectedAchievement.value.giftFont || 'sans-serif', // 🚀 Post the specific Font
+                giftFont: selectedAchievement.value.font || 'sans-serif', // 🚀 Post the specific Font
                 base64: base64Image
             })
         });
@@ -881,7 +881,7 @@ const addToAchievements = async () => {
             body: JSON.stringify({
                 publishId: activePostId.value,
                 giftName: selectedAchievement.value.name,
-                giftFont: selectedAchievement.value.giftFont || 'sans-serif', 
+                giftFont: selectedAchievement.value.font || 'sans-serif', 
                 base64: base64Image
             })
         });
