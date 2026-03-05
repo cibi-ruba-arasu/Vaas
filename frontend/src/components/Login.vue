@@ -21,7 +21,10 @@ const handleLogin = async () => {
   isLoading.value = true
 
   try {
-    const res = await fetch("http://localhost:5000/login", {
+    // ✅ DYNAMIC URL: Uses localhost in dev, but relative path on Render
+    const API_URL = import.meta.env.PROD ? "" : "http://localhost:5000"
+
+    const res = await fetch(`${API_URL}/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -36,11 +39,11 @@ const handleLogin = async () => {
       return alert(data.message)
     }
 
-   // ✅ CHANGE: Save auth data to sessionStorage
+    // Save auth data to sessionStorage
     sessionStorage.setItem("token", data.token)
     sessionStorage.setItem("user", JSON.stringify(data.user))
 
-    // ✅ Redirect to Homepage
+    // Redirect to Homepage
     router.push("/home")
 
   } catch (err) {
