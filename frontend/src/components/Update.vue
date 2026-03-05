@@ -249,7 +249,7 @@ const checkContent = (block, event) => {
 const fetchPublishedData = async () => {
   loading.value = true;
   try {
-    const res = await fetch(`${API_URL}publish/${projectId}`, {
+    const res = await fetch(`${API_URL}/publish/${projectId}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
 
@@ -294,7 +294,7 @@ const fetchPublishedData = async () => {
 
 const fetchCanvasState = async () => {
   try {
-    const res = await fetch(`${API_URL}canvas/load/${projectId}`, {
+    const res = await fetch(`${API_URL}/canvas/load/${projectId}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     if (res.ok) {
@@ -323,7 +323,7 @@ const handleUpdate = async () => {
       ...form.value 
     };
 
-    const res = await fetch("${API_URL}publish", { 
+    const res = await fetch("${API_URL}/publish", { 
       method: "POST",
       headers: { 
         "Content-Type": "application/json",

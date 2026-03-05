@@ -193,7 +193,7 @@ const fetchRequirements = async (currency) => {
   bankDetails.value = {};
   
   try {
-    const res = await fetch(`${API_URL}payouts/requirements?currency=${currency}`, {
+    const res = await fetch(`${API_URL}/payouts/requirements?currency=${currency}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     const data = await res.json();
@@ -267,7 +267,7 @@ const finalizeBankSubmission = async () => {
 
     if (isRazorpayFlow.value) {
       // --- MANUAL INR PAYLOAD ---
-      url = "${API_URL}payouts/razorpay/create-recipient";
+      url = "${API_URL}/payouts/razorpay/create-recipient";
       body = {
         name: razorpayForm.value.accountHolderName,
         email: "user@loomart.io",
@@ -278,7 +278,7 @@ const finalizeBankSubmission = async () => {
       };
     } else {
       // --- WISE PAYLOAD ---
-      url = "${API_URL}payouts/wise/create-recipient";
+      url = "${API_URL}/payouts/wise/create-recipient";
       body = {
         currency: payoutCurrency.value,
         accountHolderName: accountHolderName.value,
@@ -641,7 +641,7 @@ const calculateMaxDemoNodes = (canvasState) => {
 // Add this method after fetchProjectDetails()
 const fetchCanvasState = async () => {
   try {
-    const res = await fetch(`${API_URL}canvas/load/${projectId}`, {
+    const res = await fetch(`${API_URL}/canvas/load/${projectId}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     if (res.ok) {
@@ -674,7 +674,7 @@ onMounted(() => {
 /* --- API CALLS --- */
 const fetchProjectDetails = async () => {
   try {
-    const res = await fetch(`${API_URL}projects/details/${projectId}`, {
+    const res = await fetch(`${API_URL}/projects/details/${projectId}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     if (res.ok) {
@@ -747,7 +747,7 @@ const publishProject = async () => {
 
   isPublishing.value = true;
   try {
-    const res = await fetch("${API_URL}publish", {
+    const res = await fetch("${API_URL}/publish", {
       method: "POST",
       headers: { 
         "Content-Type": "application/json", 
@@ -804,7 +804,7 @@ const saveProject = async (newThumbnail = null) => {
       wiseRecipientId: wiseRecipientId.value,
       thumbnail: newThumbnail || project.value.thumbnail
     };
-    const res = await fetch(`${API_URL}projects/${projectId}`, {
+    const res = await fetch(`${API_URL}/projects/${projectId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload)

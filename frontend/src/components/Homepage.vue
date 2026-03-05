@@ -52,7 +52,7 @@ const toggleExclude = (name) => {
 };
 
 const savePreferences = async () => {
-  await fetch("${API_URL}user/theme", {
+  await fetch("${API_URL}/user/theme", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ 
@@ -67,7 +67,7 @@ const savePreferences = async () => {
 
 // Update onMounted to fetch the new arrays
 onMounted(async () => {
-  const res = await fetch("${API_URL}user/theme", {
+  const res = await fetch("${API_URL}/user/theme", {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (res.ok) {
@@ -279,7 +279,7 @@ const fetchExploreWeaves = async (page = 1) => {
   currentPage.value = page; 
   
   try {
-    let url = `${API_URL}publish/explore?page=${page}&limit=12`;
+    let url = `${API_URL}/publish/explore?page=${page}&limit=12`;
     
     // 🚀 FIX: If tags are selected, join them with commas and send to the backend
     if (selectedCategories.value.length > 0) {
@@ -352,7 +352,7 @@ const activeTab = ref('All')
 
 const fetchNotifications = async () => {
   try {
-    const res = await fetch("${API_URL}notifications", {
+    const res = await fetch("${API_URL}/notifications", {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) {
@@ -371,7 +371,7 @@ const toggleNotifications = () => {
 const markRead = async () => {
   if (unreadCount.value > 0) {
     unreadCount.value = 0
-    await fetch("${API_URL}notifications/read", {
+    await fetch("${API_URL}/notifications/read", {
         method: "PUT", headers: { Authorization: `Bearer ${token}` }
     }).catch(e => {})
   }
@@ -410,7 +410,7 @@ const handleSearch = async () => {
   }
   isSearching.value = true
   try {
-    const res = await fetch(`${API_URL}search/suggestions?q=${searchQuery.value}`, {
+    const res = await fetch(`${API_URL}/search/suggestions?q=${searchQuery.value}`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) {
@@ -450,7 +450,7 @@ watch(showNSFW, (newVal) => {
 
 const fetchUserAge = async () => {
   try {
-    const res = await fetch("${API_URL}user/me", {
+    const res = await fetch("${API_URL}/user/me", {
       headers: { Authorization: `Bearer ${token}` }
     });
     if (res.ok) {
@@ -461,7 +461,7 @@ const fetchUserAge = async () => {
 }
 
 const saveColor = async () => {
-  await fetch("${API_URL}user/theme", {
+  await fetch("${API_URL}/user/theme", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ color: auraColor.value })
@@ -470,7 +470,7 @@ const saveColor = async () => {
 }
 
 onMounted(async () => {
-  const res = await fetch("${API_URL}user/theme", {
+  const res = await fetch("${API_URL}/user/theme", {
     headers: { Authorization: `Bearer ${token}` }
   })
   if (res.ok) {

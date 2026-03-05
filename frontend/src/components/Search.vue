@@ -38,7 +38,7 @@ const executeSearch = async () => {
     const headers = {};
     if (token) headers.Authorization = `Bearer ${token}`;
 
-    const res = await fetch(`${API_URL}search/global?q=${encodeURIComponent(searchQuery.value)}`, { headers });
+    const res = await fetch(`${API_URL}/search/global?q=${encodeURIComponent(searchQuery.value)}`, { headers });
     if (res.ok) {
       const data = await res.json();
       searchResults.value = data;

@@ -21,7 +21,7 @@ const fetchNetwork = async () => {
   if (isNetworkLoading.value) return
   isNetworkLoading.value = true
   try {
-    const res = await fetch("${API_URL}user/network", {
+    const res = await fetch("${API_URL}/user/network", {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) {
@@ -450,7 +450,7 @@ const fetchData = async () => {
   if (!token) return router.push("/login")
   
   try {
-    const profileRes = await fetch("${API_URL}user/profile", {
+    const profileRes = await fetch("${API_URL}/user/profile", {
       headers: { Authorization: `Bearer ${token}` }
     })
     
@@ -489,7 +489,7 @@ const fetchData = async () => {
       return
     }
 
-    const pubRes = await fetch("${API_URL}user/publishes", {
+    const pubRes = await fetch("${API_URL}/user/publishes", {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (pubRes.ok) publishedProjects.value = await pubRes.json()
@@ -519,7 +519,7 @@ const saveProfile = async () => {
       }
     }
 
-    const res = await fetch("${API_URL}user/profile", {
+    const res = await fetch("${API_URL}/user/profile", {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",

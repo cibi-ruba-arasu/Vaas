@@ -408,7 +408,7 @@ const registerMedia = (id, name, type) => {
 
 const fetchProjectDetails = async () => {
   try {
-    const res = await fetch(`${API_URL}projects/${projectId}`, {
+    const res = await fetch(`${API_URL}/projects/${projectId}`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     
@@ -478,7 +478,7 @@ const saveProjectData = async (isAutoSave = false) => {
       disconnectedOptionsCount: projectOptionsStats.value.disconnected
     };
 
-    const res = await fetch("${API_URL}canvas/save", {
+    const res = await fetch("${API_URL}/canvas/save", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -547,7 +547,7 @@ const loadProjectData = async () => {
     // Clear previous registry on reload
     mediaRegistry.value.clear(); 
     
-    const res = await fetch(`${API_URL}canvas/load/${projectId}`, {
+    const res = await fetch(`${API_URL}/canvas/load/${projectId}`, {
       headers: { "Authorization": `Bearer ${token}` }
     });
 

@@ -35,7 +35,7 @@ const removeThumbnail = () => {
 
 const fetchProjects = async () => {
   try {
-    const res = await fetch(`${API_URL}/projects`, {
+    const res = await fetch(`${API_URL}//projects`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) projects.value = await res.json()
@@ -81,8 +81,8 @@ const getPublishError = (project) => {
 
 const handleSubmit = async () => {
   const url = editingProject.value
-    ? `${API_URL}projects/${editingProject.value._id}`
-    : "${API_URL}projects"
+    ? `${API_URL}/projects/${editingProject.value._id}`
+    : "${API_URL}/projects"
   
   const method = editingProject.value ? "PUT" : "POST"
   isProcessing.value = true 
@@ -108,7 +108,7 @@ const handleSubmit = async () => {
 const deleteProject = async () => {
   isProcessing.value = true
   try {
-    await fetch(`${API_URL}projects/${editingProject.value._id}`, {
+    await fetch(`${API_URL}/projects/${editingProject.value._id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` }
     })
