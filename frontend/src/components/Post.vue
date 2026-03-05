@@ -199,8 +199,128 @@ const handlePlay = async () => {
   }
 }
 
+const comments = ref([])
+const newCommentText = ref("")
+const replyText = ref("")
+const replyingTo = ref(null) // Holds the _id of the comment being replied to
+const isSubmittingComment = ref(false)
+
+// Convert flat comments array into a nested tree for replies
+const threadedComments = computed(() => {
+  const map = {}
+  const roots = []
+
+  // Initialize map
+  comments.value.forEach(c => {
+    map[c._id] = { ...c, replies: [] }
+  })
+
+  // Build tree
+  comments.value.forEach(c => {
+    if (c.parentId && map[c.parentId]) {
+      // We push older replies to the bottom, so reverse the UI sort logic if needed
+      map[c.parentId].replies.push(map[c._id])
+    } else {
+      roots.push(map[c._id])
+    }
+  })
+
+  // Sort replies oldest to newest for chronological reading
+  Object.values(map).forEach(node => {
+    node.replies.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+  })
+
+  return roots
+})
+
+const timeAgo = (date) => {
+  const seconds = Math.floor((new Date() - new Date(date)) / 1000)
+  let interval = seconds / 31536000
+  if (interval > 1) return Math.floor(interval) + "y ago"
+  interval = seconds / 2592000
+  if (interval > 1) return Math.floor(interval) + "mo ago"
+  interval = seconds / 86400
+  if (interval > 1) return Math.floor(interval) + "d ago"
+  interval = seconds / 3600
+  if (interval > 1) return Math.floor(interval) + "h ago"
+  interval = seconds / 60
+  if (interval > 1) return Math.floor(interval) + "m ago"
+  return "Just now"
+}
+
+const fetchComments = async () => {
+  try {
+    const res = await fetch(`http://localhost:5000/posts/${postId}/comments`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (res.ok) {
+      comments.value = await res.json()
+    }
+  } catch (err) {
+    console.error("Failed to fetch comments", err)
+  }
+}
+
+const submitComment = async (parentId = null) => {
+  const text = parentId ? replyText.value : newCommentText.value
+  if (!text.trim() || isSubmittingComment.value) return
+
+  isSubmittingComment.value = true
+  try {
+    const res = await fetch(`http://localhost:5000/posts/${postId}/comments`, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}` 
+      },
+      body: JSON.stringify({ content: text, parentId })
+    })
+
+    if (res.ok) {
+      const data = await res.json()
+      comments.value.unshift(data.comment) // Add to UI
+      
+      // Clear inputs
+      if (parentId) {
+        replyText.value = ""
+        replyingTo.value = null
+      } else {
+        newCommentText.value = ""
+      }
+    }
+  } catch (err) {
+    console.error("Failed to post comment", err)
+  } finally {
+    isSubmittingComment.value = false
+  }
+}
+
+const toggleCommentLike = async (commentId) => {
+  try {
+    // Optimistic UI Update
+    const comment = comments.value.find(c => c._id === commentId)
+    if (!comment) return
+    comment.isLiked = !comment.isLiked
+    comment.likeCount += comment.isLiked ? 1 : -1
+
+    const res = await fetch(`http://localhost:5000/comments/${commentId}/like`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    
+    if (!res.ok) {
+      // Revert if failed
+      comment.isLiked = !comment.isLiked
+      comment.likeCount += comment.isLiked ? 1 : -1
+    }
+  } catch (err) {
+    console.error("Failed to like comment", err)
+  }
+}
+
 onMounted(() => {
   fetchPost()
+  fetchComments()
 })
 
 </script>
@@ -371,13 +491,84 @@ onMounted(() => {
       </div>
 
       <div class="comments-section">
-        <h3>Echoes from the Void (Comments)</h3>
+        <h3>Echoes from the Void ({{ comments.length }})</h3>
+        
         <div class="comment-input-area">
-          <textarea placeholder="Leave a whisper..."></textarea>
-          <button disabled>Post</button>
+          <textarea 
+            v-model="newCommentText" 
+            placeholder="Leave a whisper..."
+            @keyup.ctrl.enter="submitComment(null)"
+          ></textarea>
+          <button 
+            :disabled="!newCommentText.trim() || isSubmittingComment" 
+            @click="submitComment(null)"
+            :class="{ 'active-btn': newCommentText.trim() }"
+          >Post</button>
         </div>
-        <div class="empty-comments">
+
+        <div v-if="comments.length === 0" class="empty-comments">
           <p>No echoes yet. Be the first to speak.</p>
+        </div>
+
+        <div class="thread-list" v-else>
+          <div v-for="thread in threadedComments" :key="thread._id" class="comment-thread">
+            
+            <div class="comment-node">
+              <img :src="thread.author.profilePic || '/default-avatar.png'" class="comment-avatar" />
+              <div class="comment-body">
+                <div class="comment-header">
+                  <span class="comment-author" @click="router.push(`/user/${thread.author.userid}`)">
+                    {{ thread.author.username }}
+                  </span>
+                  <span class="comment-time">{{ timeAgo(thread.createdAt) }}</span>
+                </div>
+                <p class="comment-text">{{ thread.content }}</p>
+                
+                <div class="comment-actions">
+                  <button class="action-btn-small" :class="{ liked: thread.isLiked }" @click="toggleCommentLike(thread._id)">
+                    {{ thread.isLiked ? '❤️' : '🤍' }} {{ thread.likeCount || '' }}
+                  </button>
+                  <button class="action-btn-small" @click="replyingTo = replyingTo === thread._id ? null : thread._id">
+                    Reply
+                  </button>
+                </div>
+
+                <div v-if="replyingTo === thread._id" class="reply-input-area">
+                  <textarea v-model="replyText" placeholder="Write a reply..."></textarea>
+                  <div class="reply-actions">
+                    <button class="cancel-btn" @click="replyingTo = null">Cancel</button>
+                    <button 
+                      class="submit-btn" 
+                      :disabled="!replyText.trim() || isSubmittingComment"
+                      @click="submitComment(thread._id)"
+                    >Reply</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="replies-container" v-if="thread.replies.length > 0">
+              <div v-for="reply in thread.replies" :key="reply._id" class="comment-node reply-node">
+                <img :src="reply.author.profilePic || '/default-avatar.png'" class="comment-avatar small" />
+                <div class="comment-body">
+                  <div class="comment-header">
+                    <span class="comment-author" @click="router.push(`/user/${reply.author.userid}`)">
+                      {{ reply.author.username }}
+                    </span>
+                    <span class="comment-time">{{ timeAgo(reply.createdAt) }}</span>
+                  </div>
+                  <p class="comment-text">{{ reply.content }}</p>
+                  
+                  <div class="comment-actions">
+                    <button class="action-btn-small" :class="{ liked: reply.isLiked }" @click="toggleCommentLike(reply._id)">
+                      {{ reply.isLiked ? '❤️' : '🤍' }} {{ reply.likeCount || '' }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
         </div>
       </div>
 
@@ -511,4 +702,40 @@ onMounted(() => {
   50% { transform: scale(1.3); }
   100% { transform: scale(1); }
 }
+
+.comment-input-area button.active-btn { background: #3b82f6; color: white; cursor: pointer; transition: 0.2s; }
+.comment-input-area button.active-btn:hover { background: #2563eb; }
+
+.thread-list { display: flex; flex-direction: column; gap: 2rem; }
+.comment-thread { display: flex; flex-direction: column; gap: 1rem; }
+
+.comment-node { display: flex; gap: 15px; }
+.comment-avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: #334155; flex-shrink: 0; }
+.comment-avatar.small { width: 30px; height: 30px; }
+
+.comment-body { flex: 1; display: flex; flex-direction: column; gap: 5px; }
+.comment-header { display: flex; align-items: baseline; gap: 10px; }
+.comment-author { font-weight: 600; color: #e2e8f0; cursor: pointer; transition: color 0.2s; }
+.comment-author:hover { color: #3b82f6; text-decoration: underline; }
+.comment-time { font-size: 0.8rem; color: #64748b; }
+
+.comment-text { margin: 0; color: #cbd5e1; line-height: 1.5; font-size: 0.95rem; white-space: pre-wrap; }
+
+.comment-actions { display: flex; gap: 15px; margin-top: 5px; }
+.action-btn-small { background: transparent; border: none; color: #64748b; font-size: 0.85rem; cursor: pointer; display: flex; align-items: center; gap: 5px; padding: 0; transition: color 0.2s; font-family: inherit; }
+.action-btn-small:hover { color: #cbd5e1; }
+.action-btn-small.liked { color: #ef4444; }
+
+.reply-input-area { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+.reply-input-area textarea { width: 100%; background: transparent; border: none; border-bottom: 1px solid #334155; color: white; font-family: inherit; resize: none; min-height: 30px; padding: 5px 0; outline: none; }
+.reply-input-area textarea:focus { border-bottom-color: #3b82f6; }
+
+.reply-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.reply-actions button { padding: 6px 16px; border-radius: 20px; font-size: 0.85rem; border: none; cursor: pointer; font-family: inherit; }
+.cancel-btn { background: transparent; color: #cbd5e1; }
+.cancel-btn:hover { background: rgba(255,255,255,0.05); }
+.submit-btn { background: #3b82f6; color: white; }
+.submit-btn:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+
+.replies-container { margin-left: 55px; display: flex; flex-direction: column; gap: 15px; border-left: 2px solid rgba(255,255,255,0.05); padding-left: 15px; }
 </style>

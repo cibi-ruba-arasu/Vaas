@@ -22,7 +22,7 @@ import Razorpay from "razorpay";
 import PayoutRecipient from "./schema/PayoutRecipient.js";
 import ConsoleDB from "./schema/Console.js";
 import Purchase from "./schema/Purchase.js";
-
+import Comment from "./schema/Comment.js"
 
 dotenv.config()
 
@@ -1038,15 +1038,20 @@ app.get("/projects", authMiddleware, async (req, res) => {
       // Check Canvas Stats
       const state = await CanvasState.findOne({ projectId: p._id });
       
-      let stats = { disconnected: 0, orphans: 0, hasGeneralNode: false, totalNodes: 0 };
+      // 🚀 FIX: Added hasRootNode to the initial stats object
+      let stats = { disconnected: 0, orphans: 0, hasGeneralNode: false, totalNodes: 0, hasRootNode: false };
       if (state) {
           stats.disconnected = state.disconnectedOptionsCount || 0;
           stats.orphans = state.orphanedNodesCount || 0;
           stats.hasGeneralNode = state.nodes ? state.nodes.some(n => n.node_type === 'General') : false;
+          
+          // 🚀 FIX: Safely check if rootNodeId exists. 
+          // We check against null/undefined because '0' is a valid index but evaluates to false in standard JS checks.
+          stats.hasRootNode = state.rootNodeId !== null && state.rootNodeId !== undefined;
       }
 
       return {
-          ...p, // Properly spreads name, description, thumbnail now
+          ...p,
           stats,
           isPublished: !!isPublished
       };
@@ -2129,7 +2134,10 @@ app.get("/payments/my-purchases", authMiddleware, async (req, res) => {
       status: 'completed' 
     }).populate('gameId', 'name thumbnail authorName monetization');
 
-    res.json(purchases.map(p => ({
+    // 🚀 FIX: Filter out purchases where the game has been deleted by the author
+    const validPurchases = purchases.filter(p => p.gameId !== null);
+
+    res.json(validPurchases.map(p => ({
       gameId: p.gameId._id,
       name: p.gameId.name,
       thumbnail: p.gameId.thumbnail,
@@ -2284,6 +2292,261 @@ app.get("/badges/source/:publishId", async (req, res) => {
   } catch (err) {
     console.error("Badge Source Error:", err);
     res.status(500).json({ message: "Server error fetching badge source" });
+  }
+});
+
+/* ===== GLOBAL SEARCH ENGINE ===== */
+app.get("/search/global", async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.trim() === "") {
+      return res.json({ games: [], users: [] });
+    }
+
+    const searchRegex = new RegExp(q, 'i');
+    let includedPrefs = [];
+    let excludedPrefs = [];
+
+    // 1. Identify User Preferences (If logged in)
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.split(" ")[1];
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const pref = await UserPreference.findOne({ userId: decoded.mongoId });
+        if (pref) {
+          includedPrefs = pref.includedCategories || [];
+          excludedPrefs = pref.excludedCategories || [];
+        }
+      } catch (e) {
+        // Token invalid, proceed as guest
+      }
+    }
+
+    // 2. Base Query for Games
+    let gameQuery = {
+      $or: [
+        { name: searchRegex },
+        { customCategories: searchRegex },
+        { "description.blocks.content": searchRegex }
+      ]
+    };
+
+    // The Gatekeeper: Strictly avoid excluded categories & warnings
+    if (excludedPrefs.length > 0) {
+      gameQuery.$and = [
+        { categories: { $nin: excludedPrefs } },
+        { customCategories: { $nin: excludedPrefs } },
+        { warnings: { $nin: excludedPrefs } }
+      ];
+    }
+
+    // Fetch potential matches
+    const weaves = await Publish.find(gameQuery).lean();
+
+    // 3. The Resonance Engine
+    const scoredWeaves = weaves.map(weave => {
+      const likes = weave.likes || 0;
+      const plays = weave.plays || 0;
+      let score = (likes * 10) + (plays * 5); // Base Engagement
+
+      // Importance Multiplier (Included Preferences Boost)
+      if (includedPrefs.length > 0) {
+        let matchCount = 0;
+        if (weave.categories) matchCount += weave.categories.filter(c => includedPrefs.includes(c)).length;
+        if (weave.customCategories) matchCount += weave.customCategories.filter(c => includedPrefs.includes(c)).length;
+        if (matchCount > 0) {
+          score *= (1 + (0.5 * matchCount)); // 50% boost per matching included tag
+        }
+      }
+
+      // Relevancy Multiplier (Direct title matches are worth more than description matches)
+      if (weave.name && weave.name.toLowerCase().includes(q.toLowerCase())) {
+        score *= 1.5; 
+      }
+
+      return { ...weave, searchScore: score };
+    });
+
+    // Sort by final score and slice the top 20 best results
+    scoredWeaves.sort((a, b) => b.searchScore - a.searchScore);
+    const topGames = scoredWeaves.slice(0, 20);
+
+    // 4. Search Users (Unchanged, sorted by popularity)
+    const users = await User.find({
+      $or: [
+        { username: searchRegex },
+        { userid: searchRegex }
+      ]
+    })
+    .select("username userid profilePic verified followersCount")
+    .sort({ followersCount: -1 })
+    .limit(10)
+    .lean();
+
+    res.json({ games: topGames, users });
+
+  } catch (err) {
+    console.error("Global Search Error:", err);
+    res.status(500).json({ message: "Failed to execute search" });
+  }
+});
+
+/* ===== CONSOLE: SAVE GAME PROGRESS ===== */
+app.post("/console/progress/:gameId", authMiddleware, async (req, res) => {
+  try {
+    const { mongoId } = req.user;
+    const { gameId } = req.params;
+    const { currentNodeIndex, currentSceneIndex, variables } = req.body;
+
+    let userConsole = await ConsoleDB.findOne({ userId: mongoId });
+    if (!userConsole) {
+      userConsole = new ConsoleDB({ userId: mongoId, savedPosts: [], playStates: [] });
+    }
+
+    // Check if a save state already exists for this game
+    const stateIndex = userConsole.playStates.findIndex(p => p.gameId.toString() === gameId);
+
+    if (stateIndex !== -1) {
+      // Overwrite existing save
+      userConsole.playStates[stateIndex].currentNodeIndex = currentNodeIndex;
+      userConsole.playStates[stateIndex].currentSceneIndex = currentSceneIndex;
+      userConsole.playStates[stateIndex].variables = variables;
+      userConsole.playStates[stateIndex].lastPlayed = new Date();
+    } else {
+      // Create new save
+      userConsole.playStates.push({
+        gameId,
+        currentNodeIndex,
+        currentSceneIndex,
+        variables,
+        lastPlayed: new Date()
+      });
+    }
+
+    await userConsole.save();
+    res.json({ success: true, message: "Progress saved" });
+
+  } catch (err) {
+    console.error("Save Progress Error:", err);
+    res.status(500).json({ message: "Failed to save progress" });
+  }
+});
+
+/* ===== CONSOLE: LOAD GAME PROGRESS ===== */
+app.get("/console/progress/:gameId", authMiddleware, async (req, res) => {
+  try {
+    const { mongoId } = req.user;
+    const { gameId } = req.params;
+
+    const userConsole = await ConsoleDB.findOne({ userId: mongoId });
+    if (!userConsole) return res.json(null);
+
+    const playState = userConsole.playStates.find(p => p.gameId.toString() === gameId);
+    
+    // Returns null if no save file exists (meaning it's a new game)
+    res.json(playState || null); 
+
+  } catch (err) {
+    console.error("Load Progress Error:", err);
+    res.status(500).json({ message: "Failed to load progress" });
+  }
+});
+
+app.get("/posts/:id/comments", authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { mongoId } = req.user;
+
+  try {
+    const comments = await Comment.find({ postId: id })
+      .populate("authorId", "username userid profilePic")
+      .sort({ createdAt: -1 }); // Newest first
+
+    // Map to attach like counts and boolean indicating if current user liked it
+    const formattedComments = comments.map(c => {
+      const isLiked = c.likes.some(likeId => likeId.toString() === mongoId);
+      return {
+        _id: c._id,
+        content: c.content,
+        author: c.authorId, // Contains username, userid, profilePic
+        parentId: c.parentId,
+        createdAt: c.createdAt,
+        likeCount: c.likes.length,
+        isLiked: isLiked
+      };
+    });
+
+    res.json(formattedComments);
+  } catch (err) {
+    console.error("Fetch comments error:", err);
+    res.status(500).json({ message: "Failed to fetch comments" });
+  }
+});
+
+/* ===== POST A COMMENT OR REPLY ===== */
+app.post("/posts/:id/comments", authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { mongoId } = req.user;
+  const { content, parentId } = req.body;
+
+  if (!content || content.trim() === "") {
+    return res.status(400).json({ message: "Comment cannot be empty" });
+  }
+
+  try {
+    const newComment = new Comment({
+      postId: id,
+      authorId: mongoId,
+      content,
+      parentId: parentId || null
+    });
+
+    await newComment.save();
+
+    // Populate author so frontend can display it immediately
+    const populatedComment = await Comment.findById(newComment._id).populate("authorId", "username userid profilePic");
+
+    res.json({
+      success: true,
+      comment: {
+        _id: populatedComment._id,
+        content: populatedComment.content,
+        author: populatedComment.authorId,
+        parentId: populatedComment.parentId,
+        createdAt: populatedComment.createdAt,
+        likeCount: 0,
+        isLiked: false
+      }
+    });
+  } catch (err) {
+    console.error("Post comment error:", err);
+    res.status(500).json({ message: "Failed to post comment" });
+  }
+});
+
+/* ===== TOGGLE COMMENT LIKE ===== */
+app.post("/comments/:commentId/like", authMiddleware, async (req, res) => {
+  const { commentId } = req.params;
+  const { mongoId } = req.user;
+
+  try {
+    const comment = await Comment.findById(commentId);
+    if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    const hasLiked = comment.likes.includes(mongoId);
+
+    if (hasLiked) {
+      // Unlike
+      await Comment.findByIdAndUpdate(commentId, { $pull: { likes: mongoId } });
+      res.json({ isLiked: false, likeCount: comment.likes.length - 1 });
+    } else {
+      // Like
+      await Comment.findByIdAndUpdate(commentId, { $push: { likes: mongoId } });
+      res.json({ isLiked: true, likeCount: comment.likes.length + 1 });
+    }
+  } catch (err) {
+    console.error("Like comment error:", err);
+    res.status(500).json({ message: "Failed to like comment" });
   }
 });
 

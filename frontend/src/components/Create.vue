@@ -60,12 +60,20 @@ const handlePublishClick = (project) => {
 
 const canPublish = (project) => {
     if (!project.stats) return false;
-    return project.stats.hasGeneralNode && project.stats.disconnected === 0;
+    
+    // 🚀 FIX: Now requires hasRootNode to be true in order to activate the Publish button
+    return project.stats.hasGeneralNode && 
+           project.stats.hasRootNode && 
+           project.stats.disconnected === 0;
 }
 
 const getPublishError = (project) => {
     if (!project.stats) return "Loading...";
     if (!project.stats.hasGeneralNode) return "Add a scene first";
+    
+    // 🚀 FIX: Will show this error on the button if the root node isn't set
+    if (!project.stats.hasRootNode) return "Set a Starting Node";
+    
     if (project.stats.disconnected > 0) return "Fix disconnected nodes";
     return "";
 }
@@ -140,7 +148,8 @@ onMounted(() => {
   <div class="create-page">
     <header class="header">
       <h1 class="logo">Loomart</h1>
-      <div class="header-right">
+      <div class="header-right" style="display: flex; gap: 12px;">
+        <button class="profile-btn doc-btn" @click="router.push('/docs')">Docs</button>
         <button class="profile-btn" @click="router.push('/profile')">Profile</button>
       </div>
     </header>

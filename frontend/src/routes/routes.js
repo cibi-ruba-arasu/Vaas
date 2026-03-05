@@ -16,6 +16,7 @@ import Post from '@/components/Post.vue';
 import User from '@/components/User.vue'
 import Search from '@/components/Search.vue';
 import Console from '@/components/Console.vue';
+import Doc from '@/components/Doc.vue';
 
 const routes = [
   {
@@ -110,6 +111,13 @@ const routes = [
     component: Console,
     meta: { requiresAuth: true }
   },
+  {
+    path: '/docs',
+    name: 'Documentation',
+    // Adjust the path below to match where you create Doc.vue
+    component: Doc, 
+    meta: { requiresAuth: true } // Assuming they need to be logged in to read it
+  }
 ]
 
 const router = createRouter({

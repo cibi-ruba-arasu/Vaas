@@ -1237,6 +1237,16 @@ watch(() => route.hash, (newHash) => {
 const handlePlayClick = async (id) => {
   if (isInsertingCD.value) return; // Prevent double-clicks
   
+  // 🚀 FIX: Request fullscreen IMMEDIATELY before any async/await operations.
+  // Browsers will block fullscreen if it's called after a network request (await).
+  try {
+    if (!document.fullscreenElement) {
+      await document.documentElement.requestFullscreen();
+    }
+  } catch (err) {
+    console.warn("Fullscreen request blocked/failed:", err);
+  }
+
   isInsertingCD.value = true
   insertingGameId.value = id
   trackAction("CD_INSERTION_STARTED", { gameId: id })
@@ -1252,14 +1262,6 @@ const handlePlayClick = async (id) => {
     } catch (err) {
       console.warn("Play tracking failed:", err);
     }
-  }
-
-  try {
-    if (!document.fullscreenElement) {
-      await document.documentElement.requestFullscreen()
-    }
-  } catch (err) {
-    console.warn("Fullscreen request blocked/failed:", err)
   }
 
   lockLandscape()
@@ -2015,6 +2017,46 @@ const handleCanvasClick = (e) => {
         }
     }
 }
+
+const loadGameProgress = async (gameId) => {
+  try {
+    const res = await fetch(`http://localhost:5000/console/progress/${gameId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (res.ok) {
+      const savedState = await res.json();
+      return savedState; // Returns { currentNodeIndex, currentSceneIndex, variables }
+    }
+  } catch (err) {
+    console.error("Failed to load progress:", err);
+  }
+  return null;
+};
+
+// 🚀 Silently saves the game to the backend without interrupting gameplay
+const saveGameProgress = async (gameId, nodeIndex, sceneIndex) => {
+  // Map your current variables so we only save the raw data
+  const currentVariables = {};
+  // Assuming you have an array/object of global variables in your state
+  // globalVariables.value.forEach(v => currentVariables[v.id] = v.value);
+
+  try {
+    await fetch(`http://localhost:5000/console/progress/${gameId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        currentNodeIndex: nodeIndex,
+        currentSceneIndex: sceneIndex,
+        variables: currentVariables
+      })
+    });
+  } catch (err) {
+    console.error("Failed to save progress:", err);
+  }
+};
 
 const drawViewport = () => {
     if (!viewportCanvasRef.value || !isEngineRunning.value || !activeEngineData.value) return;

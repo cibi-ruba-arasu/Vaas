@@ -37,6 +37,10 @@ const newCustomCategory = ref("");
 const activeBlockId = ref(null);
 const blockRefs = ref({});
 
+// --- DEMO / CANVAS STATE ---
+const canvasState = ref(null);
+const maxDemoLimit = ref(0);
+
 // --- CONSTANTS ---
 const FONT_OPTIONS = [
   "Cinzel", "Playfair Display", "Inter", "Roboto", "Lato", "Montserrat", "Poppins", 
@@ -84,6 +88,84 @@ const WARNING_OPTIONS = [
   "Trypophobia (Holes)", "Emetic / Vomiting", "Others"
 ];
 
+// --- ALGORITHMS ---
+
+// Function to calculate max height through General nodes only
+const calculateMaxDemoNodes = (state) => {
+  if (!state || !state.nodes || !Array.isArray(state.nodes)) return 0;
+
+  const nodes = state.nodes;
+  const rootNodeId = state.rootNodeId;
+  
+  if (rootNodeId === undefined || rootNodeId === null) return 0;
+
+  const isGeneralNode = (node) => {
+    if (!node) return false;
+    const typeStr = String(node.node_type || node.Node_type || node.type || node.name || node.Node_name || "").toLowerCase();
+    return typeStr === 'general';
+  };
+
+  const generalNodes = new Set();
+  const adjacencyMap = new Map(); 
+  
+  nodes.forEach(node => {
+    if (isGeneralNode(node)) {
+      generalNodes.add(node.index);
+      adjacencyMap.set(node.index, new Set());
+    }
+  });
+
+  if (generalNodes.size === 0) return 0;
+
+  nodes.forEach(node => {
+    if (!isGeneralNode(node)) return; 
+
+    const targets = [];
+    if (node.Next !== null && node.Next !== undefined) targets.push(node.Next);
+    if (node.NextTrue !== null && node.NextTrue !== undefined) targets.push(node.NextTrue);
+    if (node.NextFalse !== null && node.NextFalse !== undefined) targets.push(node.NextFalse);
+    
+    if (node.options && Array.isArray(node.options)) {
+      node.options.forEach(opt => {
+        if (opt.next !== null && opt.next !== undefined) targets.push(opt.next);
+      });
+    }
+
+    const currentNodeAdj = adjacencyMap.get(node.index) || new Set();
+    targets.forEach(targetIndex => {
+      if (generalNodes.has(targetIndex)) currentNodeAdj.add(targetIndex);
+    });
+    adjacencyMap.set(node.index, currentNodeAdj);
+  });
+
+  const memo = new Map(); 
+
+  const dfs = (nodeIndex, visited = new Set()) => {
+    if (!generalNodes.has(nodeIndex)) return 0;
+    if (memo.has(nodeIndex)) return memo.get(nodeIndex);
+    if (visited.has(nodeIndex)) return 0;
+    
+    visited.add(nodeIndex);
+    
+    let maxChildLength = 0;
+    const nextNodes = adjacencyMap.get(nodeIndex) || new Set();
+    
+    for (const nextIndex of nextNodes) {
+      const branchVisited = new Set(visited);
+      const childLength = dfs(nextIndex, branchVisited);
+      maxChildLength = Math.max(maxChildLength, childLength);
+    }
+    
+    const result = 1 + maxChildLength;
+    memo.set(nodeIndex, result);
+    return result;
+  };
+
+  const maxHeight = dfs(rootNodeId);
+  return Math.max(1, maxHeight - 1);
+};
+
+
 // --- HELPERS ---
 const getGradient = (colors, angle) => {
   if (!colors || colors.length === 0) return 'transparent';
@@ -103,6 +185,21 @@ const activeBlock = computed(() =>
   form.value.description.blocks.find(b => b.id === activeBlockId.value)
 );
 
+// --- FORM VALIDATION ---
+const isFormValid = computed(() => {
+  if (!form.value.name || form.value.name.trim() === "") return false;
+  
+  // Demo limit validation
+  if (form.value.monetization.isPaid && form.value.monetization.hasDemo) {
+    if (form.value.monetization.demoNodeLimit < 1) return false;
+    if (maxDemoLimit.value > 0 && form.value.monetization.demoNodeLimit > maxDemoLimit.value) {
+      return false;
+    }
+  }
+  
+  return true;
+});
+
 const handleFileChange = (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -110,8 +207,6 @@ const handleFileChange = (e) => {
   
   const reader = new FileReader();
   reader.onload = (event) => {
-    // Set the Base64 string to the form. 
-    // The backend POST /publish will handle the upload to GCS.
     form.value.thumbnail = event.target.result;
   }
   reader.readAsDataURL(file);
@@ -150,7 +245,7 @@ const checkContent = (block, event) => {
   block.type = gifRegex.test(block.content) ? 'gif' : 'text';
 };
 
-// --- ACTIONS: DATA FETCH (The "Before" State) ---
+// --- ACTIONS: DATA FETCH ---
 const fetchPublishedData = async () => {
   loading.value = true;
   try {
@@ -172,19 +267,15 @@ const fetchPublishedData = async () => {
       
       if (data.monetization) form.value.monetization = data.monetization;
 
-      // ✅ FIX: Robust Hydration Logic
       if (data.description) {
         if (data.description.blocks && Array.isArray(data.description.blocks)) {
-            // Standard New Object Format
             form.value.description = data.description;
         } else if (Array.isArray(data.description)) {
-            // Mid-Legacy Array Format
             form.value.description = {
                 container: { colors: ['#1e293b', '#0f172a'], angle: 135 },
                 blocks: data.description
             };
         } else if (typeof data.description === 'string') {
-            // Oldest String Format
             form.value.description = {
                 container: { colors: ['#1e293b', '#0f172a'], angle: 135 },
                 blocks: [{ id: 1, type: 'text', content: data.description, fontSize: 16, textColors: ['#cbd5e1'], bgColors: ['transparent'], fontFamily: 'Inter', align: 'left' }]
@@ -201,9 +292,28 @@ const fetchPublishedData = async () => {
   }
 };
 
+const fetchCanvasState = async () => {
+  try {
+    const res = await fetch(`http://localhost:5000/canvas/load/${projectId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (res.ok) {
+      canvasState.value = await res.json();
+      maxDemoLimit.value = calculateMaxDemoNodes(canvasState.value);
+      
+      // Auto-correct if existing limit violates the calculated max
+      if (form.value.monetization.hasDemo && form.value.monetization.demoNodeLimit > maxDemoLimit.value) {
+        form.value.monetization.demoNodeLimit = maxDemoLimit.value;
+      }
+    }
+  } catch (e) {
+    console.error("Failed to fetch canvas state", e);
+  }
+};
+
 // --- ACTIONS: UPDATE ---
 const handleUpdate = async () => {
-  if (!form.value.name) return alert("Title is required");
+  if (!isFormValid.value) return;
   
   isUpdating.value = true;
   
@@ -257,8 +367,13 @@ const addCustomCategory = () => {
 };
 
 onMounted(() => {
-  if (!token) router.push("/login");
-  else fetchPublishedData();
+  if (!token) {
+    router.push("/login");
+  } else {
+    fetchPublishedData().then(() => {
+      fetchCanvasState();
+    });
+  }
 });
 </script>
 
@@ -385,6 +500,36 @@ onMounted(() => {
             </div>
           </div>
 
+          <div class="meta-card glass-panel" v-if="form.monetization.isPaid">
+            <h3>Demo Settings</h3>
+            <div class="toggle-header" style="margin-bottom: 0;">
+              <span style="font-size: 0.9rem; color: #cbd5e1;">Enable Free Demo?</span>
+              <label class="switch">
+                <input type="checkbox" v-model="form.monetization.hasDemo">
+                <span class="slider round"></span>
+              </label>
+            </div>
+            
+            <div v-if="form.monetization.hasDemo" class="demo-limit-row" style="margin-top:15px; display: flex; flex-direction: column; gap: 5px;">
+              <label style="font-size:0.8rem; color:#94a3b8; text-transform: uppercase;">Demo Limit (Nodes)</label>
+              <div class="number-input-wrap" style="display:flex; align-items:center; gap:10px;">
+                <input
+                  type="number"
+                  v-model="form.monetization.demoNodeLimit"
+                  class="mini-input demo-input"
+                  min="1"
+                  :max="maxDemoLimit"
+                />
+                <span style="font-size:0.75rem; color:#64748b;">
+                  Max allowed: {{ maxDemoLimit }}
+                </span>
+              </div>
+              <div v-if="form.monetization.demoNodeLimit > maxDemoLimit && maxDemoLimit > 0" style="color:#ef4444; font-size:0.75rem; margin-top:5px; background: rgba(239,68,68,0.1); padding: 5px 10px; border-radius: 4px; border-left: 2px solid #ef4444;">
+                ⚠️ Limit cannot exceed {{ maxDemoLimit }}
+              </div>
+            </div>
+          </div>
+
         </div>
 
         <div class="desc-col">
@@ -508,8 +653,10 @@ onMounted(() => {
             </div>
           </div>
 
-          <button class="update-btn" @click="handleUpdate" :disabled="isUpdating">
-            {{ isUpdating ? 'Processing Update...' : '🚀 Push Update Live' }}
+          <button class="update-btn" @click="handleUpdate" :disabled="isUpdating || !isFormValid">
+            <span v-if="!isFormValid">📝 Fix Validation Errors to Update</span>
+            <span v-else-if="isUpdating">Processing Update...</span>
+            <span v-else>🚀 Push Update Live</span>
           </button>
         </div>
 
@@ -590,6 +737,8 @@ input:checked + .slider:before { transform: translateX(22px); }
 .add-tag-btn { background: none; border: 1px dashed #64748b; color: #64748b; padding: 6px 12px; border-radius: 6px; cursor: pointer; transition: 0.2s; }
 .add-tag-btn:hover { border-color: #3b82f6; color: #3b82f6; }
 .mini-input { background: #0f172a; border: 1px solid #3b82f6; color: white; padding: 6px 10px; border-radius: 6px; width: 100px; font-size: 0.8rem; outline: none; }
+
+.demo-input { width: 80px; }
 
 .nsfw-row { display: flex; align-items: center; gap: 10px; font-size: 0.85rem; color: #fca5a5; margin-top: 5px; }
 
