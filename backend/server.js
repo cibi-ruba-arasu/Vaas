@@ -98,21 +98,23 @@ const getWiseProfileId = async () => {
 
 /* ===== GOOGLE CLOUD STORAGE SETUP ===== */
 const storage = new Storage({
-  keyFilename: "gcs-key.json", // Ensure this file is in your backend root
-  projectId: "weaver-storage-bucket-1", // REPLACE THIS
+  projectId: process.env.GCS_PROJECT_ID,
+  credentials: {
+    client_email: process.env.GCS_CLIENT_EMAIL,
+    // The .replace() is mandatory here. Environment variables sometimes escape 
+    // the \n characters as literal string text instead of actual line breaks. 
+    // This replace method prevents the dreaded "Invalid crypto engine" crash.
+    private_key: (process.env.GCS_PRIVATE_KEY || "").replace(/\\n/g, '\n')
+  }
 });
 const bucketName = "loomart-media-storage"; // REPLACE THIS (e.g. loomart-media-storage)
 const bucket = storage.bucket(bucketName);
 
 const deleteFolderContent = async (prefix) => {
   try {
-    // Get all files starting with this prefix (folder path)
-    const [files] = await bucket.getFiles({ prefix });
-    
-    if (files.length > 0) {
-      console.log(`🗑️ Deleting ${files.length} old files in: ${prefix}`);
-      await Promise.all(files.map(file => file.delete()));
-    }
+    // 🚀 OPTIMIZATION: Bulk delete directly instead of fetching metadata first
+    await bucket.deleteFiles({ force: true, prefix });
+    console.log(`🗑️ Cleared old files in: ${prefix}`);
   } catch (err) {
     console.error("Delete Error:", err);
   }
@@ -177,9 +179,14 @@ const uploadToGCS = async (base64Data, folderPath, fileNamePrefix) => {
     }
 
     // 5. Upload
+    // 5. Upload (Inside uploadToGCS function)
     console.log(`[GCS] Uploading: ${fullFileName} (${contentType})`);
     await file.save(buffer, {
-      metadata: { contentType },
+      metadata: { 
+        contentType,
+        // 🚀 OPTIMIZATION: Tell browsers to cache this file for 1 year
+        cacheControl: 'public, max-age=31536000' 
+      },
       validation: "md5",
       resumable: false
     });
@@ -373,20 +380,20 @@ const calculateMaxDemoNodes = (canvasState) => {
 const processProjectAssets = async (nodes, userId, projectId) => {
   const usedFilePaths = new Set();
   const projectFolder = `users/${userId}/projects/${projectId}`;
+  const uploadPromises = []; // Store our concurrent upload tasks
 
-  // Helper to process a single component/asset
-  const processAsset = async (dataUrl, namePrefix) => {
-    if (!dataUrl || !dataUrl.startsWith("data:")) return null;
+  const processAsset = async (dataUrl, namePrefix, updateCallback) => {
+    if (!dataUrl || !dataUrl.startsWith("data:")) return;
     
-    const result = await uploadToGCS(dataUrl, projectFolder, namePrefix);
-    if (result) {
-      usedFilePaths.add(result.path);
-      return result.url;
-    }
-    return null; 
+    // We wrap the upload in the concurrency limiter
+    await limit(async () => {
+      const result = await uploadToGCS(dataUrl, projectFolder, namePrefix);
+      if (result) {
+        usedFilePaths.add(result.path);
+        updateCallback(result.url); // Update the specific node property
+      }
+    });
   };
-
-
 
   const trackExistingUrl = (url) => {
     if (url && url.includes(bucketName)) {
@@ -395,33 +402,24 @@ const processProjectAssets = async (nodes, userId, projectId) => {
     }
   };
 
-  // 1. Iterate Nodes
+  // 1. Queue all uploads concurrently
   for (const node of nodes) {
-    
-    // --- A. Process Standard Node Audio ---
     if (node.audio && node.audio.url) {
       if (node.audio.url.startsWith("data:")) {
-        console.log(`[Audio] Found new audio for Node ${node.index}`);
-        const newUrl = await processAsset(node.audio.url, "audio");
-        if (newUrl) node.audio.url = newUrl; 
+        uploadPromises.push(processAsset(node.audio.url, "audio", (url) => node.audio.url = url));
       } else {
         trackExistingUrl(node.audio.url);
       }
     }
 
-    // --- NEW: Process Gift Node Audio ---
     if (node.giftAudio && node.giftAudio.url) {
       if (node.giftAudio.url.startsWith("data:")) {
-        console.log(`[Gift] Found new audio for Gift Node ${node.index}`);
-        // Upload with a specific prefix 'gift_audio'
-        const newUrl = await processAsset(node.giftAudio.url, "gift_audio");
-        if (newUrl) node.giftAudio.url = newUrl; 
+        uploadPromises.push(processAsset(node.giftAudio.url, "gift_audio", (url) => node.giftAudio.url = url));
       } else {
         trackExistingUrl(node.giftAudio.url);
       }
     }
 
-    // --- B. Process Scenes & Components ---
     if (node.scenes) {
       for (const scene of node.scenes) {
         if (scene.components) {
@@ -429,8 +427,7 @@ const processProjectAssets = async (nodes, userId, projectId) => {
             if (comp.type === "image" || comp.type === "video") {
               if (comp.url && comp.url.startsWith("data:")) {
                 const safeName = comp.name ? comp.name.replace(/[^a-z0-9]/gi, '_') : 'asset';
-                const newUrl = await processAsset(comp.url, safeName);
-                if (newUrl) comp.url = newUrl;
+                uploadPromises.push(processAsset(comp.url, safeName, (url) => comp.url = url));
               } else {
                 trackExistingUrl(comp.url);
               }
@@ -440,6 +437,9 @@ const processProjectAssets = async (nodes, userId, projectId) => {
       }
     }
   }
+
+  // 2. Wait for all queued uploads to finish
+  await Promise.all(uploadPromises);
 
   return { updatedNodes: nodes, usedFilePaths };
 };
