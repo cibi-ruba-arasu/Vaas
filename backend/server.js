@@ -23,7 +23,6 @@ import PayoutRecipient from "./schema/PayoutRecipient.js";
 import ConsoleDB from "./schema/Console.js";
 import Purchase from "./schema/Purchase.js";
 import Comment from "./schema/Comment.js"
-import path from "path";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
