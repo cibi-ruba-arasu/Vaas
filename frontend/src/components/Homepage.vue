@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, watch } from "vue"
 import { useRouter } from "vue-router"
-
+import { API_URL } from '../config.js';
 const router = useRouter()
 const auraColor = ref("#0077ff") 
 const token = sessionStorage.getItem("token")

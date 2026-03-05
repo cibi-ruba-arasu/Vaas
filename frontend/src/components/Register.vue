@@ -3,7 +3,7 @@ import { ref, watch, watchEffect, onMounted, onBeforeUnmount } from "vue"
 import { Country, State, City } from "country-state-city"
 import bcrypt from "bcryptjs"
 import { useRouter } from "vue-router"
-
+import { API_URL } from '../config.js';
 /* ===== ROTATING TITLE TEXT ===== */
 const roles = [
   "Dreamer",

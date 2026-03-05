@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from "vue"
 import { useRouter } from "vue-router"
-
+import { API_URL } from '../config.js';
 const router = useRouter()
 
 const email = ref("")

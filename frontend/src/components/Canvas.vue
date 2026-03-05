@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, nextTick, watch, computed } from "vue"
 import { useRoute, useRouter } from "vue-router"
-
+import { API_URL } from '../config.js';
 /* ================= ROUTE ================= */
 const route = useRoute()
 const projectId = route.params.projectId

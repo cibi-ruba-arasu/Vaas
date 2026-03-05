@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from "vue"
 import { useRoute, useRouter } from "vue-router"
-
+import { API_URL } from '../config.js';
 const route = useRoute()
 const router = useRouter()
 const postId = route.params.id

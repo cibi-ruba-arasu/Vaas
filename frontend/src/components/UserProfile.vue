@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, nextTick, computed, watch } from "vue"
 import { useRouter } from "vue-router"
+import { API_URL } from '../config.js';
 
 const router = useRouter()
 const token = sessionStorage.getItem("token")
