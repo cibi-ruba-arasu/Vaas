@@ -267,7 +267,7 @@ const finalizeBankSubmission = async () => {
 
     if (isRazorpayFlow.value) {
       // --- MANUAL INR PAYLOAD ---
-      url = "${API_URL}/payouts/razorpay/create-recipient";
+      url = `${API_URL}/payouts/razorpay/create-recipient`;
       body = {
         name: razorpayForm.value.accountHolderName,
         email: "user@loomart.io",
@@ -278,7 +278,7 @@ const finalizeBankSubmission = async () => {
       };
     } else {
       // --- WISE PAYLOAD ---
-      url = "${API_URL}/payouts/wise/create-recipient";
+      url = `${API_URL}/payouts/wise/create-recipient`;
       body = {
         currency: payoutCurrency.value,
         accountHolderName: accountHolderName.value,
@@ -747,7 +747,7 @@ const publishProject = async () => {
 
   isPublishing.value = true;
   try {
-    const res = await fetch("${API_URL}/publish", {
+    const res = await fetch(`${API_URL}/publish`, {
       method: "POST",
       headers: { 
         "Content-Type": "application/json", 

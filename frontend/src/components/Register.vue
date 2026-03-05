@@ -100,7 +100,7 @@ const handlesubmit = async () => {
 
   console.log("🟦 REGISTER DATA:", userData)
 
-  await fetch("${API_URL}/send-otp", {
+  await fetch(`${API_URL}/send-otp`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email: email.value })

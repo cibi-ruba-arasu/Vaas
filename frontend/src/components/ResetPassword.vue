@@ -40,7 +40,7 @@ const resetPassword = async () => {
   isLoading.value = true
 
   try {
-    const res = await fetch("${API_URL}/forgot-password/reset", {
+    const res = await fetch(`${API_URL}/forgot-password/reset`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

@@ -72,7 +72,7 @@ const isLikingGame = ref(new Map()) // Prevent double-liking
 // Load user's purchased games on mount
 const fetchPurchasedGames = async () => {
   try {
-    const res = await fetch('${API_URL}/payments/my-purchases', {
+    const res = await fetch(`${API_URL}/payments/my-purchases`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     if (res.ok) {
@@ -164,7 +164,7 @@ const initiatePurchase = async () => {
 
   try {
     // 1. Create order on backend
-    const orderRes = await fetch('${API_URL}/payments/create-order', {
+    const orderRes = await fetch(`${API_URL}/payments/create-order`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
@@ -200,7 +200,7 @@ const initiatePurchase = async () => {
         console.log("Payment successful:", response);
         
         // 3. Verify payment on backend
-        const verifyRes = await fetch('${API_URL}/payments/verify', {
+        const verifyRes = await fetch(`${API_URL}/payments/verify`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -816,7 +816,7 @@ const setAsPfp = async () => {
         }
         const base64Image = canvas.toDataURL('image/png');
 
-        const res = await fetch('${API_URL}/user/pfp/earned', {
+        const res = await fetch(`${API_URL}/user/pfp/earned`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({
@@ -875,7 +875,7 @@ const addToAchievements = async () => {
         const base64Image = canvas.toDataURL('image/png');
 
         // 2. Post the Badge to the backend
-        const res = await fetch('${API_URL}/user/badge/earned', {
+        const res = await fetch(`${API_URL}/user/badge/earned`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({
@@ -1064,7 +1064,7 @@ const activeGlobalVariables = computed(() => {
 /* ================= DATA FETCHING ================= */
 const fetchConsole = async () => {
   try {
-    const res = await fetch('${API_URL}/console', {
+    const res = await fetch(`${API_URL}/console`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) {

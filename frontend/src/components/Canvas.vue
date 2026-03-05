@@ -478,7 +478,7 @@ const saveProjectData = async (isAutoSave = false) => {
       disconnectedOptionsCount: projectOptionsStats.value.disconnected
     };
 
-    const res = await fetch("${API_URL}/canvas/save", {
+    const res = await fetch(`${API_URL}/canvas/save`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

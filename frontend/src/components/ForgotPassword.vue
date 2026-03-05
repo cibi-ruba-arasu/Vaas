@@ -14,7 +14,7 @@ const openOTP = async () => {
 
   try {
     loading.value = true
-    const res = await fetch("${API_URL}/forgot-password/send-otp", {
+    const res = await fetch(`${API_URL}/forgot-password/send-otp`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: email.value })
@@ -42,7 +42,7 @@ const verifyOTP = async () => {
   if (entered.length !== 6) return
 
   try {
-    const res = await fetch("${API_URL}/forgot-password/verify-otp", {
+    const res = await fetch(`${API_URL}/forgot-password/verify-otp`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

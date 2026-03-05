@@ -82,7 +82,7 @@ const getPublishError = (project) => {
 const handleSubmit = async () => {
   const url = editingProject.value
     ? `${API_URL}/projects/${editingProject.value._id}`
-    : "${API_URL}/projects"
+    : `${API_URL}/projects`
   
   const method = editingProject.value ? "PUT" : "POST"
   isProcessing.value = true 

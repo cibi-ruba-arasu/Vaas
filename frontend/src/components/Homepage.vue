@@ -52,7 +52,7 @@ const toggleExclude = (name) => {
 };
 
 const savePreferences = async () => {
-  await fetch("${API_URL}/user/theme", {
+  await fetch(`${API_URL}/user/theme`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ 
@@ -67,7 +67,7 @@ const savePreferences = async () => {
 
 // Update onMounted to fetch the new arrays
 onMounted(async () => {
-  const res = await fetch("${API_URL}/user/theme", {
+  const res = await fetch(`${API_URL}/user/theme`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (res.ok) {
@@ -352,7 +352,7 @@ const activeTab = ref('All')
 
 const fetchNotifications = async () => {
   try {
-    const res = await fetch("${API_URL}/notifications", {
+    const res = await fetch(`${API_URL}/notifications`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) {
@@ -371,7 +371,7 @@ const toggleNotifications = () => {
 const markRead = async () => {
   if (unreadCount.value > 0) {
     unreadCount.value = 0
-    await fetch("${API_URL}/notifications/read", {
+    await fetch(`${API_URL}/notifications/read`, {
         method: "PUT", headers: { Authorization: `Bearer ${token}` }
     }).catch(e => {})
   }
@@ -450,7 +450,7 @@ watch(showNSFW, (newVal) => {
 
 const fetchUserAge = async () => {
   try {
-    const res = await fetch("${API_URL}/user/me", {
+    const res = await fetch(`${API_URL}/user/me`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     if (res.ok) {
@@ -461,7 +461,7 @@ const fetchUserAge = async () => {
 }
 
 const saveColor = async () => {
-  await fetch("${API_URL}/user/theme", {
+  await fetch(`${API_URL}/user/theme`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ color: auraColor.value })
@@ -470,7 +470,7 @@ const saveColor = async () => {
 }
 
 onMounted(async () => {
-  const res = await fetch("${API_URL}/user/theme", {
+  const res = await fetch(`${API_URL}/user/theme`, {
     headers: { Authorization: `Bearer ${token}` }
   })
   if (res.ok) {

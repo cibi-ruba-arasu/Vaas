@@ -323,7 +323,7 @@ const handleUpdate = async () => {
       ...form.value 
     };
 
-    const res = await fetch("${API_URL}/publish", { 
+    const res = await fetch(`${API_URL}/publish`, { 
       method: "POST",
       headers: { 
         "Content-Type": "application/json",
