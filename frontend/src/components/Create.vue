@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted } from "vue"
 import { useRouter } from "vue-router"
+import { API_URL } from '../config.js';
 
 const router = useRouter()
 const token = sessionStorage.getItem("token")
@@ -34,7 +35,7 @@ const removeThumbnail = () => {
 
 const fetchProjects = async () => {
   try {
-    const res = await fetch("http://localhost:5000/projects", {
+    const res = await fetch(`${API_URL}/projects`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) projects.value = await res.json()
@@ -80,8 +81,8 @@ const getPublishError = (project) => {
 
 const handleSubmit = async () => {
   const url = editingProject.value
-    ? `http://localhost:5000/projects/${editingProject.value._id}`
-    : "http://localhost:5000/projects"
+    ? `${API_URL}projects/${editingProject.value._id}`
+    : "${API_URL}projects"
   
   const method = editingProject.value ? "PUT" : "POST"
   isProcessing.value = true 
@@ -107,7 +108,7 @@ const handleSubmit = async () => {
 const deleteProject = async () => {
   isProcessing.value = true
   try {
-    await fetch(`http://localhost:5000/projects/${editingProject.value._id}`, {
+    await fetch(`${API_URL}projects/${editingProject.value._id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` }
     })

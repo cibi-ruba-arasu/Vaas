@@ -93,7 +93,7 @@ const descriptionBlocks = computed(() => {
 
 const fetchPost = async () => {
   try {
-    const res = await fetch(`http://localhost:5000/posts/${postId}`, {
+    const res = await fetch(`${API_URL}posts/${postId}`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     
@@ -136,7 +136,7 @@ const toggleLike = async () => {
   isLiking.value = true;
 
   try {
-    const res = await fetch(`http://localhost:5000/posts/${postId}/like`, {
+    const res = await fetch(`${API_URL}posts/${postId}/like`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` }
     });
@@ -171,7 +171,7 @@ const handlePlay = async () => {
   }
 
   try {
-    const res = await fetch(`http://localhost:5000/console/add/${postId}`, {
+    const res = await fetch(`${API_URL}console/add/${postId}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` }
     })
@@ -184,7 +184,7 @@ const handlePlay = async () => {
         // For paid games: Play will be counted when purchased and played
         if (!post.value.monetization?.isPaid) {
           // Track play for free games
-          await fetch(`http://localhost:5000/posts/${postId}/play`, {
+          await fetch(`${API_URL}posts/${postId}/play`, {
             method: "POST",
             headers: { Authorization: `Bearer ${token}` }
           });
@@ -250,7 +250,7 @@ const timeAgo = (date) => {
 
 const fetchComments = async () => {
   try {
-    const res = await fetch(`http://localhost:5000/posts/${postId}/comments`, {
+    const res = await fetch(`${API_URL}posts/${postId}/comments`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) {
@@ -267,7 +267,7 @@ const submitComment = async (parentId = null) => {
 
   isSubmittingComment.value = true
   try {
-    const res = await fetch(`http://localhost:5000/posts/${postId}/comments`, {
+    const res = await fetch(`${API_URL}posts/${postId}/comments`, {
       method: "POST",
       headers: { 
         "Content-Type": "application/json",
@@ -303,7 +303,7 @@ const toggleCommentLike = async (commentId) => {
     comment.isLiked = !comment.isLiked
     comment.likeCount += comment.isLiked ? 1 : -1
 
-    const res = await fetch(`http://localhost:5000/comments/${commentId}/like`, {
+    const res = await fetch(`${API_URL}comments/${commentId}/like`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` }
     })

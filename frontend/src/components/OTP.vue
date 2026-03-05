@@ -37,7 +37,7 @@ const submitOTP = async () => {
   const userData = JSON.parse(sessionStorage.getItem("registerUser"))
 
   try {
-    const res = await fetch("http://localhost:5000/verify-otp", {
+    const res = await fetch("${API_URL}verify-otp", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -86,7 +86,7 @@ startCooldown()
 const resendOTP = async () => {
   const user = JSON.parse(sessionStorage.getItem("registerUser"))
 
-  await fetch("http://localhost:5000/send-otp", {
+  await fetch("${API_URL}send-otp", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email: user.email })

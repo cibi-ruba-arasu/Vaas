@@ -92,7 +92,7 @@ const fetchUserProfile = async () => {
   error.value = null
   
   try {
-    const res = await fetch(`http://localhost:5000/users/${route.params.userid}`, {
+    const res = await fetch(`${API_URL}users/${route.params.userid}`, {
       headers: { Authorization: `Bearer ${token}` }
     })
 
@@ -127,7 +127,7 @@ const toggleFollow = async () => {
   user.value.stats.followers += (isFollowing.value ? 1 : -1);
 
   try {
-    const res = await fetch(`http://localhost:5000/user/follow/${user.value._id}`, {
+    const res = await fetch(`${API_URL}user/follow/${user.value._id}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` }
     });
@@ -161,7 +161,7 @@ const openBadgeModal = async (badge) => {
   isLoadingBadgeSource.value = true;
 
   try {
-    const res = await fetch(`http://localhost:5000/badges/source/${badge.publishId}`);
+    const res = await fetch(`${API_URL}badges/source/${badge.publishId}`);
     if (res.ok) {
       badgeSource.value = await res.json();
       
@@ -197,7 +197,7 @@ const openPfpModal = async () => {
   if (user.value.active_pfp_type === 'earned' && user.value.active_earned_ref) {
     isLoadingPfpSource.value = true;
     try {
-      const res = await fetch(`http://localhost:5000/badges/source/${user.value.active_earned_ref.publishId}`);
+      const res = await fetch(`${API_URL}badges/source/${user.value.active_earned_ref.publishId}`);
       if (res.ok) {
         pfpSource.value = await res.json();
         if (pfpSource.value.gameFont) {
