@@ -35,7 +35,7 @@ const removeThumbnail = () => {
 
 const fetchProjects = async () => {
   try {
-    const res = await fetch(`${API_URL}//projects`, {
+    const res = await fetch(`${API_URL}/projects`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) projects.value = await res.json()
