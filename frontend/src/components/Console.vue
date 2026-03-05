@@ -72,7 +72,7 @@ const isLikingGame = ref(new Map()) // Prevent double-liking
 // Load user's purchased games on mount
 const fetchPurchasedGames = async () => {
   try {
-    const res = await fetch('http://localhost:5000/payments/my-purchases', {
+    const res = await fetch('${API_URL}payments/my-purchases', {
       headers: { Authorization: `Bearer ${token}` }
     });
     if (res.ok) {
@@ -109,7 +109,7 @@ const fetchLikeStatuses = async () => {
   
   try {
     const promises = myGames.value.map(async (game) => {
-      const res = await fetch(`http://localhost:5000/posts/${game._id}/like-status`, {
+      const res = await fetch(`${API_URL}posts/${game._id}/like-status`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -132,7 +132,7 @@ const toggleLikeGame = async (gameId, event) => {
   isLikingGame.value.set(gameId, true);
   
   try {
-    const res = await fetch(`http://localhost:5000/posts/${gameId}/like`, {
+    const res = await fetch(`${API_URL}posts/${gameId}/like`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` }
     });
@@ -164,7 +164,7 @@ const initiatePurchase = async () => {
 
   try {
     // 1. Create order on backend
-    const orderRes = await fetch('http://localhost:5000/payments/create-order', {
+    const orderRes = await fetch('${API_URL}payments/create-order', {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
@@ -200,7 +200,7 @@ const initiatePurchase = async () => {
         console.log("Payment successful:", response);
         
         // 3. Verify payment on backend
-        const verifyRes = await fetch('http://localhost:5000/payments/verify', {
+        const verifyRes = await fetch('${API_URL}payments/verify', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -222,7 +222,7 @@ const initiatePurchase = async () => {
           
           // 🚀 NEW: Track the first play for this paid game
           try {
-            await fetch(`http://localhost:5000/posts/${selectedGameForPurchase.value._id}/play`, {
+            await fetch(`${API_URL}posts/${selectedGameForPurchase.value._id}/play`, {
               method: "POST",
               headers: { Authorization: `Bearer ${token}` }
             });
@@ -816,7 +816,7 @@ const setAsPfp = async () => {
         }
         const base64Image = canvas.toDataURL('image/png');
 
-        const res = await fetch('http://localhost:5000/user/pfp/earned', {
+        const res = await fetch('${API_URL}user/pfp/earned', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({
@@ -875,7 +875,7 @@ const addToAchievements = async () => {
         const base64Image = canvas.toDataURL('image/png');
 
         // 2. Post the Badge to the backend
-        const res = await fetch('http://localhost:5000/user/badge/earned', {
+        const res = await fetch('${API_URL}user/badge/earned', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({
@@ -1064,7 +1064,7 @@ const activeGlobalVariables = computed(() => {
 /* ================= DATA FETCHING ================= */
 const fetchConsole = async () => {
   try {
-    const res = await fetch('http://localhost:5000/console', {
+    const res = await fetch('${API_URL}console', {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) {
@@ -1147,7 +1147,7 @@ const removeGame = async (id) => {
     myGames.value = myGames.value.filter(g => g._id !== id)
     trackAction("EJECTED_GAME", { gameId: id })
     try {
-        await fetch(`http://localhost:5000/console/remove/${id}`, {
+        await fetch(`${API_URL}console/remove/${id}`, {
             method: 'DELETE',
             headers: { Authorization: `Bearer ${token}` }
         })
@@ -1255,7 +1255,7 @@ const handlePlayClick = async (id) => {
   const game = myGames.value.find(g => g._id === id);
   if (game && !game.monetization?.isPaid) {
     try {
-      await fetch(`http://localhost:5000/posts/${id}/play`, {
+      await fetch(`${API_URL}posts/${id}/play`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -1286,7 +1286,7 @@ const openGameModal = (gameId) => {
     backgroundPreloadPromise = (async () => {
         try {
             // Fetch the base game data using native fetch
-            const res = await fetch(`http://localhost:5000/posts/${gameId}`, {
+            const res = await fetch(`${API_URL}posts/${gameId}`, {
                 headers: { Authorization: `Bearer ${token}` }
             })
             const data = await res.json()
@@ -1399,7 +1399,7 @@ const loadGamePreview = async (game) => {
     }
 
     try {
-        const res = await fetch(`http://localhost:5000/posts/${game._id}`, {
+        const res = await fetch(`${API_URL}posts/${game._id}`, {
             headers: { Authorization: `Bearer ${token}` }
         });
         
@@ -2020,7 +2020,7 @@ const handleCanvasClick = (e) => {
 
 const loadGameProgress = async (gameId) => {
   try {
-    const res = await fetch(`http://localhost:5000/console/progress/${gameId}`, {
+    const res = await fetch(`${API_URL}console/progress/${gameId}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     if (res.ok) {
@@ -2041,7 +2041,7 @@ const saveGameProgress = async (gameId, nodeIndex, sceneIndex) => {
   // globalVariables.value.forEach(v => currentVariables[v.id] = v.value);
 
   try {
-    await fetch(`http://localhost:5000/console/progress/${gameId}`, {
+    await fetch(`${API_URL}console/progress/${gameId}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
