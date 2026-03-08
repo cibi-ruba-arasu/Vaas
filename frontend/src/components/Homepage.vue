@@ -398,7 +398,8 @@ const messages = [
   "Woof meow?",
   "Look at you... so mystical!",
   "Searching for my magical comb, these weaves don't style themselves!",
-  "Blessed be thy feet, that they might walk this path -Darryl, The Midnight Gospel"
+  "Blessed be thy feet, that they might walk this path -Darryl, The Midnight Gospel",
+  "Celebrate your Choices..."
 ]
 const currentMessage = ref(messages[0])
 let messageInterval

@@ -474,7 +474,9 @@ const otpStore = new Map()
 
 /* ===== EMAIL ===== */
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true, // Use SSL/TLS
   auth: {
     user: process.env.EMAIL,
     pass: process.env.PASS
@@ -495,14 +497,20 @@ app.post("/send-otp", async (req, res) => {
 
   otpStore.set(email, { otp, expires })
 
-  await transporter.sendMail({
-    from: `"Loomart" <${process.env.EMAIL}>`,
-    to: email,
-    subject: "Your Loomart OTP",
-    html: `<h1>${otp}</h1><p>Expires in 5 minutes</p>`
-  })
-
-  res.json({ success: true })
+  // ADDED TRY-CATCH BLOCK HERE
+  try {
+    await transporter.sendMail({
+      from: `"Loomart" <${process.env.EMAIL}>`,
+      to: email,
+      subject: "Your Loomart OTP",
+      html: `<h1>${otp}</h1><p>Expires in 5 minutes</p>`
+    })
+    
+    res.json({ success: true })
+  } catch (error) {
+    console.error("❌ Email Error:", error);
+    res.status(500).json({ message: "Failed to send email. Please try again." })
+  }
 })
 
 /* ===== VERIFY OTP + SAVE USER ===== */
