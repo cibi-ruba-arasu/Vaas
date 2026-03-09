@@ -356,6 +356,38 @@ const handleLogin = async () => {
   animation: spin 0.8s linear infinite;
 }
 
+@media (max-width: 768px) {
+  .login-card {
+    max-width: 320px;
+    padding: 2rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .page {
+    padding: 1rem;
+  }
+  
+  .login-card {
+    max-width: 100%;
+    padding: 1.5rem;
+    gap: 1rem;
+  }
+
+  .gate-text {
+    font-size: 1.2rem;
+    letter-spacing: 0.15em;
+  }
+
+  /* Adjust easter egg tooltip to prevent screen overflow on mobile */
+  .tooltip {
+    left: 40px;
+    font-size: 0.7rem;
+    white-space: normal;
+    width: 180px;
+  }
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }

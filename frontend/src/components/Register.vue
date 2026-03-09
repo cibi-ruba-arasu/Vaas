@@ -423,4 +423,60 @@ watchEffect(() => {
   color: #93c5fd;
   font-size: 12px;
 }
+@media (max-width: 950px) {
+  .registerdiv {
+    padding: 30px;
+  }
+  .formdiv {
+    gap: 30px;
+  }
+}
+
+@media (max-width: 768px) {
+  .maindiv {
+    padding: 40px 0; /* Add top/bottom padding to allow scrolling */
+  }
+
+  .intro-text {
+    font-size: 24px;
+    text-align: center;
+  }
+
+  .registerdiv {
+    border-radius: 25px;
+  }
+
+  /* Stack the two columns vertically on tablets and smaller */
+  .formdiv {
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .inputdiv {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .registerdiv {
+    padding: 20px;
+    border-radius: 20px;
+    box-shadow:
+      15px 15px 40px rgba(37, 99, 235, 0.25),
+      -5px -5px 20px rgba(0, 0, 0, 0.8);
+  }
+
+  .intro-text {
+    font-size: 20px;
+  }
+
+  .label {
+    font-size: 14px;
+  }
+  
+  .register-btn {
+    margin-top: 10px;
+    padding: 10px;
+  }
+}
 </style>
