@@ -33,8 +33,6 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 5000;
 
-app.options(/.*/, cors());
-
 app.use(cors({
   // Added the www version just in case!
   origin: ["https://loomart.space", "https://www.loomart.space", "http://localhost:5173"], 
@@ -42,6 +40,10 @@ app.use(cors({
   credentials: true,
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"]
 }));
+
+app.use(cors(corsOptions));
+// This ensures that 'OPTIONS' requests are handled using the same rules as everything else
+app.options('*', cors(corsOptions));
 
 app.use(express.json({ limit: '200mb' })); 
 app.use(express.urlencoded({ limit: '200mb', extended: true }));
@@ -2586,13 +2588,11 @@ mongoose
   .connect(process.env.MONGO_URI)
   .then(() => {
     console.log("🟢 MongoDB connected");
-    
-    // 2. ONLY start the Express server if the DB connection was successful
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`🚀 Backend running on port ${PORT}`);
     });
   })
   .catch(err => {
     console.error("❌ Mongo error:", err);
-    process.exit(1); // Force the container to crash so Railway knows it failed
+    process.exit(1); 
   });
