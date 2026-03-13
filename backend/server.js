@@ -33,13 +33,14 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 5000;
 
-app.options('/(.*)', cors());
+app.options(/.*/, cors());
 
 app.use(cors({
   // Added the www version just in case!
   origin: ["https://loomart.space", "https://www.loomart.space", "http://localhost:5173"], 
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  credentials: true
+  credentials: true,
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"]
 }));
 
 app.use(express.json({ limit: '200mb' })); 
