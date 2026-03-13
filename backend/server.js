@@ -484,19 +484,12 @@ const otpStore = new Map()
 
 /* ===== EMAIL ===== */
 const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false, // Must be false for port 587 (it uses STARTTLS instead)
-  requireTLS: true,
+  service: "gmail", // 🚀 Using the built-in service helper bypasses manual port issues
   auth: {
     user: process.env.EMAIL,
     pass: process.env.PASS
-  },
-  tls: {
-    // Sometimes necessary to prevent certificate errors on cloud hosts
-    rejectUnauthorized: false
   }
-})
+});
 
 const generateOTP = () =>
   Math.floor(100000 + Math.random() * 900000).toString()
