@@ -2578,8 +2578,7 @@ mongoose
   .then(() => console.log("🟢 MongoDB connected"))
   .catch(err => console.error("❌ Mongo error:", err))
 
-app.listen(PORT, () =>
-  
-  console.log(`🚀 Backend running on http://localhost:${PORT}`)
-  console.log("vercel check")         
-)
+app.listen(PORT, () => {  // <--- Add this {
+  console.log(`🚀 Backend running on http://localhost:${PORT}`);
+  console.log("vercel check");
+});
