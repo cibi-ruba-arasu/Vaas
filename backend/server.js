@@ -2575,10 +2575,15 @@ app.post("/comments/:commentId/like", authMiddleware, async (req, res) => {
 
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => console.log("🟢 MongoDB connected"))
-  .catch(err => console.error("❌ Mongo error:", err))
-
-app.listen(PORT, () =>
-  
-  console.log(`🚀 Backend running on http://localhost:${PORT}`)
-)
+  .then(() => {
+    console.log("🟢 MongoDB connected");
+    
+    // 2. ONLY start the Express server if the DB connection was successful
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 Backend running on port ${PORT}`);
+    });
+  })
+  .catch(err => {
+    console.error("❌ Mongo error:", err);
+    process.exit(1); // Force the container to crash so Railway knows it failed
+  });
