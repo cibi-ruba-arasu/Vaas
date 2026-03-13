@@ -33,7 +33,7 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 5000;
 
-app.options('*', cors());
+app.options('/(.*)', cors());
 
 app.use(cors({
   // Added the www version just in case!
