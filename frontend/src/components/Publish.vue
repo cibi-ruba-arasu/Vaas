@@ -219,11 +219,18 @@ const selectTransferMethod = (option) => {
 
 /* 3. OPEN MODAL & INIT */
 const handlePaidClick = () => {
-  isPaid.value = true;
+
+  showMonetizationAlert.value = true;
+  
+  setTimeout(() => {
+    showMonetizationAlert.value = false;
+  }, 6000);
+
+  /*isPaid.value = true;
   showCurrencyModal.value = true;
   if (payoutCurrency.value !== "INR") {
     fetchRequirements(payoutCurrency.value);
-  }
+  }*/
 };
 
 /* 4. PRE-SUBMIT: TRIGGER CONFIRMATION */
@@ -343,6 +350,7 @@ const containerAngle = ref(135);
 const blocks = ref([]);
 const activeBlockId = ref(null); 
 const blockRefs = ref({}); 
+const showMonetizationAlert = ref(false);
 
 const getGradient = (colors, angle) => {
   if (!colors || colors.length === 0) return 'transparent';
@@ -690,8 +698,10 @@ const fetchProjectDetails = async () => {
       if (project.value.isThumbnailNSFW) isThumbnailNSFW.value = project.value.isThumbnailNSFW;
 
       if (project.value.monetization) {
-        isPaid.value = project.value.monetization.isPaid || false;
-        gamePrice.value = project.value.monetization.price || 0; // ← Load price
+        // TEMPORARY FIX: Force isPaid to false so users don't get stuck if they previously saved it as paid during your testing
+        isPaid.value = false; 
+        
+        gamePrice.value = project.value.monetization.price || 0;
         hasDemo.value = project.value.monetization.hasDemo || false;
         demoNodeLimit.value = project.value.monetization.demoNodeLimit || 10;
         if (project.value.monetization.payoutCurrency) {
@@ -1160,6 +1170,14 @@ const activeBlock = computed(() => {
               >
                 💎 Paid / Premium
               </button>
+            </div>
+
+            <div v-if="showMonetizationAlert" class="coming-soon-alert fade-in">
+              <span class="alert-icon">💸</span>
+              <div class="alert-text">
+                <strong>Monetization is Coming Soon!</strong>
+                <p>We are actively building a secure payment system so you can start earning money from your creations. During this development phase, all projects must be published as 'Free to Play'.</p>
+              </div>
             </div>
 
             <div v-if="isPaid" class="demo-config-section">
@@ -1779,5 +1797,46 @@ input:checked + .slider:before { transform: translateX(24px); }
   .price-label-group {
     flex: 1;
   }
+}
+
+/* --- TEMPORARY MONETIZATION ALERT --- */
+.coming-soon-alert {
+  display: flex;
+  gap: 15px;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px dashed rgba(59, 130, 246, 0.4);
+  padding: 15px;
+  border-radius: 12px;
+  margin-top: -5px;
+  margin-bottom: 10px;
+  align-items: flex-start;
+}
+
+.alert-icon {
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.alert-text strong {
+  color: #93c5fd;
+  font-size: 1rem;
+  display: block;
+  margin-bottom: 5px;
+}
+
+.alert-text p {
+  margin: 0;
+  color: #cbd5e1;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.fade-in {
+  animation: fadeInAlert 0.3s ease-out forwards;
+}
+
+@keyframes fadeInAlert {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 </style>
