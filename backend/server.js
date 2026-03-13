@@ -33,13 +33,12 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 5000;
 
-app.use(cors({
-  // Added the www version just in case!
+const corsOptions = {
   origin: ["https://loomart.space", "https://www.loomart.space", "http://localhost:5173"], 
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   credentials: true,
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"]
-}));
+};
 
 app.use(cors(corsOptions));
 // This ensures that 'OPTIONS' requests are handled using the same rules as everything else
