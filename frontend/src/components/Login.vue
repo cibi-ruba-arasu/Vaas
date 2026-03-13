@@ -22,8 +22,6 @@ const handleLogin = async () => {
 
   try {
     // ✅ DYNAMIC URL: Uses localhost in dev, but relative path on Render
-    const API_URL = import.meta.env.PROD ? "" : "http://localhost:5000"
-
     const res = await fetch(`${API_URL}/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
