@@ -1,1 +1,1 @@
-export const API_URL = import.meta.env.PROD ? "https://loomart.onrender.com" : "http://localhost:5000";
+export const API_URL = import.meta.env.PROD ? "https://api.loomart.space" : "http://localhost:5000";
