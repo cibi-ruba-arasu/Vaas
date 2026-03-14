@@ -484,7 +484,10 @@ const otpStore = new Map()
 
 /* ===== EMAIL ===== */
 const transporter = nodemailer.createTransport({
-  service: "gmail", // 🚀 Using the built-in service helper bypasses manual port issues
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false, // MUST be false for 587. It will automatically upgrade to secure TLS.
+  requireTLS: true,
   auth: {
     user: process.env.EMAIL,
     pass: process.env.PASS
