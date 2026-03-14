@@ -11,6 +11,7 @@ const showModal = ref(false)
 const showDeleteModal = ref(false)
 const editingProject = ref(null)
 const isProcessing = ref(false)
+const showDeviceWarning = ref(false)
 
 const form = ref({
   name: "",
@@ -44,7 +45,19 @@ const fetchProjects = async () => {
   }
 }
 
-const openProject = project => router.push(`/canvas/${project._id}`)
+const openProject = project => {
+  // Check if primary input is touch (finger) or if it's a small screen mobile/tablet
+  const isTouchDevice = window.matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0;
+  const isSmallScreen = window.innerWidth <= 1024;
+
+  if (isTouchDevice && isSmallScreen) {
+    // Show the warning instead of routing
+    showDeviceWarning.value = true;
+    return;
+  }
+  
+  router.push(`/canvas/${project._id}`);
+}
 
 // --- ROUTING LOGIC CHANGED HERE ---
 const handlePublishClick = (project) => {
@@ -223,7 +236,17 @@ onMounted(() => {
         <div class="modal-actions"><button @click="closeDeleteModal" class="cancel">Keep</button><button @click="deleteProject" class="danger-btn">Delete</button></div>
       </div>
     </div>
-
+    <div v-if="showDeviceWarning" class="modal-overlay" @click="showDeviceWarning = false">
+      <div class="modal small glass-modal" @click.stop>
+        <h3>Desktop Required 🖱️</h3>
+        <p style="color: #94a3b8; font-size: 0.95rem; line-height: 1.5; margin-bottom: 20px;">
+          Loomart's Canvas requires precise weaving! Please use a PC, laptop, or a device with a mouse to open and edit your projects.
+        </p>
+        <div class="modal-actions">
+          <button @click="showDeviceWarning = false" class="save">I Understand</button>
+        </div>
+      </div>
+    </div>
     <div v-if="isProcessing" class="mystical-overlay">
         <div class="loom-container"><div class="ring ring-1"></div><div class="ring ring-2"></div><div class="ring ring-3"></div><div class="core-light"></div></div>
         <p class="mystical-text">Weaving Reality...</p>
