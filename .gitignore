@@ -1,3 +1,4 @@
 node_modules/
 .env
 gcs-key.json
+backend/weaver-storage-bucket-1-ab325913fda9.json

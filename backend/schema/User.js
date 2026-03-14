@@ -12,14 +12,14 @@ const userSchema = new mongoose.Schema(
     profilePic: { type: String, default: "" }, 
     pfp_status: { 
       // 🚀 FIX: Change Array to String
-      matrix: { type: String, default: "[]" }, 
+      matrix: { type: mongoose.Schema.Types.Mixed, default: "[]" },
       background: { colors: { type: [String], default: ['#ffffff'] }, angle: { type: Number, default: 90 } }
     },
     pfp_inventory: {
       custom: [{
         id: String,
-        // 🚀 FIX: Change Array to String here too
-        matrix: String, 
+
+        matrix: mongoose.Schema.Types.Mixed, 
         background: { colors: [String], angle: Number },
         base64: String 
       }],
