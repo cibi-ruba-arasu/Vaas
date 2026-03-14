@@ -24,6 +24,7 @@ import ConsoleDB from "./schema/Console.js";
 import Purchase from "./schema/Purchase.js";
 import Comment from "./schema/Comment.js"
 import { fileURLToPath } from "url";
+import { Resend } from "resend";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -483,16 +484,7 @@ const cleanupOrphanedFiles = async (userId, projectId, usedFilePaths) => {
 const otpStore = new Map()
 
 /* ===== EMAIL ===== */
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false, // MUST be false for 587. It will automatically upgrade to secure TLS.
-  requireTLS: true,
-  auth: {
-    user: process.env.EMAIL,
-    pass: process.env.PASS
-  }
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const generateOTP = () =>
   Math.floor(100000 + Math.random() * 900000).toString()
@@ -510,17 +502,16 @@ app.post("/send-otp", async (req, res) => {
 
   // ADDED TRY-CATCH BLOCK HERE
   try {
-    await transporter.sendMail({
-      from: `"Loomart" <${process.env.EMAIL}>`,
+    await resend.emails.send({
+      from: 'onboarding@resend.dev',
       to: email,
-      subject: "Your Loomart OTP",
+      subject: "Reset Password OTP",
       html: `<h1>${otp}</h1><p>Expires in 5 minutes</p>`
     })
-    
     res.json({ success: true })
   } catch (error) {
     console.error("❌ Email Error:", error);
-    res.status(500).json({ message: "Failed to send email. Please try again." })
+    res.status(500).json({ message: "Failed to send email." })
   }
 })
 
@@ -771,11 +762,18 @@ app.post("/forgot-password/send-otp", async (req, res) => {
   const otp = generateOTP()
   otpStore.set(email, { otp, expires: Date.now() + 300000 })
 
-  await transporter.sendMail({
-    to: email,
-    subject: "Reset Password OTP",
-    html: `<h1>${otp}</h1><p>Expires in 5 minutes</p>`
-  })
+  try {
+    await resend.emails.send({
+      from: 'onboarding@resend.dev',
+      to: email,
+      subject: "Reset Password OTP",
+      html: `<h1>${otp}</h1><p>Expires in 5 minutes</p>`
+    })
+    res.json({ success: true })
+  } catch (error) {
+    console.error("❌ Email Error:", error);
+    res.status(500).json({ message: "Failed to send email." })
+  }
 
   res.json({ success: true })
 })
