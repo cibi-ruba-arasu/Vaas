@@ -491,29 +491,30 @@ const generateOTP = () =>
 
 /* ===== SEND OTP ===== */
 app.post("/send-otp", async (req, res) => {
-  const { email } = req.body
+  const { email } = req.body;
 
-  if (!email) return res.status(400).json({ message: "Email required" })
+  if (!email) return res.status(400).json({ message: "Email required" });
 
-  const otp = generateOTP()
-  const expires = Date.now() + 5 * 60 * 1000
+  const otp = generateOTP();
+  const expires = Date.now() + 5 * 60 * 1000;
 
-  otpStore.set(email, { otp, expires })
+  otpStore.set(email, { otp, expires });
 
-  // ADDED TRY-CATCH BLOCK HERE
   try {
+    // This sends over HTTP, bypassing Railway's firewall instantly
     await resend.emails.send({
-      from: 'onboarding@resend.dev',
-      to: email,
-      subject: "Reset Password OTP",
+      from: 'onboarding@resend.dev', // Resend's default testing email
+      to: email, // IMPORTANT: While testing on the free tier, this MUST be the email you signed up to Resend with
+      subject: "Your LoomArt OTP",
       html: `<h1>${otp}</h1><p>Expires in 5 minutes</p>`
-    })
-    res.json({ success: true })
+    });
+    
+    res.json({ success: true });
   } catch (error) {
     console.error("❌ Email Error:", error);
-    res.status(500).json({ message: "Failed to send email." })
+    res.status(500).json({ message: "Failed to send email. Please try again." });
   }
-})
+});
 
 /* ===== VERIFY OTP + SAVE USER ===== */
 app.post("/verify-otp", async (req, res) => {
