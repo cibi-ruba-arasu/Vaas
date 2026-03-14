@@ -69,6 +69,113 @@ const likedGames = ref(new Map()) // Map of gameId -> liked status
 const likesCountMap = ref(new Map()) // Map of gameId -> likes count
 const isLikingGame = ref(new Map()) // Prevent double-liking
 
+// ================= MOBILE TOUCH SUPPORT =================
+const initialPinchDistance = ref(null)
+const lastPinchCenter = ref({ x: 0, y: 0 })
+
+// Helper to calculate distance between two fingers
+const getPinchDistance = (touch1, touch2) => {
+    return Math.hypot(touch2.clientX - touch1.clientX, touch2.clientY - touch1.clientY)
+}
+
+// Helper to find the exact middle point between two fingers
+const getPinchCenter = (touch1, touch2) => {
+    return {
+        x: (touch1.clientX + touch2.clientX) / 2,
+        y: (touch1.clientY + touch2.clientY) / 2
+    }
+}
+
+const handleTouchStart = (e) => {
+    if (!isEngineRunning.value || !viewportCanvasRef.value) return;
+
+    if (e.touches.length === 1) {
+        // Single Finger: Start Panning
+        isPanning.value = true;
+        dragDistance.value = 0; // Reset drag distance to allow taps
+        const touch = e.touches[0];
+        panStart.value = {
+            x: touch.clientX - viewportOffset.value.x,
+            y: touch.clientY - viewportOffset.value.y
+        };
+    } else if (e.touches.length === 2) {
+        // Two Fingers: Start Pinch Zooming
+        isPanning.value = false;
+        initialPinchDistance.value = getPinchDistance(e.touches[0], e.touches[1]);
+        
+        const center = getPinchCenter(e.touches[0], e.touches[1]);
+        const rect = viewportCanvasRef.value.getBoundingClientRect();
+        
+        lastPinchCenter.value = {
+            x: center.x - rect.left,
+            y: center.y - rect.top
+        };
+    }
+}
+
+const handleTouchMove = (e) => {
+    if (!isEngineRunning.value || !viewportCanvasRef.value) return;
+    
+    // CRITICAL: Prevent the browser from trying to scroll/zoom the whole page
+    e.preventDefault(); 
+
+    if (e.touches.length === 1 && isPanning.value) {
+        // Single Finger Panning
+        const touch = e.touches[0];
+        dragDistance.value += 5; // Accumulate distance so we don't accidentally "click" a node
+        
+        viewportOffset.value = {
+            x: touch.clientX - panStart.value.x,
+            y: touch.clientY - panStart.value.y
+        };
+        drawViewport();
+        
+    } else if (e.touches.length === 2 && initialPinchDistance.value) {
+        // Two Finger Zooming
+        const currentDistance = getPinchDistance(e.touches[0], e.touches[1]);
+        const zoomFactor = currentDistance / initialPinchDistance.value;
+        
+        let newScale = viewportScale.value * zoomFactor;
+        newScale = Math.min(Math.max(0.1, newScale), 3); // Restrict between 10% and 300%
+        
+        const oldScale = viewportScale.value;
+        const center = lastPinchCenter.value;
+        
+        // Zoom exactly into where the fingers are centered
+        viewportOffset.value.x = center.x - newScale * ((center.x - viewportOffset.value.x) / oldScale);
+        viewportOffset.value.y = center.y - newScale * ((center.y - viewportOffset.value.y) / oldScale);
+        
+        viewportScale.value = newScale;
+        initialPinchDistance.value = currentDistance; // Update baseline for next frame
+        
+        // Update center in case fingers drift while pinching
+        const newCenter = getPinchCenter(e.touches[0], e.touches[1]);
+        const rect = viewportCanvasRef.value.getBoundingClientRect();
+        lastPinchCenter.value = { x: newCenter.x - rect.left, y: newCenter.y - rect.top };
+        
+        drawViewport();
+    }
+}
+
+const handleTouchEnd = (e) => {
+    if (e.touches.length < 2) {
+        initialPinchDistance.value = null; // Stop zooming
+    }
+    
+    if (e.touches.length === 0) {
+        isPanning.value = false; // Stop panning
+    } else if (e.touches.length === 1) {
+        // If they lifted one finger but left one on the screen, seamlessly resume panning
+        isPanning.value = true;
+        dragDistance.value = 0;
+        const touch = e.touches[0];
+        panStart.value = {
+            x: touch.clientX - viewportOffset.value.x,
+            y: touch.clientY - viewportOffset.value.y
+        };
+    }
+}
+
 // Load user's purchased games on mount
 const fetchPurchasedGames = async () => {
   try {
@@ -2901,7 +3008,12 @@ const preloadUrls = (urls) => {
                                     :style="{ cursor: isPanning ? 'grabbing' : 'grab' }" 
                                     @mousedown="startPan" @mousemove="panMove" @mouseup="stopPan" @mouseleave="stopPan"
                                     @wheel.prevent="handleCanvasZoom"
-                                    @click="handleCanvasClick">
+                                    @click="handleCanvasClick"
+                                    @touchstart="handleTouchStart"
+                                    @touchmove="handleTouchMove"
+                                    @touchend="handleTouchEnd"
+                                    @touchcancel="handleTouchEnd"
+                                    >
                                 </canvas>
                             </template>
 
