@@ -765,7 +765,7 @@ app.post("/forgot-password/send-otp", async (req, res) => {
 
   try {
     await resend.emails.send({
-      from: 'onboarding@resend.dev',
+      from: 'LoomArt <noreply@loomart.space>', // <-- FIXED THIS LINE
       to: email,
       subject: "Reset Password OTP",
       html: `<h1>${otp}</h1><p>Expires in 5 minutes</p>`
