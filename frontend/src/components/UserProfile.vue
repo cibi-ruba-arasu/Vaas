@@ -26,6 +26,11 @@ const fetchNetwork = async () => {
     })
     if (res.ok) {
       networkList.value = await res.json()
+      
+      // 🚀 FIX: Sync the profile counts with the fresh network list
+      if (!user.value.stats) user.value.stats = {};
+      user.value.stats.followers = networkList.value.followers.length;
+      user.value.stats.following = networkList.value.following.length;
     }
   } catch (e) {
     console.error("Network fetch failed", e)
@@ -456,6 +461,13 @@ const fetchData = async () => {
     
     if (profileRes.ok) {
       const data = await profileRes.json()
+      // 🚀 FIX: Build a guaranteed stats object based on the most accurate data (the arrays)
+      data.stats = {
+        followers: Array.isArray(data.followers) ? data.followers.length : (data.followersCount || data.stats?.followers || 0),
+        following: Array.isArray(data.following) ? data.following.length : (data.followingCount || data.stats?.following || 0),
+        rating: data.rating || data.stats?.rating || 0.0,
+        weaves: data.weavesCount || data.stats?.weaves || 0
+      }
       user.value = data
       
       // Ensure structures exist for legacy accounts
