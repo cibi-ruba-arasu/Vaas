@@ -55,8 +55,8 @@ onMounted(() => {
           LoomArt only requires imagination.
         </p>
         <div class="hero-buttons">
-          <button class="primary-btn" @click="router.push('/register')">Start Creating</button>
-          <button class="secondary-btn" @click="router.push('/login')">Play Stories</button>
+          <button class="primary-btn" @click="router.push('/register')">Register</button>
+          <button class="secondary-btn" @click="router.push('/login')">Login</button>
         </div>
       </div>
     </section>
