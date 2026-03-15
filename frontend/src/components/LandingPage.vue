@@ -73,7 +73,7 @@ onUnmounted(() => {
       </div>
       <div class="nav-actions">
         <button class="nav-btn text-btn" @click="router.push('/login')">Log In</button>
-        <button class="nav-btn pulse-btn" @click="router.push('/register')">Enter</button>
+        <button class="nav-btn pulse-btn" @click="router.push('/register')">Register</button>
       </div>
     </nav>
 
