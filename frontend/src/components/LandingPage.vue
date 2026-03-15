@@ -52,7 +52,7 @@ onMounted(() => {
         <h1 class="main-title">Weave Your <br><span class="gradient-text">Reality</span></h1>
         <p class="hero-subtitle">
           The ultimate no-code engine for interactive fiction. <br/>
-          Twinery requires code. LoomArt only requires imagination.
+          LoomArt only requires imagination.
         </p>
         <div class="hero-buttons">
           <button class="primary-btn" @click="router.push('/register')">Start Creating</button>
