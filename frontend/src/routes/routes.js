@@ -17,12 +17,13 @@ import User from '@/components/User.vue'
 import Search from '@/components/Search.vue';
 import Console from '@/components/Console.vue';
 import Doc from '@/components/Doc.vue';
+import LandingPage from "@/components/LandingPage.vue"
 
 const routes = [
   {
     path: "/",
-    name: "Login",
-    component: Login
+    name: "Landing",
+    component: LandingPage // 🚀 Replaced Login with LandingPage
   },
   {
     path: "/register",
@@ -49,7 +50,8 @@ const routes = [
   },
   {
     path: "/login",
-    redirect: "/"
+    name: "Login",
+    component: Login // 🚀 Assigned Login to its own route
   },
   {
     path: "/home",
