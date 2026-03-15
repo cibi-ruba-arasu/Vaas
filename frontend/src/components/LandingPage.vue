@@ -86,8 +86,8 @@ onUnmounted(() => {
           No scripts. No boundaries. Just pure imagination manifesting.
         </p>
         <div class="hero-buttons">
-          <button class="organic-btn primary" @click="router.push('/register')">Become a Weaver</button>
-          <button class="organic-btn secondary" @click="router.push('/login')">Explore The Loom</button>
+          <button class="organic-btn primary" @click="router.push('/register')">Register</button>
+          <button class="organic-btn secondary" @click="router.push('/login')">login</button>
         </div>
       </div>
     </section>
@@ -155,13 +155,13 @@ onUnmounted(() => {
       <div class="cta-core">
         <h2>The gates are open.</h2>
         <p>Will you step through?</p>
-        <button class="organic-btn primary massive" @click="router.push('/register')">Awaken</button>
+        <button class="organic-btn primary massive" @click="router.push('/register')">Register</button>
       </div>
     </section>
 
     <footer class="abyss-footer">
       <span class="logo-title small">Loom<span class="logo-art">Art</span></span>
-      <span class="whisper-text">© 2026. The choices are yours.</span>
+      <span class="whisper-text">The choices are yours.</span>
     </footer>
   </div>
 </template>
