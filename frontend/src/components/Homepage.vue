@@ -518,7 +518,8 @@ onUnmounted(() => {
         </div>
 
         <div class="branding">
-          <h1 class="loom-title">LoomArt</h1>
+          <h1 class="loom-title">Loom<span class="art-text">Art</span></h1>
+          
           <Transition name="fade-slide" mode="out-in">
             <p :key="currentMessage" class="loom-status">{{ currentMessage }}</p>
           </Transition>
@@ -998,12 +999,19 @@ onUnmounted(() => {
 }
 
 .loom-title {
+  font-family: 'Inter', sans-serif; /* Cleaner, modern font */
   font-size: clamp(1.8rem, 4vw, 2.5rem);
-  font-weight: 500;
-  letter-spacing: 0.3rem;
+  font-weight: 800; /* Thick bold weight for 'Loom' */
+  letter-spacing: 0.05rem; /* Tighter spacing so letters don't float apart */
   margin: 0;
   color: #fff;
   text-shadow: 0 0 20px rgba(255, 255, 255, 0.5), 0 0 50px var(--aura);
+}
+
+.art-text {
+  font-weight: 300; /* Thin, elegant weight for 'Art' */
+  color: var(--aura); /* Uses the user's theme color to pop */
+  margin-left: 2px;
 }
 
 .loom-status {

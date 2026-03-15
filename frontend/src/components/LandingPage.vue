@@ -129,7 +129,6 @@ onMounted(() => {
     <footer class="footer">
       <div class="footer-content">
         <span class="logo-small">LoomArt</span>
-        <span class="copyright">© 2026 LoomArt. All rights reserved.</span>
       </div>
     </footer>
   </div>
