@@ -263,7 +263,8 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   z-index: 100;
-  transition: opacity 0.1s linear, transform 0.1s linear; /* Fast response to scroll */
+  box-sizing: border-box; /* 🚀 FIX: Keeps the padding inside the 100% width */
+  transition: opacity 0.1s linear, transform 0.1s linear;
 }
 
 /* Typography fix from previous prompt */
@@ -660,6 +661,15 @@ onUnmounted(() => {
 
   .hero-buttons { flex-direction: column; gap: 15px; }
   .organic-btn { width: 100%; }
+
+  .abyss-footer { flex-direction: column; gap: 1rem; text-align: center; }
+
+  .organic-btn.massive {
+    padding: 1rem 2rem;
+    font-size: 1.1rem;
+    width: 100%;
+    box-sizing: border-box;
+  }
 
   .abyss-footer { flex-direction: column; gap: 1rem; text-align: center; }
 }
