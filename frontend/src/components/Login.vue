@@ -209,6 +209,10 @@ const handleLogin = async () => {
   color: #3b82f6;
   text-shadow: 0 0 22px rgba(59, 130, 246, 0.35);
   font-family: 'Times New Roman', Times, serif;
+  
+  /* 🚀 ADD THESE 2 LINES */
+  opacity: 0;
+  animation: ethereal-reveal 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
 
 /* ===== Login Card ===== */
@@ -225,6 +229,24 @@ const handleLogin = async () => {
   box-shadow:
     0 25px 45px rgba(0, 0, 0, 0.8),
     0 0 30px rgba(41, 122, 251, 0.12);
+    
+  /* 🚀 ADD THESE 3 LINES */
+  opacity: 0;
+  animation: ethereal-reveal 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  animation-delay: 0.2s; /* Starts slightly after the text */
+}
+
+@keyframes ethereal-reveal {
+  0% {
+    opacity: 0;
+    transform: translateY(40px) scale(0.98);
+    filter: blur(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0px);
+  }
 }
 
 /* ===== Title ===== */

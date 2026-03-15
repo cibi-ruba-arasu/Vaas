@@ -333,6 +333,40 @@ watchEffect(() => {
   font-size: 28px;
   color: #93c5fd;
   font-weight: 300;
+  
+  /* 🚀 ADD THESE 2 LINES */
+  opacity: 0;
+  animation: ethereal-reveal 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+/* Update your existing .registerdiv */
+.registerdiv {
+  width: 900px;
+  max-width: 95vw;
+  border-radius: 40px;
+  padding: 40px;
+  background: rgba(2, 6, 23, 0.9);
+  box-shadow:
+    30px 30px 60px rgba(37, 99, 235, 0.35),
+    -10px -10px 30px rgba(0, 0, 0, 0.9);
+    
+  /* 🚀 ADD THESE 3 LINES */
+  opacity: 0;
+  animation: ethereal-reveal 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  animation-delay: 0.2s; /* Flows in after the text */
+}
+
+@keyframes ethereal-reveal {
+  0% {
+    opacity: 0;
+    transform: translateY(40px) scale(0.98);
+    filter: blur(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0px);
+  }
 }
 
 .role {
@@ -464,10 +498,6 @@ watchEffect(() => {
     box-shadow:
       15px 15px 40px rgba(37, 99, 235, 0.25),
       -5px -5px 20px rgba(0, 0, 0, 0.8);
-  }
-
-  .intro-text {
-    font-size: 20px;
   }
 
   .label {

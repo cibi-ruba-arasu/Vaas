@@ -87,7 +87,7 @@ onUnmounted(() => {
         </p>
         <div class="hero-buttons">
           <button class="organic-btn primary" @click="router.push('/register')">Register</button>
-          <button class="organic-btn secondary" @click="router.push('/login')">login</button>
+          <button class="organic-btn secondary" @click="router.push('/login')">Login</button>
         </div>
       </div>
     </section>
