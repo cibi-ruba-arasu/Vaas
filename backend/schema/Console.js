@@ -1,26 +1,26 @@
 import mongoose from "mongoose";
 
-const PlayStateSchema = new mongoose.Schema({
+// Defines a single save slot (Instance)
+const InstanceSchema = new mongoose.Schema({
+  id: { type: Number, required: true }, // The frontend-generated timestamp ID
+  name: { type: String, default: "Instance" },
+  variables: { type: mongoose.Schema.Types.Mixed, default: [] },
+  visitedNodes: [{ type: Number }], // Array of node indices for the map history
+  currentLocation: { type: Number, default: null },
+  lastPlayed: { type: Date, default: Date.now }
+});
+
+// Defines a Game in the library, containing its instances and achievements
+const GameStateSchema = new mongoose.Schema({
   gameId: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'Publish', 
     required: true 
   },
-  currentNodeIndex: { 
-    type: Number, 
-    required: true 
-  },
-  currentSceneIndex: { 
-    type: Number, 
-    default: 0 
-  },
-  variables: { 
-    type: mongoose.Schema.Types.Mixed, 
-    default: {} 
-  }, // Stores { "1769752665869": "John", "Age": 25 }
-  lastPlayed: { 
-    type: Date, 
-    default: Date.now 
+  instances: [InstanceSchema],
+  achievements: {
+    pfp: [{ name: String, pixels: mongoose.Schema.Types.Mixed, font: String }],
+    badges: [{ name: String, pixels: mongoose.Schema.Types.Mixed, font: String }]
   }
 });
 
@@ -35,8 +35,8 @@ const ConsoleSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'Publish' 
   }],
-  // 🚀 NEW: Tracks user progress for every game they start
-  playStates: [PlayStateSchema] 
+  // 🚀 REPLACES playStates: Tracks the complex object for every game
+  gameStates: [GameStateSchema] 
 });
 
 export default mongoose.model("Console", ConsoleSchema);

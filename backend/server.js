@@ -2419,35 +2419,33 @@ app.post("/console/progress/:gameId", authMiddleware, async (req, res) => {
   try {
     const { mongoId } = req.user;
     const { gameId } = req.params;
-    const { currentNodeIndex, currentSceneIndex, variables } = req.body;
+    const { instances, achievements } = req.body;
 
     let userConsole = await ConsoleDB.findOne({ userId: mongoId });
     if (!userConsole) {
-      userConsole = new ConsoleDB({ userId: mongoId, savedPosts: [], playStates: [] });
+      userConsole = new ConsoleDB({ userId: mongoId, savedPosts: [], gameStates: [] });
     }
 
-    // Check if a save state already exists for this game
-    const stateIndex = userConsole.playStates.findIndex(p => p.gameId.toString() === gameId);
+    const stateIndex = userConsole.gameStates.findIndex(p => p.gameId.toString() === gameId);
 
     if (stateIndex !== -1) {
-      // Overwrite existing save
-      userConsole.playStates[stateIndex].currentNodeIndex = currentNodeIndex;
-      userConsole.playStates[stateIndex].currentSceneIndex = currentSceneIndex;
-      userConsole.playStates[stateIndex].variables = variables;
-      userConsole.playStates[stateIndex].lastPlayed = new Date();
+      // Overwrite existing game state
+      userConsole.gameStates[stateIndex].instances = instances || [];
+      if (achievements) userConsole.gameStates[stateIndex].achievements = achievements;
     } else {
-      // Create new save
-      userConsole.playStates.push({
+      // Create new game state
+      userConsole.gameStates.push({
         gameId,
-        currentNodeIndex,
-        currentSceneIndex,
-        variables,
-        lastPlayed: new Date()
+        instances: instances || [],
+        achievements: achievements || { pfp: [], badges: [] }
       });
     }
 
+    // 🚀 FIX: Mark mixed types as modified so Mongoose saves them properly
+    userConsole.markModified('gameStates');
     await userConsole.save();
-    res.json({ success: true, message: "Progress saved" });
+    
+    res.json({ success: true, message: "Progress saved to cloud" });
 
   } catch (err) {
     console.error("Save Progress Error:", err);
@@ -2464,10 +2462,9 @@ app.get("/console/progress/:gameId", authMiddleware, async (req, res) => {
     const userConsole = await ConsoleDB.findOne({ userId: mongoId });
     if (!userConsole) return res.json(null);
 
-    const playState = userConsole.playStates.find(p => p.gameId.toString() === gameId);
+    const gameState = userConsole.gameStates.find(p => p.gameId.toString() === gameId);
     
-    // Returns null if no save file exists (meaning it's a new game)
-    res.json(playState || null); 
+    res.json(gameState || null); 
 
   } catch (err) {
     console.error("Load Progress Error:", err);
