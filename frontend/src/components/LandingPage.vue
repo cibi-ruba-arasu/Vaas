@@ -42,7 +42,7 @@ onMounted(() => {
       <div class="logo">LoomArt</div>
       <div class="nav-actions">
         <button class="nav-btn text-btn" @click="router.push('/login')">Log In</button>
-        <button class="nav-btn glow-btn" @click="router.push('/register')">Enter The Loom</button>
+        <button class="nav-btn glow-btn" @click="router.push('/register')">Register</button>
       </div>
     </nav>
 
@@ -123,7 +123,7 @@ onMounted(() => {
     <section class="cta-section hidden-element">
       <h2>Ready to Make a Choice?</h2>
       <p>Join the community of dreamers, explorers, and weavers.</p>
-      <button class="primary-btn large-btn" @click="router.push('/register')">Enter The Gates</button>
+      <button class="primary-btn large-btn" @click="router.push('/register')">Register</button>
     </section>
 
     <footer class="footer">
