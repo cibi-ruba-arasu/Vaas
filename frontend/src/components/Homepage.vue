@@ -1372,7 +1372,14 @@ onUnmounted(() => {
 
 /* Mobile Adjustment */
 @media (max-width: 500px) {
-  .notifications-dropdown { right: -20px; width: 300px; }
+  .notifications-dropdown { 
+    right: auto;
+    left: 50%;
+    width: 90vw; 
+    margin-left: -45vw; /* Perfectly centers the 90vw width */
+    max-width: none; /* Overrides the desktop max-width */
+    z-index: 100;
+  }
 }
 .category-band {
   width: 100%;
