@@ -1199,9 +1199,21 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
   .pfp-circle { width: 140px; height: 140px; }
   .name-col { align-items: center; }
   .stats-row { justify-content: center; }
-  .action-buttons { justify-content: center; }
-  .big-create-btn { bottom: 20px; right: 20px; position: fixed; }
-  .profile-header { padding-bottom: 4rem; min-height: auto; }
+  
+  /* 🚀 FIX: Give action buttons breathing room */
+  .action-buttons { justify-content: center; padding-bottom: 1rem; }
+  
+  /* 🚀 FIX: Add bottom margin to push the rest of the page down */
+  .profile-header { padding-bottom: 2.5rem; min-height: auto; margin-bottom: 3rem; }
+  
+  /* 🚀 FIX: Lock the button to the bottom-center of the header */
+  .big-create-btn { 
+    position: absolute; 
+    bottom: -35px; 
+    right: 0; 
+    left: 0; 
+    margin: 0 auto; 
+  }
   
   /* Mobile Adjust for Editor */
   .pfp-editor-modal { height: 100vh; border-radius: 0; }

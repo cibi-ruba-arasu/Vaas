@@ -670,13 +670,17 @@ onMounted(() => {
 @media (max-width: 900px) {
   .hero-content { flex-direction: column; align-items: center; text-align: center; gap: 1.5rem; }
   .thumb-wrapper { width: 220px; height: 320px; }
-  .nav-back { top: -4rem; left: 50%; transform: translateX(-50%); width: max-content; }
+  
+  /* 🚀 FIX: Hide the back button on mobile screens */
+  .nav-back { display: none; }
+  
   .stats-row { justify-content: center; }
   .tags-inline { justify-content: center; }
   .action-bar { flex-direction: column; gap: 1rem; text-align: center; padding: 1rem; }
   .price-info { width: 100%; display: flex; flex-direction: column; align-items: center; }
   .action-btn { width: 100%; justify-content: center; }
 }
+
 .like-badge {
   cursor: pointer;
   transition: all 0.2s ease;

@@ -161,7 +161,7 @@ onMounted(() => {
 <template>
   <div class="create-page">
     <header class="header">
-      <h1 class="logo">Loomart</h1>
+      <h1 class="logo">Weaver</h1>
       <div class="header-right" style="display: flex; gap: 12px;">
         <button class="profile-btn doc-btn" @click="router.push('/docs')">Docs</button>
         <button class="profile-btn" @click="router.push('/profile')">Profile</button>
@@ -240,7 +240,7 @@ onMounted(() => {
       <div class="modal small glass-modal" @click.stop>
         <h3>Desktop Required 🖱️</h3>
         <p style="color: #94a3b8; font-size: 0.95rem; line-height: 1.5; margin-bottom: 20px;">
-          Loomart's Canvas requires precise weaving! Please use a PC, laptop, or a device with a mouse to open and edit your projects.
+          Weaver's requires precise weaving! Please use a PC, laptop, or a device with a mouse to open and edit your projects.
         </p>
         <div class="modal-actions">
           <button @click="showDeviceWarning = false" class="save">I Understand</button>

@@ -204,7 +204,7 @@ const scrollToSection = (id) => {
   <div class="docs-wrapper">
     <aside class="docs-sidebar">
       <div class="sidebar-header">
-        <h2>LoomArt Docs</h2>
+        <h2>Weaver Docs</h2>
         <p>Tapestry Reference Guide</p>
       </div>
       <nav class="sidebar-nav">
