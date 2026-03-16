@@ -429,9 +429,10 @@ const scrollToSection = (id) => {
   margin: 0;
 }
 
-/* Custom Scrollbar for the main content area */
+/* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
+  height: 6px; /* Added for horizontal scrolling on mobile nav */
 }
 ::-webkit-scrollbar-track {
   background: #020617;
@@ -442,5 +443,88 @@ const scrollToSection = (id) => {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #334155;
+}
+
+/* ==============================================================
+   RESPONSIVE DESIGN (Tablets & Phones)
+============================================================== */
+@media (max-width: 1024px) {
+  .docs-wrapper {
+    flex-direction: column; /* Stack layout vertically */
+  }
+
+  .docs-sidebar {
+    width: 100%;
+    height: auto;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 1rem 1.5rem;
+    background: rgba(15, 23, 42, 0.98); /* Solidify background so scrolling text doesn't clash */
+    backdrop-filter: blur(10px);
+  }
+
+  .sidebar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .sidebar-header p {
+    display: none; /* Hide subtitle to save vertical space */
+  }
+
+  .sidebar-footer {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+  }
+
+  .return-btn {
+    padding: 6px 16px;
+    font-size: 0.85rem;
+  }
+
+  .sidebar-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    padding-top: 1rem;
+    gap: 8px;
+  }
+
+  .nav-link {
+    white-space: nowrap; /* Forces links to stay on one line so they can be scrolled */
+    background: rgba(255, 255, 255, 0.03);
+    padding: 8px 16px;
+  }
+
+  .docs-content {
+    padding: 2.5rem 2rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .docs-content {
+    padding: 1.5rem 1rem;
+  }
+
+  .content-header h1 {
+    font-size: 2rem;
+  }
+
+  .content-header p {
+    font-size: 0.95rem;
+  }
+
+  .section-title {
+    font-size: 1.3rem;
+  }
+
+  .features-grid {
+    /* 🚀 Fixes overflowing cards on very small phone screens */
+    grid-template-columns: 1fr; 
+  }
 }
 </style>
