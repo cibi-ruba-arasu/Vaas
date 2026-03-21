@@ -135,11 +135,16 @@ onUnmounted(() => {
 <style scoped>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;800&family=JetBrains+Mono:wght@700&display=swap');
 
-:global(body), :global(html) {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  height: 100%;
+.container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100vw;
+  height: 100vh;
+  perspective: 1000px;
+  position: relative;
+  
+  /* Moved from global body to here so it ONLY affects the landing page */
   background-color: #030305; 
   overflow: hidden; 
   font-family: 'Inter', sans-serif; 
