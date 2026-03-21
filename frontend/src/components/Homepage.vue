@@ -21,6 +21,43 @@ const settingsView = ref('main'); // Can be 'main', 'aura', 'include', 'exclude'
 const includedCategories = ref([]);
 const excludedCategories = ref([]);
 
+// --- BACKGROUND STAR LOGIC ---
+const starsSmall = ref('')
+const starsMedium = ref('')
+const starsLarge = ref('')
+
+const mouseX = ref(0)
+const mouseY = ref(0)
+
+// Function to generate stars where 80% match the Aura Color
+const generateStars = (count, blur) => {
+  let shadows = []
+  for (let i = 0; i < count; i++) {
+    const x = (Math.random() * 110 - 5).toFixed(2)
+    const y = (Math.random() * 210 - 5).toFixed(2)
+    // 80% Aura Color, 20% White
+    const color = Math.random() > 0.2 ? auraColor.value : '#FFF'
+    shadows.push(`${x}vw ${y}vh ${blur}px ${color}`)
+  }
+  return shadows.join(', ')
+}
+
+const updateStarFields = () => {
+  starsSmall.value = generateStars(400, 0)
+  starsMedium.value = generateStars(150, 1)
+  starsLarge.value = generateStars(50, 2)
+}
+
+const handleMouseMove = (e) => {
+  mouseX.value = (e.clientX - window.innerWidth / 2) * -0.01
+  mouseY.value = (e.clientY - window.innerHeight / 2) * -0.01
+}
+
+// Watch for aura color changes to update star colors instantly
+watch(auraColor, () => {
+  updateStarFields()
+})
+
 // Get a flat list of all category names for the UI loops
 const allCategoryNames = computed(() => ALL_CATEGORIES.map(c => c.name));
 
@@ -64,29 +101,6 @@ const savePreferences = async () => {
   showSettings.value = false;
   settingsView.value = 'main';
 };
-
-// Update onMounted to fetch the new arrays
-onMounted(async () => {
-  const res = await fetch(`${API_URL}/user/theme`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (res.ok) {
-    const data = await res.json();
-    auraColor.value = data.themeColor || "#0077ff";
-    includedCategories.value = data.includedCategories || [];
-    excludedCategories.value = data.excludedCategories || [];
-  }
-  
-  fetchUserAge();
-  fetchNotifications();
-  notificationInterval = setInterval(fetchNotifications, 30000);
-  
-  let i = 0;
-  messageInterval = setInterval(() => {
-    i = (i + 1) % messages.length;
-    currentMessage.value = messages[i];
-  }, 6000);
-});
 
 // --- ICONS & CATEGORY DATA ---
 const ICONS = {
@@ -334,13 +348,6 @@ watch(exploreWeaves, (newWeaves) => {
   });
 });
 
-// Auto-load fonts for incoming feed items
-watch(exploreWeaves, (newWeaves) => {
-  newWeaves.forEach(w => {
-    if (w.titleFont) loadGoogleFont(w.titleFont);
-  });
-});
-
 // ... Notification Logic ...
 const showNotifications = ref(false)
 const notifications = ref([])
@@ -461,22 +468,19 @@ const fetchUserAge = async () => {
   } catch(e) {}
 }
 
-const saveColor = async () => {
-  await fetch(`${API_URL}/user/theme`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ color: auraColor.value })
-  })
-  showCustomize.value = false
-}
-
 onMounted(async () => {
+  // Star generation and mouse tracking init
+  window.addEventListener('mousemove', handleMouseMove)
+  updateStarFields()
+
   const res = await fetch(`${API_URL}/user/theme`, {
     headers: { Authorization: `Bearer ${token}` }
   })
   if (res.ok) {
     const data = await res.json()
     auraColor.value = data.themeColor || "#0077ff"
+    includedCategories.value = data.includedCategories || [];
+    excludedCategories.value = data.excludedCategories || [];
   }
   
   fetchUserAge();
@@ -495,15 +499,29 @@ onMounted(async () => {
 onUnmounted(() => {
   clearInterval(messageInterval)
   clearInterval(notificationInterval)
+  window.removeEventListener('mousemove', handleMouseMove)
 })
 </script>
 
 <template>
-  <div class="loom-container" :style="{ '--aura': auraColor }">
+  <div class="loom-container" :style="{ '--aura': auraColor, '--mouse-x': mouseX + 'px', '--mouse-y': mouseY + 'px' }">
     
     <div class="soul-container">
       <div class="outer-orbit">
         <div class="inner-soul"></div>
+      </div>
+    </div>
+
+    <!-- STAR BACKGROUND ADDED HERE (Above Soul, Below Nav) -->
+    <div class="sky-container">
+      <div class="parallax-wrap p-1">
+        <div class="star-layer layer-1" :style="{ boxShadow: starsSmall }"></div>
+      </div>
+      <div class="parallax-wrap p-2">
+        <div class="star-layer layer-2" :style="{ boxShadow: starsMedium }"></div>
+      </div>
+      <div class="parallax-wrap p-3">
+        <div class="star-layer layer-3" :style="{ boxShadow: starsLarge }"></div>
       </div>
     </div>
 
@@ -579,8 +597,14 @@ onUnmounted(() => {
                   @click="handleNotificationClick(alert)"
                 >
                   <div class="notif-avatar">
-                    <img v-if="alert.sender.profilePic" :src="alert.sender.profilePic" />
-                    <span v-else>{{ alert.sender.username.charAt(0) }}</span>
+                    <!-- Check if sender exists AND has a profile pic -->
+                    <img v-if="alert.sender?.profilePic" :src="alert.sender.profilePic" />
+                    
+                    <!-- Check if sender exists and has a username -->
+                    <span v-else-if="alert.sender?.username">{{ alert.sender.username.charAt(0) }}</span>
+                    
+                    <!-- Fallback for system notifications (no sender) -->
+                    <span v-else>!</span>
                   </div>
                   <div class="notif-content">
                     <p>{{ alert.message }}</p>
@@ -892,21 +916,21 @@ onUnmounted(() => {
   font-family: 'Cinzel', serif;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
   position: relative;
   z-index: 1; 
 }
 
 /* --- THE LIVING CORE (Background) --- */
 .soul-container {
-  position: absolute;
+  position: fixed; /* Fixed behind everything */
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
   width: 600px;
   height: 600px;
   pointer-events: none;
-  z-index: 0; 
+  z-index: 0; /* Below stars */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -939,6 +963,65 @@ onUnmounted(() => {
     morph 10s ease-in-out infinite alternate;
 }
 
+/* --- NIGHT SKY EFFECT --- */
+.sky-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1; /* Above Halo, Below Content */
+  overflow: hidden;
+  pointer-events: none; 
+}
+
+.parallax-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.1s ease-out; 
+}
+
+.p-1 { transform: translate(calc(var(--mouse-x) * 0.5), calc(var(--mouse-y) * 0.5)); }
+.p-2 { transform: translate(calc(var(--mouse-x) * 1.5), calc(var(--mouse-y) * 1.5)); }
+.p-3 { transform: translate(calc(var(--mouse-x) * 3.0), calc(var(--mouse-y) * 3.0)); }
+
+.star-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: transparent;
+  border-radius: 50%; 
+}
+
+.star-layer::after {
+  content: "";
+  position: absolute;
+  top: 200vh;
+  left: 0;
+  width: inherit;
+  height: inherit;
+  background: transparent;
+  border-radius: inherit;
+  box-shadow: inherit; 
+}
+
+.layer-1 { width: 1.5px; height: 1.5px; animation: drift 150s linear infinite; }
+.layer-2 { width: 2.5px; height: 2.5px; animation: drift 100s linear infinite, twinkle 6s ease-in-out infinite alternate; }
+.layer-3 { width: 3.5px; height: 3.5px; animation: drift 50s linear infinite, twinkle 4s ease-in-out infinite alternate; }
+
+@keyframes drift {
+  from { transform: translateY(0); }
+  to { transform: translateY(-200vh); }
+}
+
+@keyframes twinkle {
+  0% { opacity: 0.2; }
+  100% { opacity: 1; }
+}
+
 /* --- RESPONSIVE HEADER --- */
 .header-nav {
   display: flex;
@@ -951,7 +1034,6 @@ onUnmounted(() => {
   background: rgba(5, 5, 8, 0.2);
   backdrop-filter: blur(30px);
   -webkit-backdrop-filter: blur(30px);
-  /* The First Line: Below the Main Title Header */
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   flex-wrap: wrap;
 }
@@ -999,18 +1081,18 @@ onUnmounted(() => {
 }
 
 .loom-title {
-  font-family: 'Inter', sans-serif; /* Cleaner, modern font */
+  font-family: 'Inter', sans-serif; 
   font-size: clamp(1.8rem, 4vw, 2.5rem);
-  font-weight: 800; /* Thick bold weight for 'Loom' */
-  letter-spacing: 0.05rem; /* Tighter spacing so letters don't float apart */
+  font-weight: 800; 
+  letter-spacing: 0.05rem; 
   margin: 0;
   color: #fff;
   text-shadow: 0 0 20px rgba(255, 255, 255, 0.5), 0 0 50px var(--aura);
 }
 
 .art-text {
-  font-weight: 300; /* Thin, elegant weight for 'Art' */
-  color: var(--aura); /* Uses the user's theme color to pop */
+  font-weight: 300; 
+  color: var(--aura); 
   margin-left: 2px;
 }
 
@@ -1059,12 +1141,11 @@ onUnmounted(() => {
   padding: 1rem 0;
 }
 
-/* The Second Line: Below the Search Bar */
 .search-band::after {
   content: "";
   position: absolute;
   bottom: 0;
-  left: 10%; right: 10%; /* Slightly shorter than the main header line */
+  left: 10%; right: 10%; 
   height: 1px;
   background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.2) 50%, transparent 100%);
 }
@@ -1082,7 +1163,7 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 50px;
-  padding: 0.4rem 1rem; /* Compact padding */
+  padding: 0.4rem 1rem; 
   transition: all 0.3s ease;
   position: relative;
 }
@@ -1128,24 +1209,22 @@ onUnmounted(() => {
   font-style: italic;
 }
 
-/* --- Search Results Dropdown --- */
 .search-results {
   position: absolute;
-  top: 115%; /* Slight gap from input */
+  top: 115%; 
   left: 0;
   width: 100%;
-  background: #0a0a0c; /* Solid dark background for readability */
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #0a0a0c; 
+  border: solid 1px rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   padding: 8px 0;
   box-shadow: 0 10px 40px rgba(0,0,0,0.9);
-  max-height: 450px; /* Space for ~10 items */
+  max-height: 450px; 
   overflow-y: auto;
 }
 
-/* --- LIST ITEMS --- */
 .search-item {
-  padding: 12px 18px; /* More breathing room */
+  padding: 12px 18px; 
   cursor: pointer;
   border-bottom: 1px solid rgba(255,255,255,0.03);
   transition: all 0.1s;
@@ -1155,9 +1234,8 @@ onUnmounted(() => {
 
 .content-row { display: flex; align-items: center; gap: 14px; }
 
-/* --- PUBLISH STYLES (Aura Highlight) --- */
 .search-item.publish {
-  border-left: 3px solid var(--aura); /* Subtle Aura Highlight */
+  border-left: 3px solid var(--aura); 
   background: linear-gradient(90deg, rgba(255,255,255,0.02), transparent);
 }
 .search-item.publish:hover {
@@ -1165,7 +1243,7 @@ onUnmounted(() => {
 }
 
 .mini-thumb {
-  width: 40px; /* Larger thumb */
+  width: 40px; 
   height: 40px;
   border-radius: 6px;
   background-size: cover;
@@ -1177,13 +1255,12 @@ onUnmounted(() => {
 .main-text { font-size: 1rem; color: #eee; font-family: 'Inter', sans-serif; font-weight: 600; line-height: 1.2; }
 .sub-text { font-size: 0.75rem; color: #888; font-family: 'Inter', sans-serif; margin-top: 2px; }
 
-/* --- USER STYLES (Minimal & Larger) --- */
 .search-item.user {
-  padding-left: 24px; /* Slight indent to differentiate from highlighted projects */
+  padding-left: 24px; 
 }
 .user-row { gap: 4px; align-items: baseline; }
 .user-prefix { color: #666; font-size: 0.9rem; font-family: 'Inter', sans-serif; font-weight: 700; }
-.user-text { color: #ccc; font-weight: 500; font-size: 1.05rem; } /* Slightly larger for users */
+.user-text { color: #ccc; font-weight: 500; font-size: 1.05rem; } 
 
 .search-loading {
   padding: 15px;
@@ -1228,6 +1305,7 @@ onUnmounted(() => {
 @keyframes breathe { 0%, 100% { transform: scale(1); opacity: 0.15; } 50% { transform: scale(1.3); opacity: 0.4; } }
 @keyframes wander { 0% { translate: 0 0; } 100% { translate: 20px -20px; } }
 @keyframes morph { 0% { border-radius: 60% 40% 30% 70%; } 100% { border-radius: 30% 60% 70% 40%; } }
+@keyframes spin { to { transform: rotate(360deg); } }
 .slide-in-enter-active, .slide-in-leave-active { transition: transform 0.4s ease; }
 .slide-in-enter-from, .slide-in-leave-to { transform: translateX(-100%); }
 .fade-enter-active, .fade-leave-active { transition: opacity 0.4s ease; }
@@ -1247,7 +1325,7 @@ onUnmounted(() => {
   .nav-top-row { 
     width: 100%; 
     position: relative; 
-    justify-content: center; /* Keeps logo dead center */
+    justify-content: center; 
     min-height: 40px;
   }
   
@@ -1255,7 +1333,7 @@ onUnmounted(() => {
     position: absolute; 
     left: 0; 
     top: 50%; 
-    transform: translateY(-50%); /* Keeps hamburger on the left edge */
+    transform: translateY(-50%); 
   }
   
   .branding { 
@@ -1273,7 +1351,7 @@ onUnmounted(() => {
   .nav-actions { 
     width: 100%; 
     justify-content: center; 
-    flex-wrap: wrap; /* Allows buttons to wrap safely on small phones */
+    flex-wrap: wrap; 
     gap: 1.2rem; 
     padding-top: 1rem; 
     margin-top: 0.5rem;
@@ -1285,9 +1363,8 @@ onUnmounted(() => {
   .soul-container { width: 90vw; height: 90vw; }
   .inner-soul { width: 60%; height: 60%; }
   
-  /* Mobile adjustments for Search Dropdown */
   .search-results { max-height: 60vh; }
-  .search-item { padding: 14px 18px; } /* Larger touch targets */
+  .search-item { padding: 14px 18px; } 
   .mini-thumb { width: 45px; height: 45px; }
   .main-text { font-size: 1.1rem; }
   .user-text { font-size: 1.15rem; }
@@ -1311,7 +1388,6 @@ onUnmounted(() => {
   box-shadow: 0 0 5px #ef4444;
 }
 
-/* OSCILLATION ANIMATION */
 @keyframes oscillate {
   0% { transform: rotate(0deg); }
   10% { transform: rotate(15deg); }
@@ -1319,10 +1395,9 @@ onUnmounted(() => {
   30% { transform: rotate(5deg); }
   40% { transform: rotate(-5deg); }
   50% { transform: rotate(0deg); }
-  100% { transform: rotate(0deg); } /* Long pause */
+  100% { transform: rotate(0deg); } 
 }
 
-/* DROPDOWN */
 .notifications-dropdown {
   position: absolute; top: 120%; right: -50px;
   width: 320px; max-height: 400px;
@@ -1332,6 +1407,7 @@ onUnmounted(() => {
   display: flex; flex-direction: column;
   overflow: hidden;
   box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+  z-index: 50;
 }
 
 .notif-header {
@@ -1370,14 +1446,13 @@ onUnmounted(() => {
 
 .empty-notif { padding: 2rem; text-align: center; color: #64748b; font-style: italic; font-size: 0.9rem; }
 
-/* Mobile Adjustment */
 @media (max-width: 500px) {
   .notifications-dropdown { 
     right: auto;
     left: 50%;
     width: 90vw; 
-    margin-left: -45vw; /* Perfectly centers the 90vw width */
-    max-width: none; /* Overrides the desktop max-width */
+    margin-left: -45vw; 
+    max-width: none; 
     z-index: 100;
   }
 }
@@ -1393,7 +1468,6 @@ onUnmounted(() => {
   z-index: 8;
 }
 
-/* 1. Selected Tags (Wrap Layout) */
 .selected-tags {
   display: flex;
   flex-wrap: wrap;
@@ -1401,7 +1475,6 @@ onUnmounted(() => {
   justify-content: center;
 }
 
-/* 2. Available Tags (Scroll Layout) */
 .available-tags-wrapper {
   position: relative;
   width: 100%;
@@ -1414,12 +1487,11 @@ onUnmounted(() => {
   gap: 10px;
   overflow-x: auto;
   padding: 5px 20px;
-  scrollbar-width: none; /* Hide scrollbar Firefox */
+  scrollbar-width: none; 
   justify-content: flex-start;
 }
-.available-tags::-webkit-scrollbar { display: none; } /* Hide scrollbar Chrome/Safari */
+.available-tags::-webkit-scrollbar { display: none; } 
 
-/* --- CHIP STYLES --- */
 .cat-chip {
   background: rgba(20, 20, 25, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -1447,7 +1519,6 @@ onUnmounted(() => {
   transition: 0.2s;
 }
 
-/* Hover Effect */
 .cat-chip:hover {
   border-color: var(--cat-color);
   background: rgba(255, 255, 255, 0.08);
@@ -1457,7 +1528,6 @@ onUnmounted(() => {
 }
 .cat-chip:hover .cat-icon { opacity: 1; filter: drop-shadow(0 0 5px var(--cat-color)); }
 
-/* --- ACTIVE STATE (Selected) --- */
 .cat-chip.active {
   background: linear-gradient(135deg, rgba(255,255,255,0.05), transparent);
   border: 1px solid var(--cat-color);
@@ -1476,7 +1546,6 @@ onUnmounted(() => {
 }
 .close-x:hover { opacity: 1; color: #fff; }
 
-/* List Animations */
 .list-move,
 .list-enter-active,
 .list-leave-active {
@@ -1526,9 +1595,7 @@ onUnmounted(() => {
 }
 .cat-toggle-btn:hover { background: rgba(255,255,255,0.15); }
 
-/* Included active state (Blue/Greenish) */
 .cat-toggle-btn.included-active { background: #3b82f6; color: #fff; border-color: #2563eb; }
-/* Excluded active state (Reddish) */
 .cat-toggle-btn.excluded-active { background: #ef4444; color: #fff; border-color: #dc2626; }
 
 .settings-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); }
@@ -1558,7 +1625,6 @@ onUnmounted(() => {
   margin-top: 15px;
 }
 
-/* Ensure the Include list also uses the inline list style so it doesn't break */
 .cat-list { 
   display: flex; flex-wrap: wrap; gap: 6px; max-height: 280px; 
   overflow-y: auto; padding-right: 5px; margin-top: 5px; 
@@ -1569,18 +1635,18 @@ onUnmounted(() => {
   width: 100%;
   max-width: 1400px;
   margin: 0 auto;
-  padding: 1rem 2rem 5rem; /* 🚀 FIX: Changed 5% to 2rem to prevent calc overflow */
+  padding: 1rem 2rem 5rem; 
   z-index: 5;
   position: relative;
-  box-sizing: border-box; /* 🚀 FIX: Ensures padding is included in width */
-  overflow-x: hidden; /* 🚀 FIX: Stops any lingering elements from breaking the layout */
+  box-sizing: border-box; 
+  overflow-x: hidden; 
 }
 
 .feed-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 25px;
-  width: 100%; /* 🚀 FIX: Forces grid to respect boundaries */
+  width: 100%; 
 }
 
 .feed-loading, .empty-feed {
@@ -1599,22 +1665,22 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   cursor: pointer;
-  position: relative; /* 🚀 NEW: Required for z-index to work */
-  z-index: 1; /* 🚀 NEW: Base layer */
+  position: relative; 
+  z-index: 10;
   transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s, z-index 0s;
   background: rgba(15, 23, 42, 0.6);
   border-radius: 12px;
 }
 
 .weave-card:hover {
-  z-index: 20; /* 🚀 FIX: Makes the card float above the rest of the grid */
-  transform: translateY(-8px) scale(1.12); /* 🚀 FIX: Expands the card size */
+  z-index: 20; 
+  transform: translateY(-8px) scale(1.12); 
   border-color: var(--aura);
   box-shadow: 0 25px 50px rgba(0,0,0,0.8), 0 0 20px rgba(255,255,255,0.05);
 }
 
 .weave-thumb {
-  height: 180px; /* 🚀 Tweak: Slightly taller base height */
+  height: 180px; 
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -1626,8 +1692,8 @@ onUnmounted(() => {
 }
 
 .weave-card:hover .weave-thumb {
-  background-size: contain; /* 🚀 FIX: Shows the ENTIRE picture without cropping */
-  background-color: #050508; /* 🚀 FIX: Fills the letterbox space cleanly */
+  background-size: contain; 
+  background-color: #050508; 
 }
 
 .pagination-controls {
@@ -1670,7 +1736,6 @@ onUnmounted(() => {
   font-size: 0.95rem;
 }
 
-/* --- NSFW TOGGLE SLIDER --- */
 .nsfw-toggle-wrapper {
   display: flex;
   align-items: center;
@@ -1722,7 +1787,7 @@ onUnmounted(() => {
 }
 
 input:checked + .slider {
-  background-color: rgba(239, 68, 68, 0.2); /* Red tint */
+  background-color: rgba(239, 68, 68, 0.2); 
   border-color: #ef4444;
 }
 
@@ -1732,12 +1797,11 @@ input:checked + .slider:before {
   box-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
 }
 
-/* --- NSFW BLUR OVERLAY --- */
 .nsfw-overlay {
   position: absolute;
   inset: 0;
   background: rgba(15, 23, 42, 0.6);
-  backdrop-filter: blur(16px); /* 🚀 Frosted glass effect */
+  backdrop-filter: blur(16px); 
   -webkit-backdrop-filter: blur(16px);
   display: flex;
   align-items: center;
@@ -1758,7 +1822,6 @@ input:checked + .slider:before {
   border: 1px solid rgba(248, 113, 113, 0.3);
 }
 
-/* Ensure the premium badge sits ABOVE the blur overlay */
 .premium-badge {
   position: absolute;
   top: 10px; right: 10px;
@@ -1767,7 +1830,7 @@ input:checked + .slider:before {
   padding: 3px 8px; border-radius: 6px;
   box-shadow: 0 2px 10px rgba(0,0,0,0.5);
   font-family: 'Inter', sans-serif;
-  z-index: 3; /* Sits above NSFW overlay */
+  z-index: 3; 
 }
 
 .weave-info { padding: 16px; display: flex; flex-direction: column; gap: 8px; }
