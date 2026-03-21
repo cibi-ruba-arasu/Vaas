@@ -1,7 +1,8 @@
 <script setup>
-import { ref } from "vue"
+import { ref, onMounted, onUnmounted } from "vue"
 import { useRouter } from "vue-router"
 import { API_URL } from '../config.js';
+
 const router = useRouter()
 
 const email = ref("")
@@ -12,6 +13,43 @@ const isLoading = ref(false)
 const togglePassword = () => {
   showPassword.value = !showPassword.value
 }
+
+// Reactive references for the generated star fields
+const starsSmall = ref('')
+const starsMedium = ref('')
+const starsLarge = ref('')
+
+// Mouse tracking coordinates
+const mouseX = ref(0)
+const mouseY = ref(0)
+
+// Function to generate the CSS box-shadow string for our stars
+const generateStars = (count, blur) => {
+  let shadows = []
+  for (let i = 0; i < count; i++) {
+    const x = (Math.random() * 110 - 5).toFixed(2)
+    const y = (Math.random() * 210 - 5).toFixed(2)
+    shadows.push(`${x}vw ${y}vh ${blur}px #FFF`)
+  }
+  return shadows.join(', ')
+}
+
+const handleMouseMove = (e) => {
+  mouseX.value = (e.clientX - window.innerWidth / 2) * -0.01
+  mouseY.value = (e.clientY - window.innerHeight / 2) * -0.01
+}
+
+onMounted(() => {
+  window.addEventListener('mousemove', handleMouseMove)
+  
+  starsSmall.value = generateStars(400, 0)   
+  starsMedium.value = generateStars(150, 1)  
+  starsLarge.value = generateStars(50, 2)    
+})
+
+onUnmounted(() => {
+  window.removeEventListener('mousemove', handleMouseMove)
+})
 
 const handleLogin = async () => {
   if (!email.value || !password.value) {
@@ -52,13 +90,25 @@ const handleLogin = async () => {
   }
 }
 </script>
-<template>
-    <head>
-        <title>Login | Loomart</title>
-    </head>
-  <div class="page">
 
-    <!-- 🧿 Hidden Easter Egg -->
+<template>
+  <head>
+    <title>Login | Loomart</title>
+  </head>
+  <div class="page" :style="{ '--mouse-x': mouseX + 'px', '--mouse-y': mouseY + 'px' }">
+  
+    <div class="sky-container">
+      <div class="parallax-wrap p-1">
+        <div class="star-layer layer-1" :style="{ boxShadow: starsSmall }"></div>
+      </div>
+      <div class="parallax-wrap p-2">
+        <div class="star-layer layer-2" :style="{ boxShadow: starsMedium }"></div>
+      </div>
+      <div class="parallax-wrap p-3">
+        <div class="star-layer layer-3" :style="{ boxShadow: starsLarge }"></div>
+      </div>
+    </div>
+
     <div class="easter-egg">
       <span class="halo"></span>
       <span class="eye-symbol">𓂀</span>
@@ -68,16 +118,12 @@ const handleLogin = async () => {
       </div>
     </div>
 
-    <!-- Gate message -->
     <div class="gate-text">
       <span>Enter the Gates</span>
     </div>
 
     <div class="login-card">
       <h2 class="title">Login</h2>
-
-      <!-- 🌙 Patience Box -->
-      
 
       <input
         type="email"
@@ -134,9 +180,69 @@ const handleLogin = async () => {
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  background: linear-gradient(to bottom right, #0e192d 0%, #000 75%);
+  background-color: #030305;
   color: #e5e7eb;
   font-family: system-ui, -apple-system, BlinkMacSystemFont;
+  overflow-x: hidden;
+}
+
+/* --- NIGHT SKY EFFECT --- */
+.sky-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none; 
+}
+
+.parallax-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.1s ease-out; 
+}
+
+.p-1 { transform: translate(calc(var(--mouse-x) * 0.5), calc(var(--mouse-y) * 0.5)); }
+.p-2 { transform: translate(calc(var(--mouse-x) * 1.5), calc(var(--mouse-y) * 1.5)); }
+.p-3 { transform: translate(calc(var(--mouse-x) * 3.0), calc(var(--mouse-y) * 3.0)); }
+
+.star-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: transparent;
+  border-radius: 50%; 
+}
+
+.star-layer::after {
+  content: "";
+  position: absolute;
+  top: 200vh;
+  left: 0;
+  width: inherit;
+  height: inherit;
+  background: transparent;
+  border-radius: inherit;
+  box-shadow: inherit; 
+}
+
+.layer-1 { width: 1.5px; height: 1.5px; animation: drift 150s linear infinite; }
+.layer-2 { width: 2.5px; height: 2.5px; animation: drift 100s linear infinite, twinkle 6s ease-in-out infinite alternate; }
+.layer-3 { width: 3.5px; height: 3.5px; animation: drift 50s linear infinite, twinkle 4s ease-in-out infinite alternate; }
+
+@keyframes drift {
+  from { transform: translateY(0); }
+  to { transform: translateY(-200vh); }
+}
+
+@keyframes twinkle {
+  0% { opacity: 0.2; }
+  100% { opacity: 1; }
 }
 
 /* ===== 🧿 Easter Egg ===== */
@@ -202,6 +308,8 @@ const handleLogin = async () => {
 
 /* ===== Gate Text ===== */
 .gate-text {
+  position: relative;
+  z-index: 10;
   margin-bottom: 1.3rem;
   font-size: 1.6rem;
   letter-spacing: 0.18em;
@@ -210,16 +318,18 @@ const handleLogin = async () => {
   text-shadow: 0 0 22px rgba(59, 130, 246, 0.35);
   font-family: 'Times New Roman', Times, serif;
   
-  /* 🚀 ADD THESE 2 LINES */
   opacity: 0;
   animation: ethereal-reveal 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
 
 /* ===== Login Card ===== */
 .login-card {
+  position: relative;
+  z-index: 10;
   width: 100%;
   max-width: 380px;
-  background: rgba(10, 15, 30, 0.75);
+  background: rgba(10, 15, 30, 0.3);
+  backdrop-filter: blur(2px); /* Blurs the stars behind the card */
   padding: 2.5rem;
   border-radius: 16px;
   display: flex;
@@ -230,7 +340,6 @@ const handleLogin = async () => {
     0 25px 45px rgba(0, 0, 0, 0.8),
     0 0 30px rgba(41, 122, 251, 0.12);
     
-  /* 🚀 ADD THESE 3 LINES */
   opacity: 0;
   animation: ethereal-reveal 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
   animation-delay: 0.2s; /* Starts slightly after the text */
@@ -278,7 +387,7 @@ const handleLogin = async () => {
   padding: 0.75rem 0.9rem;
   border-radius: 8px;
   border: 1px solid #1e293b;
-  background: #020617;
+  background: rgba(2, 6, 23, 0.8);
   color: #e5e7eb;
   font-size: 0.95rem;
   box-sizing: border-box;
