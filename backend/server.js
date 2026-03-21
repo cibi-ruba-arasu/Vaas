@@ -503,7 +503,7 @@ app.post("/send-otp", async (req, res) => {
   try {
     // This sends over HTTP, bypassing Railway's firewall instantly
     await resend.emails.send({
-      from: 'LoomArt <noreply@loomart.space>', // Resend's default testing email
+      from: 'LoomArt <noreply@loom-art.space>', // Resend's default testing email
       to: email, // IMPORTANT: While testing on the free tier, this MUST be the email you signed up to Resend with
       subject: "Your LoomArt OTP",
       html: `<h1>${otp}</h1><p>Expires in 5 minutes</p>`
@@ -765,7 +765,7 @@ app.post("/forgot-password/send-otp", async (req, res) => {
 
   try {
     await resend.emails.send({
-      from: 'LoomArt <noreply@loomart.space>', // <-- FIXED THIS LINE
+      from: 'LoomArt <noreply@loom-art.space>', // <-- FIXED THIS LINE
       to: email,
       subject: "Reset Password OTP",
       html: `<h1>${otp}</h1><p>Expires in 5 minutes</p>`

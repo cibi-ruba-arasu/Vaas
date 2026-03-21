@@ -78,47 +78,35 @@ const isFormComplete = ref(false)
 const handlesubmit = async () => {
   if (!isFormComplete.value) return
 
-  try {
-    const registrationToken = generateRandomToken(20)
+  const registrationToken = generateRandomToken(20)
 
-    const salt = bcrypt.genSaltSync(10)
-    const hashedPassword = bcrypt.hashSync(password.value, salt)
-    
-    const userData = {
-      email: email.value,
-      username: username.value,
-      password: hashedPassword,
-      dob: dob.value,
-      age: age.value,
-      country: selectedCountry.value,
-      state: selectedState.value,
-      city: selectedCity.value,
-      userid: registrationToken
-    }
+  const salt = bcrypt.genSaltSync(10)
+  const hashedPassword = bcrypt.hashSync(password.value, salt)
+  
+  const userData = {
+    email: email.value,
+    username: username.value,
+    password: hashedPassword,
+    dob: dob.value,
+    age: age.value,
+    country: selectedCountry.value,
+    state: selectedState.value,
+    city: selectedCity.value,
+    userid: registrationToken
+  }
 
-    sessionStorage.setItem("registerUser", JSON.stringify(userData))
-    console.log("🟦 REGISTER DATA:", userData)
+  sessionStorage.setItem("registerUser", JSON.stringify(userData))
+  //JSON.parse(sessionStorage.getItem("registerUser"))
 
-    // 🚀 FIX: Actually wait for the response and check for errors
-    const res = await fetch(`${API_URL}/send-otp`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.value })
+  console.log("🟦 REGISTER DATA:", userData)
+
+  await fetch(`${API_URL}/send-otp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: email.value })
     })
 
-    if (!res.ok) {
-      const errorData = await res.json()
-      alert(`OTP Error: ${errorData.message}`)
-      return // 🛑 Stop here! Don't go to the OTP page!
-    }
-
-    // Only route to OTP page if the email successfully left the server
-    router.push("/otp")
-
-  } catch (err) {
-    console.error("Network Error:", err)
-    alert("Could not connect to the server. Check console for CORS errors.")
-  }
+  router.push("/otp")
 }
 
 /* ===== VALIDATIONS ===== */
