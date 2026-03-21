@@ -35,7 +35,7 @@ const app = express()
 const PORT = process.env.PORT || 5000;
 
 const corsOptions = {
-  origin: ["https://loomart.space", "https://www.loomart.space", "http://localhost:5173"], 
+  origin: ["http://localhost:5173",'https://loom-art.space', 'https://www.loom-art.space',], 
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   credentials: true,
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"]
