@@ -1,6 +1,5 @@
 <script setup>
 import { ref, watch, watchEffect, onMounted, onBeforeUnmount } from "vue"
-import { Country, State, City } from "country-state-city"
 import bcrypt from "bcryptjs"
 import { useRouter } from "vue-router"
 import { API_URL } from '../config.js';
@@ -61,9 +60,6 @@ onMounted(() => {
     roleIndex = (roleIndex + 1) % roles.length
     currentRole.value = roles[roleIndex]
   }, 2000)
-
-  // Load countries
-  countries.value = Country.getAllCountries()
 })
 
 onBeforeUnmount(() => {
@@ -72,61 +68,72 @@ onBeforeUnmount(() => {
 })
 
 /* ===== FORM STATE ===== */
-const countries = ref([])
-const states = ref([])
-const cities = ref([])
-
-const selectedCountry = ref("")
-const selectedState = ref("")
-const selectedCity = ref("")
-const dob = ref("")
-const age = ref("")
-
-const password = ref("")
-const rePassword = ref("")
 const email = ref("")
 const username = ref("")
+const password = ref("")
+const rePassword = ref("")
 
 const showPassword = ref(false)
 const showRePassword = ref(false)
 
+const emailError = ref("")
+const usernameError = ref("")
 const passwordError = ref("")
 const rePasswordError = ref("")
-const usernameError = ref("")
-const emailError = ref("")
-const ageError = ref("")
 
 const isFormComplete = ref(false)
+const isLoading = ref(false)
 
 /* ===== SUBMIT ===== */
 const handlesubmit = async () => {
-  if (!isFormComplete.value) return
+  if (!isFormComplete.value || isLoading.value) return
+  
+  isLoading.value = true
 
   const registrationToken = generateRandomToken(20)
   const salt = bcrypt.genSaltSync(10)
   const hashedPassword = bcrypt.hashSync(password.value, salt)
   
+  // Cleaned up payload (No demographics)
   const userData = {
     email: email.value,
     username: username.value,
     password: hashedPassword,
-    dob: dob.value,
-    age: age.value,
-    country: selectedCountry.value,
-    state: selectedState.value,
-    city: selectedCity.value,
     userid: registrationToken
   }
 
-  sessionStorage.setItem("registerUser", JSON.stringify(userData))
+  try {
+    const response = await fetch(`${API_URL}/send-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.value })
+    })
 
-  await fetch(`${API_URL}/send-otp`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: email.value })
-  })
+    const data = await response.json()
 
-  router.push("/otp")
+    // 🚀 NEW: Intercept the server response before blindly redirecting
+    if (!response.ok) {
+      if (data.userExists) {
+        alert("An account with this email already exists. Please try a different account");
+        router.push("/login");
+        return; // Stop execution here
+      } else {
+        alert(data.message || "Failed to send OTP.");
+        isLoading.value = false;
+        return;
+      }
+    }
+
+    // Only save to session storage and redirect if the email sent successfully
+    sessionStorage.setItem("registerUser", JSON.stringify(userData))
+    router.push("/otp")
+
+  } catch (error) {
+    console.error("Registration error:", error);
+    alert("A network error occurred. Please try again.");
+  } finally {
+    isLoading.value = false
+  }
 }
 
 /* ===== VALIDATIONS ===== */
@@ -162,35 +169,12 @@ watch(password, v => {
 
 watch(rePassword, v => { rePasswordError.value = v !== password.value ? "Passwords do not match" : "" })
 
-watch(dob, d => {
-  ageError.value = ""
-  if (!d) { age.value = ""; return; }
-  const birth = new Date(d); const today = new Date();
-  let a = today.getFullYear() - birth.getFullYear(); const m = today.getMonth() - birth.getMonth();
-  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) { a-- }
-  age.value = a
-  if (a < 13) { ageError.value = "You must be at least 13 years old" }
-  else if (a > 120) { ageError.value = "Please enter a valid date of birth" }
-})
-
-watch(selectedCountry, code => {
-  states.value = []; cities.value = []; if (!code) return
-  states.value = State.getStatesOfCountry(code)
-})
-
-watch(selectedState, code => {
-  if (!code) return
-  cities.value = City.getCitiesOfState(selectedCountry.value, code)
-})
-
 watchEffect(() => {
   isFormComplete.value =
     email.value && !emailError.value &&
     username.value && !usernameError.value &&
     password.value && !passwordError.value &&
-    rePassword.value && !rePasswordError.value &&
-    dob.value && age.value && !ageError.value &&
-    selectedCountry.value && selectedState.value && selectedCity.value
+    rePassword.value && !rePasswordError.value
 })
 </script>
 
@@ -246,7 +230,7 @@ watchEffect(() => {
               class="inputbox"
               v-model="password"
             />
-            <span class="eye" @click="showPassword = !showPassword">𓂀</span>
+            <span class="eye" @click="showPassword = !showPassword" :title="showPassword ? 'Hide password' : 'Show password'">𓂀</span>
           </div>
           <p v-if="passwordError" class="error-text">{{ passwordError }}</p>
 
@@ -257,47 +241,16 @@ watchEffect(() => {
               class="inputbox"
               v-model="rePassword"
             />
-            <span class="eye" @click="showRePassword = !showRePassword">𓂀</span>
+            <span class="eye" @click="showRePassword = !showRePassword" :title="showRePassword ? 'Hide password' : 'Show password'">𓂀</span>
           </div>
           <p v-if="rePasswordError" class="error-text">{{ rePasswordError }}</p>
-
-          <label class="label">DOB</label>
-          <input type="date" class="dob-input" v-model="dob" />
-          <p class="age">Age: {{ age }}</p>
-          <p v-if="ageError" class="error-text">{{ ageError }}</p>
-        </div>
-
-        <div class="inputdiv">
-          <label class="label">Country</label>
-          <select class="selectbox" v-model="selectedCountry">
-            <option value="">Select</option>
-            <option v-for="c in countries" :key="c.isoCode" :value="c.isoCode">
-              {{ c.name }}
-            </option>
-          </select>
-
-          <label class="label">State</label>
-          <select class="selectbox" v-model="selectedState">
-            <option value="">Select</option>
-            <option v-for="s in states" :key="s.isoCode" :value="s.isoCode">
-              {{ s.name }}
-            </option>
-          </select>
-
-          <label class="label">City</label>
-          <select class="selectbox" v-model="selectedCity">
-            <option value="">Select</option>
-            <option v-for="c in cities" :key="c.name" :value="c.name">
-              {{ c.name }}
-            </option>
-          </select>
 
           <button
             class="register-btn"
             type="submit"
-            :disabled="!isFormComplete"
+            :disabled="!isFormComplete || isLoading"
           >
-            Register
+            {{ isLoading ? 'Sending signal...' : 'Enter the Void' }}
           </button>
           
           <div class="login-link">
@@ -325,6 +278,7 @@ watchEffect(() => {
   gap: 25px;
   overflow-x: hidden;
   position: relative;
+  padding: 2rem;
 }
 
 /* --- NIGHT SKY EFFECT --- */
@@ -356,11 +310,11 @@ watchEffect(() => {
 @keyframes drift { from { transform: translateY(0); } to { transform: translateY(-200vh); } }
 @keyframes twinkle { 0% { opacity: 0.2; } 100% { opacity: 1; } }
 
-/* ===== 🧿 Easter Egg Logic ===== */
-.easter-egg { position: fixed; top: 14px; left: 14px; width: 42px; height: 42px; cursor: pointer; z-index: 999; }
+/* ===== Easter Egg Logic ===== */
+.easter-egg { position: fixed; top: 14px; right: 14px; width: 42px; height: 42px; cursor: pointer; z-index: 999; }
 .eye-symbol { position: relative; font-size: 1.6rem; color: #60a5fa; opacity: 0; transition: opacity 0.3s ease; z-index: 2; }
 .halo { position: absolute; inset: -10px; background: radial-gradient(circle, rgba(96,165,250,0.45), transparent 70%); border-radius: 50%; opacity: 0; filter: blur(6px); transition: opacity 0.3s ease; }
-.tooltip { position: absolute; top: 50%; left: 55px; transform: translateY(-50%); background: rgba(2, 6, 23, 0.95); border: 1px solid rgba(96, 165, 250, 0.4); padding: 0.6rem 0.8rem; border-radius: 8px; font-size: 0.75rem; color: #e0e7ff; white-space: nowrap; opacity: 0; pointer-events: none; box-shadow: 0 0 20px rgba(96, 165, 250, 0.35); transition: opacity 0.3s ease; }
+.tooltip { position: absolute; top: 50%; right: 55px; transform: translateY(-50%); background: rgba(2, 6, 23, 0.95); border: 1px solid rgba(96, 165, 250, 0.4); padding: 0.6rem 0.8rem; border-radius: 8px; font-size: 0.75rem; color: #e0e7ff; white-space: nowrap; opacity: 0; pointer-events: none; box-shadow: 0 0 20px rgba(96, 165, 250, 0.35); transition: opacity 0.3s ease; }
 .easter-egg:hover .eye-symbol { opacity: 1; transform: rotate(90deg); }
 .easter-egg:hover .halo, .easter-egg:hover .tooltip { opacity: 1; }
 
@@ -372,13 +326,16 @@ watchEffect(() => {
 .role { margin-left: 8px; font-weight: 700; color: #3b82f6; animation: fade 2s ease-in-out infinite; }
 @keyframes fade { 0%, 100% { opacity: 0; } 20%, 80% { opacity: 1; } }
 
-/* ===== Registration Card ===== */
+/* ===== Registration Card (Single Column Update) ===== */
 .registerdiv {
-  width: 900px; max-width: 95vw; border-radius: 40px; padding: 40px;
-  background: rgba(2, 6, 23, 0.3); /* Lower opacity for stars to shine through */
-  backdrop-filter: blur(2px); /* Frosted glass effect */
-  border: 1px solid rgba(59, 131, 246, 0.5);
-  box-shadow: 30px 30px 60px rgba(37, 99, 235, 0.2), -10px -10px 30px rgba(0, 0, 0, 0.9);
+  width: 480px; /* Slimmer for single column */
+  max-width: 100%; 
+  border-radius: 24px; 
+  padding: 40px;
+  background: rgba(2, 6, 23, 0.3); 
+  backdrop-filter: blur(8px); 
+  border: 1px solid rgba(59, 131, 246, 0.3);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), inset 0 0 20px rgba(59, 131, 246, 0.1);
   position: relative; z-index: 10;
   opacity: 0; animation: ethereal-reveal 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
   animation-delay: 0.2s;
@@ -389,48 +346,64 @@ watchEffect(() => {
   100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0px); }
 }
 
-.formdiv { display: flex; gap: 60px; }
-.inputdiv { width: 50%; display: flex; flex-direction: column; gap: 12px; }
-.label { font-size: 15px; color: #93c5fd; }
+.formdiv { display: flex; flex-direction: column; width: 100%; }
+.inputdiv { width: 100%; display: flex; flex-direction: column; gap: 12px; }
+.label { font-size: 14px; color: #93c5fd; letter-spacing: 0.5px; }
 
-.inputbox, .selectbox, .dob-input {
-  width: 100%; background: rgba(2, 6, 23, 0.5); border: 1px solid rgba(30, 64, 175, 0.4);
-  border-radius: 10px; color: white; padding: 8px 12px; transition: all 0.3s ease;
+.inputbox {
+  width: 100%; background: rgba(2, 6, 23, 0.6); border: 1px solid rgba(30, 64, 175, 0.4);
+  border-radius: 12px; color: white; padding: 12px 16px; transition: all 0.3s ease;
+  font-size: 1rem;
 }
 
-.inputbox:focus, .selectbox:focus, .dob-input:focus {
-  outline: none; border-color: #3b82f6; box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
+.inputbox:focus {
+  outline: none; border-color: #3b82f6; box-shadow: 0 0 15px rgba(59, 130, 246, 0.2);
+  background: rgba(15, 23, 42, 0.8);
 }
 
-.password-wrapper { position: relative; }
+.password-wrapper { 
+  position: relative; 
+}
+
+.password-wrapper input {
+  padding-right: 2.8rem;
+}
+
 .eye {
-  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
-  cursor: pointer; font-size: 18px; color: #93c5fd; transition: transform 0.2s ease;
+  position: absolute; 
+  right: 16px; 
+  top: 50%; 
+  transform: translateY(-50%);
+  cursor: pointer; 
+  font-size: 1.25rem; 
+  color: #60a5fa; 
+  opacity: 0.75;
+  user-select: none;
+  transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), text-shadow 0.2s ease;
 }
-.eye:hover { transform: translateY(-50%) scale(1.2); }
 
+.eye:hover { 
+  opacity: 1; 
+  color: #93c5fd; 
+  transform: translateY(-50%) scale(1.25) rotate(90deg); 
+  text-shadow: 0 0 12px rgba(147, 197, 253, 0.8); /* Adds the glow */
+}
 .register-btn {
-  margin-top: 20px; padding: 12px; border-radius: 25px; border: none;
-  background: linear-gradient(135deg, #1d4ed8, #2563eb); color: white;
-  font-weight: bold; cursor: pointer; transition: all 0.3s ease;
+  margin-top: 25px; padding: 14px; border-radius: 12px; border: none;
+  background: linear-gradient(135deg, #2563eb, #3b82f6); color: white;
+  font-weight: 600; font-size: 1.05rem; letter-spacing: 1px;
+  cursor: pointer; transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  box-shadow: 0 4px 15px rgba(37, 99, 235, 0.3);
 }
-.register-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(59, 130, 246, 0.4); }
-.register-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.register-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(59, 130, 246, 0.5); filter: brightness(1.1); }
+.register-btn:disabled { opacity: 0.5; cursor: not-allowed; background: #1e3a8a; box-shadow: none; }
 
-.error-text, .age { color: #93c5fd; font-size: 12px; }
-.login-link { text-align: center; margin-top: 15px; font-size: 14px; color: #94a3b8; }
-.login-link a { color: #60a5fa; text-decoration: none; font-weight: bold; }
-.login-link a:hover { text-decoration: underline; }
+.error-text { color: #fca5a5; font-size: 12px; margin-top: -6px; margin-bottom: 4px; }
+.login-link { text-align: center; margin-top: 20px; font-size: 14px; color: #94a3b8; }
+.login-link a { color: #60a5fa; text-decoration: none; font-weight: 600; transition: color 0.2s; }
+.login-link a:hover { color: #93c5fd; text-decoration: underline; }
 
-/* Responsive adjustments */
-@media (max-width: 950px) {
-  .registerdiv { padding: 30px; }
-  .formdiv { gap: 30px; }
-}
-
-@media (max-width: 768px) {
-  .maindiv { padding: 40px 0; }
-  .formdiv { flex-direction: column; gap: 20px; }
-  .inputdiv { width: 100%; }
+@media (max-width: 500px) {
+  .registerdiv { padding: 30px 20px; }
 }
 </style>

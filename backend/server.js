@@ -495,16 +495,26 @@ app.post("/send-otp", async (req, res) => {
 
   if (!email) return res.status(400).json({ message: "Email required" });
 
-  const otp = generateOTP();
-  const expires = Date.now() + 5 * 60 * 1000;
-
-  otpStore.set(email, { otp, expires });
-
   try {
+    // 🚀 NEW: Check if the user already exists BEFORE generating/sending OTP
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(409).json({ 
+        success: false, 
+        message: "Account already exists",
+        userExists: true // Custom flag for the frontend
+      });
+    }
+
+    const otp = generateOTP();
+    const expires = Date.now() + 5 * 60 * 1000;
+
+    otpStore.set(email, { otp, expires });
+
     // This sends over HTTP, bypassing Railway's firewall instantly
     await resend.emails.send({
-      from: 'LoomArt <noreply@loom-art.space>', // Resend's default testing email
-      to: email, // IMPORTANT: While testing on the free tier, this MUST be the email you signed up to Resend with
+      from: 'LoomArt <noreply@loom-art.space>', 
+      to: email, 
       subject: "Your LoomArt OTP",
       html: `<h1>${otp}</h1><p>Expires in 5 minutes</p>`
     });
@@ -1349,8 +1359,8 @@ app.get("/projects/details/:projectId", authMiddleware, async (req, res) => {
 
 app.get("/user/me", authMiddleware, async (req, res) => {
   try {
-    // ✅ ADD 'age' to the select string
-    const user = await User.findById(req.user.mongoId).select("email username country age");
+    // ✅ REMOVED 'country' and 'age' from the select string
+    const user = await User.findById(req.user.mongoId).select("email username");
     
     if (!user) {
       return res.status(404).json({ message: "User not found" });

@@ -48,12 +48,6 @@ const userSchema = new mongoose.Schema(
     followers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     following: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
 
-    // ... (Keep demographics)
-    dob: String,
-    age: Number,
-    country: String,
-    state: String,
-    city: String,
     verified: { type: String, enum: ['normal', 'chosen', 'verified', 'paid'], default: 'normal' },
     
     // ... (Keep stats - we will sync these numbers with the array lengths)
