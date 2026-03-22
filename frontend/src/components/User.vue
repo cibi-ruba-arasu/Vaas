@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed, watch } from "vue"
+import { ref, onMounted, onUnmounted, computed, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { API_URL } from '../config.js';
 const route = useRoute()
@@ -25,13 +25,49 @@ const user = ref({
   description: { blocks: [], container: { colors: ['transparent'], angle: 135 } },
   profilePic: null,
   verified: 'normal',
+  themeColor: '#3b82f6', // Default until loaded
   stats: { followers: 0, following: 0, rating: 0.0, weaves: 0 },
   badges: []
 })
 
-
-
 const projects = ref([])
+
+// --- STAR BACKGROUND LOGIC ---
+const auraColor = computed(() => user.value.themeColor || '#3b82f6');
+const starsSmall = ref('');
+const starsMedium = ref('');
+const starsLarge = ref('');
+
+const mouseX = ref(0);
+const mouseY = ref(0);
+
+const generateStars = (count, blur) => {
+  let shadows = [];
+  for (let i = 0; i < count; i++) {
+    const x = (Math.random() * 110 - 5).toFixed(2);
+    const y = (Math.random() * 210 - 5).toFixed(2);
+    // 80% User's Aura Color, 20% White
+    const color = Math.random() > 0.2 ? auraColor.value : '#FFF';
+    shadows.push(`${x}vw ${y}vh ${blur}px ${color}`);
+  }
+  return shadows.join(', ');
+};
+
+const updateStarFields = () => {
+  starsSmall.value = generateStars(400, 0);
+  starsMedium.value = generateStars(150, 1);
+  starsLarge.value = generateStars(50, 2);
+};
+
+const handleMouseMove = (e) => {
+  mouseX.value = (e.clientX - window.innerWidth / 2) * -0.01;
+  mouseY.value = (e.clientY - window.innerHeight / 2) * -0.01;
+};
+
+// Update stars when we fetch the user's custom color
+watch(auraColor, () => {
+  updateStarFields();
+});
 
 // 1. Helper function to inject the font
 const loadGoogleFont = (fontFamily) => {
@@ -218,8 +254,14 @@ const closePfpModal = () => {
 };
 
 onMounted(() => {
+  window.addEventListener('mousemove', handleMouseMove);
+  updateStarFields();
   if (route.params.userid) fetchUserProfile()
 })
+
+onUnmounted(() => {
+  window.removeEventListener('mousemove', handleMouseMove);
+});
 
 // Refetch if route changes (e.g. searching another user)
 watch(() => route.params.userid, () => {
@@ -240,8 +282,24 @@ watch(() => projects.value, (newVal) => {
 </script>
 
 <template>
-  <div class="public-profile-page">
+  <div class="public-profile-page" :style="{ '--aura': auraColor, '--mouse-x': mouseX + 'px', '--mouse-y': mouseY + 'px' }">
+    
+    <!-- STAR BACKGROUND LAYER -->
+    <div class="sky-container">
+      <div class="parallax-wrap p-1">
+        <div class="star-layer layer-1" :style="{ boxShadow: starsSmall }"></div>
+      </div>
+      <div class="parallax-wrap p-2">
+        <div class="star-layer layer-2" :style="{ boxShadow: starsMedium }"></div>
+      </div>
+      <div class="parallax-wrap p-3">
+        <div class="star-layer layer-3" :style="{ boxShadow: starsLarge }"></div>
+      </div>
+    </div>
+
+    <!-- ORB INJECTED WITH AURA -->
     <div class="bg-orb"></div>
+    
     <Transition name="fade">
       <div v-if="selectedBadge" class="lightbox" @click.self="closeBadgeModal">
         <div class="badge-modal glass-panel">
@@ -475,11 +533,81 @@ watch(() => projects.value, (newVal) => {
 
 * { box-sizing: border-box; }
 
-.public-profile-page { min-height: 100vh; background-color: #020617; color: #f0f0f0; font-family: 'Inter', sans-serif; position: relative; padding-bottom: 5rem; }
-.bg-orb { position: absolute; top: -10%; right: -10%; width: 50vw; height: 50vw; background: radial-gradient(circle, #3b82f6 0%, transparent 70%); opacity: 0.15; filter: blur(80px); pointer-events: none; }
+.public-profile-page { min-height: 100vh; background-color: #020617; color: #f0f0f0; font-family: 'Inter', sans-serif; position: relative; padding-bottom: 5rem; overflow-x: hidden; }
+
+/* 🚀 FIX: Orb now uses var(--aura) to match the user's color */
+.bg-orb { position: absolute; top: -10%; right: -10%; width: 50vw; height: 50vw; background: radial-gradient(circle, var(--aura) 0%, transparent 70%); opacity: 0.15; filter: blur(80px); pointer-events: none; z-index: 1; }
+
+/* --- NIGHT SKY EFFECT --- */
+.sky-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none; 
+  /* Add the animation here */
+  animation: starFadeIn 3s ease-in-out forwards;
+}
+
+/* Define the fade-in keyframes */
+@keyframes starFadeIn {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.parallax-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.1s ease-out; 
+}
+
+.p-1 { transform: translate(calc(var(--mouse-x) * 0.5), calc(var(--mouse-y) * 0.5)); }
+.p-2 { transform: translate(calc(var(--mouse-x) * 1.5), calc(var(--mouse-y) * 1.5)); }
+.p-3 { transform: translate(calc(var(--mouse-x) * 3.0), calc(var(--mouse-y) * 3.0)); }
+
+.star-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: transparent;
+  border-radius: 50%; 
+}
+
+.star-layer::after {
+  content: "";
+  position: absolute;
+  top: 200vh;
+  left: 0;
+  width: inherit;
+  height: inherit;
+  background: transparent;
+  border-radius: inherit;
+  box-shadow: inherit; 
+}
+
+.layer-1 { width: 1.5px; height: 1.5px; animation: drift 150s linear infinite; }
+.layer-2 { width: 2.5px; height: 2.5px; animation: drift 100s linear infinite, twinkle 6s ease-in-out infinite alternate; }
+.layer-3 { width: 3.5px; height: 3.5px; animation: drift 50s linear infinite, twinkle 4s ease-in-out infinite alternate; }
+
+@keyframes drift {
+  from { transform: translateY(0); }
+  to { transform: translateY(-200vh); }
+}
+
+@keyframes twinkle {
+  0% { opacity: 0.2; }
+  100% { opacity: 1; }
+}
+
 
 .center-msg { height: 80vh; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #64748b; gap: 1rem; }
-.spinner { width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1); border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; }
+.spinner { width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1); border-top-color: var(--aura); border-radius: 50%; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .profile-container { max-width: 1000px; margin: 0 auto; padding: 2rem 5%; display: flex; flex-direction: column; gap: 2rem; position: relative; z-index: 2; }
@@ -512,10 +640,10 @@ watch(() => projects.value, (newVal) => {
 /* FOLLOW BUTTON */
 .follow-btn {
   padding: 8px 24px; border-radius: 20px; font-weight: 600; cursor: pointer; transition: all 0.2s; border: none; min-width: 100px;
-  background: #3b82f6; color: white; box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+  background: var(--aura); color: white; box-shadow: 0 4px 15px rgba(0,0,0, 0.3);
 }
-.follow-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(59, 130, 246, 0.5); }
-.follow-btn.following { background: rgba(255,255,255,0.1); color: #cbd5e1; border: 1px solid rgba(255,255,255,0.2); box-shadow: none; }
+.follow-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px var(--aura); filter: brightness(1.2); }
+.follow-btn.following { background: rgba(255,255,255,0.1); color: #cbd5e1; border: 1px solid rgba(255,255,255,0.2); box-shadow: none; filter: none; }
 .follow-btn.following:hover { background: rgba(239, 68, 68, 0.2); border-color: rgba(239, 68, 68, 0.4); color: #fca5a5; content: "Unfollow"; }
 
 /* BIO */
@@ -526,7 +654,7 @@ watch(() => projects.value, (newVal) => {
 .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1.5rem; }
 
 .project-card { background: rgba(30, 41, 59, 0.3); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; overflow: hidden; transition: 0.3s; cursor: pointer; }
-.project-card:hover { transform: translateY(-5px); border-color: rgba(59, 130, 246, 0.3); }
+.project-card:hover { transform: translateY(-5px); border-color: var(--aura); box-shadow: 0 10px 20px rgba(0,0,0,0.5); }
 .card-thumb { height: 140px; background-size: cover; background-position: center; }
 .card-info { padding: 1rem; }
 .card-info h3 { margin: 0 0 0.5rem 0; font-size: 1rem; color: #f1f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -575,10 +703,7 @@ watch(() => projects.value, (newVal) => {
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: 10px;
-  /* 🚀 FIX: Removed the solid black background, making it transparent */
   background: transparent;
-  /* Optional: You can remove the box-shadow entirely if you want the badge to truly float, 
-     or keep it to add a glow effect to the bounding box */
   box-shadow: 0 4px 10px rgba(0,0,0,0.3); 
 }
 
@@ -586,7 +711,7 @@ watch(() => projects.value, (newVal) => {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  image-rendering: pixelated; /* Keeps 8-bit art sharp */
+  image-rendering: pixelated; 
 }
 
 .badge-name {
@@ -597,7 +722,6 @@ watch(() => projects.value, (newVal) => {
   text-shadow: 0 2px 4px rgba(0,0,0,0.8);
 }
 
-/* Remove Button for Edit Mode (Only applies in UserProfile.vue) */
 .remove-badge-btn {
   position: absolute;
   top: -8px;
@@ -667,13 +791,12 @@ watch(() => projects.value, (newVal) => {
 .close-modal-btn:hover { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
 
 .modal-badge-img-wrapper {
-  width: 180px;  /* 🚀 Increased from 120px */
-  height: 180px; /* 🚀 Increased from 120px */
+  width: 180px;  
+  height: 180px; 
   margin-bottom: 1.5rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 🚀 Removed the background, padding, and box-shadow completely */
 }
 
 .modal-badge-img { 
@@ -681,7 +804,6 @@ watch(() => projects.value, (newVal) => {
   height: 100%; 
   object-fit: contain; 
   image-rendering: pixelated; 
-  /* 🚀 Slightly boosted the drop-shadow so the floating badge pops more */
   filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.6)); 
 }
 .modal-badge-name {
@@ -710,8 +832,8 @@ watch(() => projects.value, (newVal) => {
   text-decoration: none; 
   transition: all 0.2s ease; 
 }
-.game-link { color: #3b82f6; text-shadow: 0 0 10px rgba(59, 130, 246, 0.2); }
-.game-link:hover { color: #60a5fa; text-shadow: 0 0 15px rgba(59, 130, 246, 0.5); transform: translateY(-1px); }
+.game-link { color: var(--aura); text-shadow: 0 0 10px rgba(0,0,0, 0.2); }
+.game-link:hover { filter: brightness(1.3); text-shadow: 0 0 15px var(--aura); transform: translateY(-1px); }
 
 .artist-link { color: #a855f7; }
 .artist-link:hover { color: #c084fc; text-shadow: 0 0 15px rgba(168, 85, 247, 0.4); transform: translateY(-1px); }
@@ -720,14 +842,13 @@ watch(() => projects.value, (newVal) => {
 
 /* --- PFP MODAL STYLES --- */
 .pfp-wrapper {
-  /* Existing styles are kept, we just add pointer and hover effects */
   cursor: pointer;
   transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s;
 }
 
 .pfp-wrapper:hover {
   transform: scale(1.05);
-  box-shadow: 0 15px 35px rgba(59, 130, 246, 0.4);
+  box-shadow: 0 15px 35px var(--aura);
 }
 
 .modal-pfp-img-wrapper {
@@ -743,7 +864,7 @@ watch(() => projects.value, (newVal) => {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 50%; /* Keeps it circular like a standard PFP */
+  border-radius: 50%; 
   border: 3px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6);
   image-rendering: pixelated;

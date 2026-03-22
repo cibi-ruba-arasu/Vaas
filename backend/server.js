@@ -1476,7 +1476,11 @@ app.get("/users/:userid", async (req, res) => {
     const publishedCount = await Publish.countDocuments({ authorId: targetUser._id });
     const userProjects = await Publish.find({ authorId: targetUser._id }).sort({ publishedAt: -1 });
 
-    // 2. Check if the person viewing is following this user
+    // 2. Fetch the user's preferred Aura Color
+    const userPref = await UserPreference.findOne({ userId: targetUser._id });
+    const themeColor = userPref ? userPref.themeColor : "#3b82f6"; // Fallback blue if they haven't set one
+
+    // 3. Check if the person viewing is following this user
     let isFollowing = false;
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -1487,7 +1491,6 @@ app.get("/users/:userid", async (req, res) => {
       } catch (e) { /* ignore invalid token */ }
     }
 
-    // ✅ FIX: Restore the { user, projects, isFollowing } wrapper structure!
     res.json({
       user: {
         _id: targetUser._id,
@@ -1497,8 +1500,9 @@ app.get("/users/:userid", async (req, res) => {
         profilePic: targetUser.profilePic,
         active_pfp_type: targetUser.active_pfp_type || 'custom',
         active_earned_ref: targetUser.active_earned_ref || null,
-        badges: targetUser.badges || [], // 🚀 Badges are safely included here
+        badges: targetUser.badges || [], 
         verified: targetUser.verified,
+        themeColor: themeColor, // 👈 Send the color down to the frontend
         stats: {
           followers: targetUser.followersCount || 0,
           following: targetUser.followingCount || 0,
