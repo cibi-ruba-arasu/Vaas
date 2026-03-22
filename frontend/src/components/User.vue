@@ -421,7 +421,6 @@ watch(() => projects.value, (newVal) => {
                 <span v-if="user.verified === 'verified'" class="badge blue">✔</span>
                 <span v-if="user.verified === 'chosen'" class="badge gold">★</span>
               </div>
-              <span class="userid">@{{ user.userid }}</span>
               
               <div class="location-row" v-if="user.country">
                 <span>📍 {{ user.city ? user.city + ', ' : '' }}{{ user.country }}</span>
