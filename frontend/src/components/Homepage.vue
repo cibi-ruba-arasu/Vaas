@@ -369,7 +369,22 @@ const notifications = ref([])
 const unreadCount = ref(0)
 let notificationInterval
 
-const categoryTabs = ['All', 'Genres', 'Settings', 'Narrative', 'Themes', 'Mature']
+const categories = [
+  "All", 
+  "Fantasy", 
+  "Sci-Fi", 
+  "Romance", 
+  "Mystery", 
+  "Horror", 
+  "Adventure",
+  "Historical", 
+  "Thriller", 
+  "Comedy", 
+  "Drama", 
+  "Action", 
+  "Mature", // Add your new categories here
+  "18+" 
+]
 const activeTab = ref('All')
 
 const fetchNotifications = async () => {
@@ -2030,9 +2045,10 @@ input:checked + .slider:before {
     width: calc(100vw - 2rem); /* Keep menu within screen bounds */
     left: 50%;
     transform: translateX(-50%);
-    position: fixed; /* Better positioning for small screens */
-    top: auto;
-    bottom: 20px; /* Float it near the bottom for thumb-reachability */
+    position: absolute; /* Restores standard dropdown behavior */
+    top: 120%; /* Anchors it just below the button */
+    bottom: auto; /* Removes the bottom anchor */
+    z-index: 1000; /* Ensures it stays above your feed */
   }
   
   .active-filters {
@@ -2085,4 +2101,5 @@ input:checked + .slider:before {
 .search-results {
   z-index: 110 !important;
 }
+
 </style>
