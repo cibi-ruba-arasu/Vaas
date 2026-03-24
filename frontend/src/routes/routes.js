@@ -18,6 +18,9 @@ import Search from '@/components/Search.vue';
 import Console from '@/components/Console.vue';
 import Doc from '@/components/Doc.vue';
 import LandingPage from "@/components/LandingPage.vue"
+import Homepageg from "@/components/Homepageg.vue"
+import Createg from "@/components/Createg.vue"
+import Consoleg from "@/components/Consoleg.vue"
 
 const routes = [
   {
@@ -93,19 +96,16 @@ const routes = [
     path: "/post/:id",
     name: "Post",
     component: Post,
-    meta: { requiresAuth: true } // Or false if you want public access
   },
   {
     path: "/user/:userid", // ✅ Matches the router.push from Homepage search
     name: "User",
     component: User,
-    meta: { requiresAuth: true }
   },
   {
     path: "/search",
     name: "Search",
     component: Search,
-    meta: { requiresAuth: true }
   },
   {
     path: "/console",
@@ -119,7 +119,23 @@ const routes = [
     // Adjust the path below to match where you create Doc.vue
     component: Doc, 
     meta: { requiresAuth: true } // Assuming they need to be logged in to read it
-  }
+  },
+  {
+    path: "/homeg",
+    name: "Homepageg",
+    component: Homepageg
+    // Intentionally omitting meta: { requiresAuth: true }
+  },
+  {
+    path: "/createg",
+    name: "Createg",
+    component: Createg
+  },
+  {
+    path: "/consoleg",
+    name: "Consoleg",
+    component: Consoleg
+  },
 ]
 
 const router = createRouter({

@@ -171,8 +171,11 @@ onUnmounted(() => {
           
           <button 
             class="btn guest" 
-            :class="{ 'fade-out-fast': isTransitioning }" 
-            disabled
+            :class="{ 
+              'fade-out-fast': isTransitioning && activePath !== '/homeg',
+              'active-btn': isTransitioning && activePath === '/homeg'
+            }" 
+            @click="handleNavigate('/homeg')"
           >Visit as guest</button>
         </div>
 
@@ -266,8 +269,11 @@ onUnmounted(() => {
           
           <button 
             class="btn guest" 
-            :class="{ 'fade-out-fast': isTransitioning }" 
-            disabled
+            :class="{ 
+              'fade-out-fast': isTransitioning && activePath !== '/homeg',
+              'active-btn': isTransitioning && activePath === '/homeg'
+            }" 
+            @click="handleNavigate('/homeg')"
           >Visit as guest</button>
         </div>
       </section>

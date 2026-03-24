@@ -1377,7 +1377,7 @@ app.get("/user/me", authMiddleware, async (req, res) => {
 // Add this route near your other user routes (e.g., before app.listen)
 
 /* ===== USER SEARCH ===== */
-app.get("/search/unified", authMiddleware, async (req, res) => {
+app.get("/search/unified", async (req, res) => {
   const { q } = req.query;
 
   if (!q || q.length < 2) return res.json([]);
@@ -1425,7 +1425,7 @@ app.get("/search/unified", authMiddleware, async (req, res) => {
 });
 
 /* ===== UNIFIED SEARCH SUGGESTIONS ===== */
-app.get("/search/suggestions", authMiddleware, async (req, res) => {
+app.get("/search/suggestions", async (req, res) => {
   const { q } = req.query;
   if (!q || q.length < 2) return res.json([]);
 
@@ -1674,68 +1674,73 @@ app.get("/publish/:projectId", authMiddleware, async (req, res) => {
 });
 
 /* ===== GET SINGLE POST BY ID (For Post.vue) ===== */
-app.get("/posts/:id", authMiddleware, async (req, res) => {
+app.get("/posts/:id", async (req, res) => {
   const { id } = req.params;
-  const { mongoId } = req.user; 
+  
+  // 1. Manually check for auth token (Guest-friendly)
+  let mongoId = null;
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      mongoId = decoded.mongoId;
+    } catch (e) { /* ignore invalid token */ }
+  }
 
   try {
     const post = await Publish.findById(id);
     if (!post) return res.status(404).json({ message: "Post not found" });
 
-    // --- ANALYTICS LOGIC ---
-    let incUpdate = {};
-    let arrayUpdate = {};
-
-    const isAuthor = post.authorId.toString() === mongoId;
-
-    if (!isAuthor) {
-      incUpdate.visits = 1; 
-      const hasViewed = post.viewedBy && post.viewedBy.includes(mongoId);
-      if (!hasViewed) {
-        incUpdate.views = 1; 
-        arrayUpdate.viewedBy = mongoId; 
-      }
-    }
-
-    if (Object.keys(incUpdate).length > 0 || arrayUpdate.viewedBy) {
-      const updateQuery = { $inc: incUpdate };
-      if (arrayUpdate.viewedBy) updateQuery.$push = { viewedBy: arrayUpdate.viewedBy };
-      await Publish.findByIdAndUpdate(id, updateQuery);
-      
-      if (incUpdate.visits) post.visits = (post.visits || 0) + 1;
-      if (incUpdate.views) post.views = (post.views || 0) + 1;
-    }
-
-    // --- CONSOLE CHECK FIX ---
     let inConsole = false;
-    const userConsole = await ConsoleDB.findOne({ userId: mongoId });
-    if (userConsole && userConsole.savedPosts && userConsole.savedPosts.some(savedId => savedId.toString() === id)) {
-        inConsole = true;
+    let hasLiked = false;
+    let isAuthor = false;
+
+    // --- ANALYTICS & USER STATE LOGIC (Only if logged in) ---
+    if (mongoId) {
+      isAuthor = post.authorId.toString() === mongoId;
+      
+      // Update Analytics
+      if (!isAuthor) {
+        let incUpdate = { visits: 1 };
+        let arrayUpdate = {};
+        const hasViewed = post.viewedBy && post.viewedBy.includes(mongoId);
+        
+        if (!hasViewed) {
+          incUpdate.views = 1; 
+          arrayUpdate.viewedBy = mongoId; 
+        }
+
+        const updateQuery = { $inc: incUpdate };
+        if (arrayUpdate.viewedBy) updateQuery.$push = { viewedBy: arrayUpdate.viewedBy };
+        await Publish.findByIdAndUpdate(id, updateQuery);
+        
+        post.visits = (post.visits || 0) + 1;
+        if (incUpdate.views) post.views = (post.views || 0) + 1;
+      }
+
+      // Check Console
+      const userConsole = await ConsoleDB.findOne({ userId: mongoId });
+      if (userConsole && userConsole.savedPosts && userConsole.savedPosts.some(savedId => savedId.toString() === id)) {
+          inConsole = true;
+      }
+
+      // Check Likes
+      hasLiked = post.likedBy && post.likedBy.includes(mongoId);
+    } else {
+      // Guest Analytics (Just increment visits anonymously)
+      await Publish.findByIdAndUpdate(id, { $inc: { visits: 1 } });
+      post.visits = (post.visits || 0) + 1;
     }
 
-    // ✅ THE FIX: Fetch the custom 'userid' to send to the frontend
     const author = await User.findById(post.authorId).select("userid");
     const authorUserId = author ? author.userid : post.authorId;
 
-    // 👇 NEW: Check if user liked this post
-    const hasLiked = post.likedBy.includes(mongoId);
-
-    // Convert the mongoose document to a plain object and inject the new ID
-    const postResponse = {
-        ...post.toObject(),
-        authorUserId 
-    };
-
     res.json({
-        post: postResponse, // Send the modified object
-        stats: {
-            views: post.views,
-            visits: post.visits,
-            plays: post.plays,
-            likes: post.likes // 👈 ADDED likes count
-        },
+        post: { ...post.toObject(), authorUserId },
+        stats: { views: post.views, visits: post.visits, plays: post.plays, likes: post.likes },
         inConsole,
-        liked: hasLiked // 👈 ADDED liked status
+        liked: hasLiked
     });
 
   } catch (err) {
@@ -2486,22 +2491,30 @@ app.get("/console/progress/:gameId", authMiddleware, async (req, res) => {
   }
 });
 
-app.get("/posts/:id/comments", authMiddleware, async (req, res) => {
+app.get("/posts/:id/comments", async (req, res) => {
   const { id } = req.params;
-  const { mongoId } = req.user;
+  
+  let mongoId = null;
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      mongoId = decoded.mongoId;
+    } catch (e) {}
+  }
 
   try {
     const comments = await Comment.find({ postId: id })
       .populate("authorId", "username userid profilePic")
-      .sort({ createdAt: -1 }); // Newest first
+      .sort({ createdAt: -1 }); 
 
-    // Map to attach like counts and boolean indicating if current user liked it
     const formattedComments = comments.map(c => {
-      const isLiked = c.likes.some(likeId => likeId.toString() === mongoId);
+      const isLiked = mongoId ? c.likes.some(likeId => likeId.toString() === mongoId) : false;
       return {
         _id: c._id,
         content: c.content,
-        author: c.authorId, // Contains username, userid, profilePic
+        author: c.authorId,
         parentId: c.parentId,
         createdAt: c.createdAt,
         likeCount: c.likes.length,
@@ -2515,7 +2528,6 @@ app.get("/posts/:id/comments", authMiddleware, async (req, res) => {
     res.status(500).json({ message: "Failed to fetch comments" });
   }
 });
-
 /* ===== POST A COMMENT OR REPLY ===== */
 app.post("/posts/:id/comments", authMiddleware, async (req, res) => {
   const { id } = req.params;

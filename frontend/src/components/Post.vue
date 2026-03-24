@@ -2,6 +2,26 @@
 import { ref, onMounted, computed } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { API_URL } from '../config.js';
+import Popup from './Popup.vue'; //
+const showAuthModal = ref(false); //
+const authModalConfig = ref({ title: '', desc: '', icon: '' }); //
+
+const triggerAuthModal = (type) => {
+  if (type === 'play') {
+    authModalConfig.value = {
+      title: 'Console Restricted',
+      desc: 'To add this weave to your collection and begin your journey, you must first claim an identity.',
+      icon: 'M2 6h20v12H2z M6 12h4 M8 10v4 M15 13h.01 M18 11h.01'
+    };
+  } else {
+    authModalConfig.value = {
+      title: 'Echoes Restricted',
+      desc: 'Only those woven into the Loom can leave whispers in the void. Sign in to join the conversation.',
+      icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'
+    };
+  }
+  showAuthModal.value = true;
+};
 const route = useRoute()
 const router = useRouter()
 const postId = route.params.id
@@ -132,6 +152,7 @@ const fetchPost = async () => {
 }
 
 const toggleLike = async () => {
+  if (!token) return router.push('/login');
   if (isLiking.value) return; // Prevent double-clicks
   isLiking.value = true;
 
@@ -159,6 +180,7 @@ const toggleLike = async () => {
 };
 
 const handlePlay = async () => {
+  if (!token) return triggerAuthModal('play');
   if (isAuthor.value) {
     alert("Creators cannot add their own project to the console. Use Preview in Create mode.")
     return
@@ -262,6 +284,7 @@ const fetchComments = async () => {
 }
 
 const submitComment = async (parentId = null) => {
+  if (!token) return triggerAuthModal('comment');
   const text = parentId ? replyText.value : newCommentText.value
   if (!text.trim() || isSubmittingComment.value) return
 
@@ -573,6 +596,18 @@ onMounted(() => {
       </div>
 
     </div>
+    <Popup 
+      :show="showAuthModal" 
+      :title="authModalConfig.title"
+      :description="authModalConfig.desc"
+      :iconPath="authModalConfig.icon"
+      @close="showAuthModal = false"
+    >
+      <template #actions>
+        <button class="auth-btn login-link" @click="router.push('/login')">Log In</button>
+        <button class="auth-btn register-main" @click="router.push('/register')">Register</button>
+      </template>
+    </Popup>
   </div>
 </template>
 
@@ -742,4 +777,32 @@ onMounted(() => {
 .submit-btn:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
 
 .replies-container { margin-left: 55px; display: flex; flex-direction: column; gap: 15px; border-left: 2px solid rgba(255,255,255,0.05); padding-left: 15px; }
+.auth-btn {
+  padding: 14px;
+  border-radius: 12px;
+  font-family: 'Inter', sans-serif;
+  font-weight: 700;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s;
+  width: 100%;
+}
+
+.register-main {
+  background: var(--aura);
+  color: #fff;
+  border: none;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.login-link {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.auth-btn:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.1);
+}
 </style>

@@ -2,6 +2,8 @@
 import { ref, onMounted, onUnmounted, computed, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { API_URL } from '../config.js';
+import Popup from './Popup.vue'; //
+const showAuthModal = ref(false);
 const route = useRoute()
 const router = useRouter()
 const token = sessionStorage.getItem("token")
@@ -154,6 +156,12 @@ const fetchUserProfile = async () => {
 
 /* --- ACTION: FOLLOW / UNFOLLOW --- */
 const toggleFollow = async () => {
+
+  if (!token) {
+    showAuthModal.value = true; // Replace router.push
+    return;
+  }
+
   if (isActionLoading.value) return;
   isActionLoading.value = true;
 
@@ -401,7 +409,9 @@ watch(() => projects.value, (newVal) => {
     <div v-else-if="error" class="center-msg">
       <h2>⚠️</h2>
       <p>{{ error }}</p>
-      <button @click="router.push('/home')" class="back-btn">Return Home</button>
+      <button class="back-btn" @click="router.push(token ? '/home' : '/homeg')">
+        &larr; Back to Void
+      </button>
     </div>
 
     <div v-else class="profile-container">
@@ -524,6 +534,18 @@ watch(() => projects.value, (newVal) => {
       </div>
 
     </div>
+    <Popup 
+      :show="showAuthModal" 
+      title="Essence Required"
+      description="You are currently drifting as a guest. To follow this Weaver and see their future threads, you must join the Loom."
+      iconPath="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"
+      @close="showAuthModal = false"
+    >
+      <template #actions>
+        <button class="auth-btn login-link" @click="router.push('/login')">Log In</button>
+        <button class="auth-btn register-main" @click="router.push('/register')">Register</button>
+      </template>
+    </Popup>
   </div>
 </template>
 
@@ -867,5 +889,33 @@ watch(() => projects.value, (newVal) => {
   border: 3px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6);
   image-rendering: pixelated;
+}
+.auth-btn {
+  padding: 14px;
+  border-radius: 12px;
+  font-family: 'Inter', sans-serif;
+  font-weight: 700;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s;
+  width: 100%;
+}
+
+.register-main {
+  background: var(--aura);
+  color: #fff;
+  border: none;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.login-link {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.auth-btn:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.1);
 }
 </style>

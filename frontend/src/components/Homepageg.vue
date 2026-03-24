@@ -77,20 +77,6 @@ const toggleInclude = (name) => {
   }
 };
 
-const categoryDropdown = ref(null); // Create a template ref
-
-const toggleCategoryMenu = (e) => {
-  e.stopPropagation(); // Prevent the click from bubbling
-  showCategories.value = !showCategories.value;
-};
-
-// Global click listener to close if clicking outside
-const closeMenus = (e) => {
-  if (categoryDropdown.value && !categoryDropdown.value.contains(e.target)) {
-    showCategories.value = false;
-  }
-};
-
 // Logic: Toggle Exclude (Mutual Exclusivity)
 const toggleExclude = (name) => {
   if (excludedCategories.value.includes(name)) {
@@ -274,6 +260,20 @@ const dropdownCategories = computed(() => {
   });
 });
 
+const categoryDropdown = ref(null); // Create a template ref
+
+const toggleCategoryMenu = (e) => {
+  e.stopPropagation(); // Prevent the click from bubbling
+  showCategories.value = !showCategories.value;
+};
+
+// Global click listener to close if clicking outside
+const closeMenus = (e) => {
+  if (categoryDropdown.value && !categoryDropdown.value.contains(e.target)) {
+    showCategories.value = false;
+  }
+};
+
 const toggleCategory = (catName) => {
   const existingIdx = selectedCategories.value.findIndex(c => c.name === catName);
   if (existingIdx !== -1) {
@@ -282,6 +282,13 @@ const toggleCategory = (catName) => {
     selectCategory(catName); // Adds it if not selected
   }
 };
+
+const showAuthModal = ref(false)
+
+// New handler function
+const handleGuestProfileClick = () => {
+  showAuthModal.value = true
+}
 
 /* --- FEED ENGINE STATE --- */
 const exploreWeaves = ref([]);
@@ -529,7 +536,6 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- STAR BACKGROUND ADDED HERE (Above Soul, Below Nav) -->
     <div class="sky-container">
       <div class="parallax-wrap p-1">
         <div class="star-layer layer-1" :style="{ boxShadow: starsSmall }"></div>
@@ -564,7 +570,7 @@ onUnmounted(() => {
       </div>
 
       <div class="nav-actions">
-        <button class="aura-btn" @click="router.push('/console')" title="My Console">
+        <button class="aura-btn" @click="router.push('/consoleg')" title="My Console">
           <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
              <rect x="2" y="6" width="20" height="12" rx="2"></rect>
              <line x1="6" y1="12" x2="10" y2="12"></line>
@@ -573,7 +579,7 @@ onUnmounted(() => {
              <line x1="18" y1="11" x2="18.01" y2="11"></line>
           </svg>
         </button>
-
+        
         <div class="notification-wrapper">
           <button 
             class="aura-btn bell-btn" 
@@ -609,13 +615,10 @@ onUnmounted(() => {
                   @click="handleNotificationClick(alert)"
                 >
                   <div class="notif-avatar">
-                    <!-- Check if sender exists AND has a profile pic -->
                     <img v-if="alert.sender?.profilePic" :src="alert.sender.profilePic" />
                     
-                    <!-- Check if sender exists and has a username -->
                     <span v-else-if="alert.sender?.username">{{ alert.sender.username.charAt(0) }}</span>
                     
-                    <!-- Fallback for system notifications (no sender) -->
                     <span v-else>!</span>
                   </div>
                   <div class="notif-content">
@@ -629,7 +632,7 @@ onUnmounted(() => {
           </Transition>
         </div>
 
-        <button class="aura-btn" @click="router.push('/profile')" title="Your Essence">
+        <button class="aura-btn" @click="handleGuestProfileClick" title="Your Essence">
           <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.5">
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
             <circle cx="12" cy="7" r="4" />
@@ -731,7 +734,7 @@ onUnmounted(() => {
           </Transition>
         </div>
 
-        <button class="create-btn" @click="router.push('/create')" title="Weave New Thread">
+        <button class="create-btn" @click="router.push('/createg')" title="Weave New Thread">
           <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5">
             <line x1="12" y1="5" x2="12" y2="19"></line>
             <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -740,7 +743,6 @@ onUnmounted(() => {
 
       </div>
     </nav>
-    
     <div class="search-and-filter-band">
       <div class="search-bar-row">
         
@@ -924,6 +926,29 @@ onUnmounted(() => {
       </div>
       
     </main>
+    <Transition name="fade">
+      <div v-if="showAuthModal" class="modal-overlay" @click.self="showAuthModal = false">
+        <div class="auth-modal glass-panel">
+          <button class="close-modal" @click="showAuthModal = false">✕</button>
+          
+          <div class="modal-art">
+            <div class="mini-soul-glow"></div>
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--aura)" stroke-width="1.5">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+          </div>
+
+          <h2 class="modal-title">Essence Required</h2>
+          <p class="modal-desc">You are currently drifting as a guest. To claim your own essence and weave your history, you must join the Loom.</p>
+          
+          <div class="auth-buttons">
+            <button class="auth-btn login-link" @click="router.push('/login')">Log In</button>
+            <button class="auth-btn register-main" @click="router.push('/register')">Register</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -981,15 +1006,7 @@ onUnmounted(() => {
     wander 20s linear infinite alternate,
     morph 10s ease-in-out infinite alternate;
 }
-.search-bar-row {
-  display: flex;
-  align-items: center;
-  gap: 15px;
-  width: 100%;
-  max-width: 800px; /* Constrains the width perfectly in the center */
-  position: relative;
-  z-index: 55;
-}
+
 /* --- NIGHT SKY EFFECT --- */
 .sky-container {
   position: fixed;
@@ -1167,27 +1184,7 @@ onUnmounted(() => {
   justify-content: center;
   padding: 1rem 0;
 }
-.search-and-filter-band {
-  width: 100%;
-  position: relative;
-  z-index: 50; /* Needs to be high so dropdowns overlay the feed */
-  background: rgba(5, 5, 8, 0.15);
-  backdrop-filter: blur(15px);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 1.5rem 1rem 1rem 1rem;
-  gap: 15px;
-}
 
-.search-and-filter-band::after {
-  content: "";
-  position: absolute;
-  bottom: 0;
-  left: 10%; right: 10%; 
-  height: 1px;
-  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.2) 50%, transparent 100%);
-}
 .search-band::after {
   content: "";
   position: absolute;
@@ -1654,7 +1651,37 @@ onUnmounted(() => {
   border: 1px solid rgba(255,255,255,0.1); 
   backdrop-filter: blur(20px);
 }
+.search-and-filter-band {
+  width: 100%;
+  position: relative;
+  z-index: 50; /* Needs to be high so dropdowns overlay the feed */
+  background: rgba(5, 5, 8, 0.15);
+  backdrop-filter: blur(15px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1.5rem 1rem 1rem 1rem;
+  gap: 15px;
+}
 
+.search-and-filter-band::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 10%; right: 10%; 
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.2) 50%, transparent 100%);
+}
+
+.search-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+  max-width: 800px; /* Constrains the width perfectly in the center */
+  position: relative;
+  z-index: 55;
+}
 .menu-title { margin: 0 0 10px 0; color: #fff; font-family: 'Cinzel', serif; font-size: 1.1rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px; }
 
 .settings-menu { display: flex; flex-direction: column; gap: 8px; }
@@ -2084,5 +2111,145 @@ input:checked + .slider:before {
 /* Keep search results contained within their band's layer */
 .search-results {
   z-index: 110 !important;
+}
+
+/* --- GUEST AUTH MODAL STYLES --- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(8px);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.auth-modal {
+  width: 100%;
+  max-width: 400px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  padding: 40px 30px;
+  position: relative;
+  text-align: center;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 30px rgba(var(--aura), 0.2);
+  animation: modal-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes modal-pop {
+  from { transform: scale(0.9); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.close-modal {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: none;
+  border: none;
+  color: #64748b;
+  font-size: 1.2rem;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.close-modal:hover { color: #fff; }
+
+.modal-art {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-art svg {
+  width: 50px;
+  height: 50px;
+  z-index: 2;
+  filter: drop-shadow(0 0 10px var(--aura));
+}
+
+.mini-soul-glow {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background: var(--aura);
+  filter: blur(25px);
+  opacity: 0.3;
+  border-radius: 50%;
+  z-index: 1;
+}
+
+.modal-title {
+  font-family: 'Cinzel', serif;
+  font-size: 1.8rem;
+  color: #fff;
+  margin-bottom: 12px;
+}
+
+.modal-desc {
+  font-family: 'Inter', sans-serif;
+  color: #94a3b8;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  margin-bottom: 30px;
+}
+
+.auth-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auth-btn {
+  padding: 14px;
+  border-radius: 12px;
+  font-family: 'Inter', sans-serif;
+  font-weight: 700;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.register-main {
+  background: var(--aura);
+  color: #fff;
+  border: none;
+  box-shadow: 0 4px 15px rgba(var(--aura), 0.3);
+}
+
+.register-main:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(var(--aura), 0.5);
+  filter: brightness(1.1);
+}
+
+.login-link {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.login-link:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Mobile Specific Adjustments */
+@media (max-width: 480px) {
+  .auth-modal {
+    padding: 30px 20px;
+    margin-bottom: 20px; /* Space for mobile browser bars */
+  }
+  
+  .modal-title { font-size: 1.5rem; }
+  
+  .auth-btn { padding: 16px; } /* Larger touch target */
 }
 </style>

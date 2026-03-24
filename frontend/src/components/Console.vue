@@ -2532,7 +2532,7 @@ const preloadUrls = (urls) => {
 
     <div v-else-if="filteredGames.length === 0" class="empty-state">
       <h2>{{ searchQuery ? 'No games match your search.' : 'Your console is empty.' }}</h2>
-      <button v-if="!searchQuery" @click="router.push('/home')" class="explore-btn">Go to Store</button>
+      <button v-if="!searchQuery" @click="router.push('/home')" class="explore-btn">Explore</button>
     </div>
 
     <div v-else class="carousel-stage" :class="{ 'is-inserting-mode': isInsertingCD }" @wheel.prevent="handleWheel">
