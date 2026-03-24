@@ -1652,13 +1652,24 @@ onUnmounted(() => {
 .empty-notif { padding: 2rem; text-align: center; color: #64748b; font-style: italic; font-size: 0.9rem; }
 
 @media (max-width: 500px) {
-  .notifications-dropdown { 
-    right: auto;
-    left: 50%;
-    width: 90vw; 
-    margin-left: -45vw; 
-    max-width: none; 
-    z-index: 100;
+  /* 1. Remove relative anchoring from the small buttons */
+  .notification-wrapper,
+  .settings-wrapper {
+    position: static !important;
+  }
+
+  /* 2. Anchor to the full-width header and center without transforms */
+  .notifications-dropdown,
+  .advanced-dropdown {
+    position: absolute !important;
+    top: 100%; /* Drops exactly from the bottom of the header */
+    left: 0;
+    right: 0;
+    margin: 5px auto 0 auto; /* Auto margin centers it horizontally perfectly */
+    transform: none; /* Prevents jumping during Vue transitions */
+    width: calc(100vw - 2rem);
+    max-width: 340px;
+    z-index: 1001;
   }
 }
 
