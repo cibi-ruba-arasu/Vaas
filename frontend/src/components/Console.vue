@@ -2,6 +2,60 @@
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { API_URL } from '../config.js';
+import Share from './Share.vue'
+
+const showSharePopup = ref(false)
+const selectedBadge = ref(null)
+
+const openImageShare = () => {
+    if (!selectedAchievement.value) return;
+
+    // 1. Create a temporary canvas to generate the image
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; 
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    
+    // PFPs get a black background, Badges remain transparent
+    if (achievementPopupType.value === 'pfp') {
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    } else {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // 2. Paint the pixels
+    const pixels = selectedAchievement.value.pixels;
+    const rows = pixels.length;
+    const cols = pixels[0].length;
+    const scaleX = canvas.width / cols;
+    const scaleY = canvas.height / rows;
+
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if (pixels[y][x]) {
+                ctx.fillStyle = pixels[y][x];
+                ctx.fillRect(Math.floor(x * scaleX), Math.floor(y * scaleY), Math.ceil(scaleX), Math.ceil(scaleY));
+            }
+        }
+    }
+    
+    // 3. Convert to a base64 image string
+    const base64Image = canvas.toDataURL('image/png');
+    const game = filteredGames.value.find(g => g._id === activePostId.value);
+    // 4. Pass data to Share popup and open it
+    selectedBadge.value = {
+        image: base64Image,
+        name: selectedAchievement.value.name,
+        font: selectedAchievement.value.font || 'sans-serif', // Get the custom font
+        gameName: game ? game.name : 'Unknown Game',
+        authorName: game ? game.authorName : 'Unknown Creator'
+    };
+    closeAchievementPopup();
+    isShareMenuOpen.value = false; // Close the social text menu if open
+    showSharePopup.value = true;
+}
 const router = useRouter()
 const route = useRoute()
 const token = sessionStorage.getItem('token')
@@ -3054,18 +3108,9 @@ const preloadUrls = (urls) => {
                 </button>
 
                 <div class="share-wrapper">
-                    <button class="secondary-action-btn" @click="isShareMenuOpen = !isShareMenuOpen">
-                        🔗 Share...
+                    <button class="secondary-action-btn" @click="openImageShare" style="border-color: #3b82f6; color: #60a5fa;">
+                        📸 Create Share Image
                     </button>
-                    
-                    <transition name="slide">
-                        <div v-if="isShareMenuOpen" class="social-share-menu">
-                            <button class="social-btn whatsapp" @click="shareToSocial('whatsapp')">WhatsApp</button>
-                            <button class="social-btn facebook" @click="shareToSocial('facebook')">Facebook</button>
-                            <button class="social-btn twitter" @click="shareToSocial('twitter')">X / Twitter</button>
-                            <button class="social-btn reddit" @click="shareToSocial('reddit')">Reddit</button>
-                        </div>
-                    </transition>
                 </div>
             </div>
         </div>
@@ -3166,6 +3211,17 @@ const preloadUrls = (urls) => {
     </div>
   </div>
 </transition>
+<transition name="fade">
+    <Share 
+      v-if="showSharePopup"
+      :imageSrc="selectedBadge?.image"
+      :title="selectedBadge?.name"
+      :font="selectedBadge?.font"
+      :gameName="selectedBadge?.gameName"
+      :authorName="selectedBadge?.authorName"
+      @close="showSharePopup = false"
+    />
+  </transition>
 </template>
 
 <style scoped>
