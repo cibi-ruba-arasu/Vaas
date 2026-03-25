@@ -1269,6 +1269,15 @@ const selectAddOption = (option) => {
   const isLastScene = selectedScene.value && nodeScenes.value.length > 0 && selectedScene.value.id === nodeScenes.value[nodeScenes.value.length - 1].id;
 
   if (option.id === 'options') {
+    if (popupNode.value) {
+        const status = Canvas_Status.value.find(s => s.index === popupNode.value.id);
+        if (status && status.Next !== null && status.Next !== undefined) {
+          alert("Cannot add Options component. This General node is already connected to a Logic/Gift node via its default output arrow. Remove the connection first.");
+          showAddDropdown.value = false;
+          return;
+        }
+    }
+
       if (!isLastScene) {
           alert("The 'Options' component can only be added to the final scene of the sequence.");
           showAddDropdown.value = false;
@@ -3280,7 +3289,7 @@ const arrowHit = (n, wx, wy) => {
 
   } 
   // --- UPDATED: Allow Right Output for 'Set Variables' OR 'Gift' ---
-  else if (status && (status.node_type === 'Set Variables' || status.node_type === 'Gift')) {
+  else if (status && (status.node_type === 'Set Variables' || status.node_type === 'Gift' || (status.node_type === 'General' && !hasOptions))) {
       const rightAy = n.y - NODE_H / 2 + HEADER_H / 2
       const rightAx = n.x + NODE_W / 2 - ARROW_OFFSET
       if (Math.hypot(wx - rightAx, wy - rightAy) < ARROW_HIT_R) 
@@ -3290,7 +3299,7 @@ const arrowHit = (n, wx, wy) => {
       const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
       if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) 
           return { node: n, side: "left", x: leftAx, y: leftAy }
-  } else {
+  }else {
       const leftAy = n.y - NODE_H / 2 + HEADER_H / 2
       const leftAx = n.x - NODE_W / 2 + ARROW_OFFSET
       if (Math.hypot(wx - leftAx, wy - leftAy) < ARROW_HIT_R) 
@@ -3484,7 +3493,7 @@ const drawNodes = () => {
          ctx.fillText("F", x + NODE_W / 2 - 25, y + 20)
          ctx.fillText("▷", x + NODE_W / 2 - ARROW_OFFSET, y + 20)
          
-    } else if (nodeType === 'Set Variables' || nodeType === 'Gift') { /* --- NEW: DRAW GIFT OUTPUT ARROW --- */
+    } else if (nodeType === 'Set Variables' || nodeType === 'Gift' || (nodeType === 'General' && !hasOptions)) { /* --- UPDATED: DRAW DEFAULT OUTPUT ARROW --- */
          const rightAy = y - currentH / 2 + HEADER_H / 2
          const rightAx = x + NODE_W / 2 - ARROW_OFFSET
          ctx.fillStyle = "#fff"
@@ -3761,7 +3770,18 @@ const onMouseUp = e => {
     
     if (targetNode) {
       const cs = Canvas_Status.value.find(s => s.index === outputDragging.node.id)
-      if (cs) {
+      const targetStatus = Canvas_Status.value.find(s => s.index === targetNode.id)
+        if (cs && targetStatus) {
+          // --- NEW: Restrict General Node default output target ---
+          if (cs.node_type === 'General' && outputDragging.optionIndex === undefined) {
+              if (targetStatus.node_type === 'General') {
+                  alert("A General node's default output can only be connected to a Gift, If-Else, or Set Variables node.");
+                  connectingLine = null
+                  outputDragging = null
+                  draw()
+                  return;
+              }
+          }
           if (outputDragging.type === 'right-true') {
               cs.NextTrue = targetNode.id
           } else if (outputDragging.type === 'right-false') {
@@ -4213,7 +4233,37 @@ const advancePreview = () => {
             if (lastComp && (lastComp.type === 'options' || (lastComp.type === 'input' && !lastComp.isSubmitted))) {
                  // Wait for user interaction
             } else {
-                 exitPreview()
+                 // --- NEW: AUTOMATICALLY TRANSITION USING DEFAULT OUTPUT ---
+                 const currentStatus = Canvas_Status.value.find(s => s.index === popupNode.value.id);
+                 
+                 if (currentStatus && currentStatus.Next !== null && currentStatus.Next !== undefined) {
+                     // Calculate wait time for the exit animation of the final component
+                     let maxExitDuration = 0.5;
+                     if (components) {
+                         components.forEach(c => {
+                             if (c.exitAnimationDuration && c.exitAnimationDuration > maxExitDuration) {
+                                 maxExitDuration = c.exitAnimationDuration;
+                             }
+                         });
+                     }
+                     
+                     pendingNavigationTargetId.value = currentStatus.Next;
+                     isSceneExiting.value = true;
+                     sceneExitStartTime.value = Date.now();
+                     
+                     setTimeout(() => {
+                         isSceneExiting.value = false;
+                         sceneExitStartTime.value = 0;
+                         const target = pendingNavigationTargetId.value;
+                         pendingNavigationTargetId.value = null;
+                         
+                         loadNodeForPreview(target);
+                     }, maxExitDuration * 1000);
+                     
+                 } else {
+                     exitPreview();
+                 }
+                 // --------------------------------------------------------
             }
         }
     }
