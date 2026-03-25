@@ -446,8 +446,8 @@ if (!Canvas_Status.value) return { total: 0, disconnected: 0 };
     // Check if node has options
     if (node.options && node.options.length > 0) {
       total += node.options.length;
-      // Count how many don't have a 'next' connection
-      const loose = node.options.filter(opt => !opt.next).length;
+      // FIX: Check explicitly for null or undefined because target ID can be 0
+      const loose = node.options.filter(opt => opt.next === null || opt.next === undefined).length;
       disconnected += loose;
     }
   });
@@ -1514,12 +1514,14 @@ const getConnectedNodeName = (optionId) => {
     if (!status || !status.options) return "Not connected yet";
     
     const optStatus = status.options.find(o => o.id === optionId);
-    if (optStatus && optStatus.next) {
+    // FIX: Check explicitly for null or undefined because target ID can be 0
+    if (optStatus && optStatus.next !== null && optStatus.next !== undefined) {
         const target = Canvas_Status.value.find(s => s.index === optStatus.next);
         return target ? (target.Node_name || `Node ${target.index}`) : "Unknown Node";
     }
     return "Not connected yet";
 }
+
 watch(() => activeComponent.value?.optionsList, (newVal) => {
     if (activeComponent.value && activeComponent.value.type === 'options') {
         drawComponents() 
@@ -3298,21 +3300,24 @@ const arrowHit = (n, wx, wy) => {
   return null
 }
 
-const getNodeAt = (wx, wy) =>
-  nodes.value.find(
-    n => {
-       const status = Canvas_Status.value.find(s => s.index === n.id);
-       const h = (status && status.options && status.options.length > 0) 
-           ? Math.max(NODE_H, HEADER_H + (status.options.length * OPTION_ROW_H) + 10) 
-           : NODE_H;
-       
-       return wx >= n.x - NODE_W / 2 &&
-              wx <= n.x + NODE_W / 2 &&
-              wy >= n.y - h / 2 &&
-              wy <= n.y + h / 2
+const getNodeAt = (wx, wy) => {
+  // We iterate backwards so the top-most (newest) node gets hit first
+  for (let i = nodes.value.length - 1; i >= 0; i--) {
+    const n = nodes.value[i];
+    const status = Canvas_Status.value.find(s => s.index === n.id);
+    const h = (status && status.options && status.options.length > 0) 
+        ? Math.max(NODE_H, HEADER_H + (status.options.length * OPTION_ROW_H) + 10) 
+        : NODE_H;
+    
+    if (wx >= n.x - NODE_W / 2 &&
+        wx <= n.x + NODE_W / 2 &&
+        wy >= n.y - h / 2 &&
+        wy <= n.y + h / 2) {
+        return n;
     }
-  )
-
+  }
+  return undefined;
+}
 /* ================= DRAW ================= */
 const draw = () => {
   const c = canvasRef.value
@@ -3658,7 +3663,8 @@ const onMouseDown = e => {
   const w = screenToWorld(e.clientX, e.clientY)
   hoveredArrow = null
 
-  for (const n of nodes.value) {
+  for (let i = nodes.value.length - 1; i >= 0; i--) {
+    const n = nodes.value[i];
     const hit = arrowHit(n, w.x, w.y)
     if (hit && (hit.side === "right" || hit.side === "right-true" || hit.side === "right-false")) {
       outputDragging = { 
@@ -3702,7 +3708,8 @@ const onMouseDown = e => {
 const onMouseMove = e => {
   mouseWorld = screenToWorld(e.clientX, e.clientY)
   hoveredArrow = null
-  for (const n of nodes.value) {
+  for (let i = nodes.value.length - 1; i >= 0; i--) {
+    const n = nodes.value[i];
     const hit = arrowHit(n, mouseWorld.x, mouseWorld.y)
     if (hit) {
       hoveredArrow = hit
@@ -3740,10 +3747,17 @@ const onMouseUp = e => {
   // 1. HANDLE CONNECTION DROPPING
   if (outputDragging) {
     const w = screenToWorld(e.clientX, e.clientY)
-    const targetNode = nodes.value.find(nd => {
-      const hit = arrowHit(nd, w.x, w.y)
-      return hit?.side === "left" && nd.id !== outputDragging.node.id
-    })
+    
+    // Iterate backwards to accurately drop onto the top-most target node
+    let targetNode = undefined;
+    for (let i = nodes.value.length - 1; i >= 0; i--) {
+      const nd = nodes.value[i];
+      const hit = arrowHit(nd, w.x, w.y);
+      if (hit?.side === "left" && nd.id !== outputDragging.node.id) {
+          targetNode = nd;
+          break;
+      }
+    }
     
     if (targetNode) {
       const cs = Canvas_Status.value.find(s => s.index === outputDragging.node.id)
@@ -4555,7 +4569,9 @@ const handleOptionNavigation = (compId, optionId) => {
     // 2. Identify Target Node
     const nextNodeId = (optStatus && optStatus.next != null) ? optStatus.next : null;
     
-    if (!nextNodeId) {
+    // FIX: Check explicitly for null/undefined instead of using `!nextNodeId`
+    // because the first node generated has an ID of 0!
+    if (nextNodeId === null || nextNodeId === undefined) {
         exitPreview(); 
         return;
     }
