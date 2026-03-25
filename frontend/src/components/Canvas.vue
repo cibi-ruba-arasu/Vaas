@@ -5303,45 +5303,108 @@ const onPreviewWheel = (e) => {
 
                     <div class="scene-details-content">
                         <div class="component-preview">
-                        <img v-if="activeComponent.type === 'image'" :src="activeComponent.url" alt="Preview" />
-                        <div v-else-if="activeComponent.type === 'text'" style="color:white; font-size: 24px; text-align: center;">T</div>
-                        <video 
-                            v-else-if="activeComponent.type === 'video'" 
-                            :src="activeComponent.url" 
-                            style="max-width: 100%; max-height: 100%;"
-                            controls
-                        ></video>
-                        
-                        <div v-else-if="activeComponent.type === 'input'" 
-                             :style="{ width: '300px', height: '60px', border: '1px dashed #a855f7', backgroundColor: 'rgba(59, 130, 246, 0.1)', display: 'flex', alignItems:'center', justifyContent: 'center', color: '#a855f7', flexDirection: 'column' }">
-                             <span>Input Box</span>
-                             <span style="font-size: 0.7rem; opacity: 0.8;">(Preview in Play Mode)</span>
-                        </div>
-                        
-                        <div v-else-if="activeComponent.type === 'variable'" 
-                             style="color:white; font-size: 20px; text-align: center; border: 1px dashed #f97316; padding: 10px;">
-                             { Variable }
-                        </div>
+                            <img v-if="activeComponent.type === 'image'" :src="activeComponent.url" alt="Preview" />
+                            <div v-else-if="activeComponent.type === 'text'" style="color:white; font-size: 24px; text-align: center;">T</div>
+                            <video 
+                                v-else-if="activeComponent.type === 'video'" 
+                                :src="activeComponent.url" 
+                                style="max-width: 100%; max-height: 100%;"
+                                controls
+                            ></video>
+                            
+                            <div v-else-if="activeComponent.type === 'input'" 
+                                 :style="{ width: '300px', height: '60px', border: '1px dashed #a855f7', backgroundColor: 'rgba(59, 130, 246, 0.1)', display: 'flex', alignItems:'center', justifyContent: 'center', color: '#a855f7', flexDirection: 'column' }">
+                                 <span>Input Box</span>
+                                 <span style="font-size: 0.7rem; opacity: 0.8;">(Preview in Play Mode)</span>
+                            </div>
+                            
+                            <div v-else-if="activeComponent.type === 'variable'" 
+                                 style="color:white; font-size: 20px; text-align: center; border: 1px dashed #f97316; padding: 10px;">
+                                 { Variable }
+                            </div>
 
-                        <div v-else-if="activeComponent.type === 'options'" 
-                            :style="{ width: '100px', height: '50px', border: '2px dashed #f87171', backgroundColor: 'rgba(31,41,55,0.5)', display: 'flex', alignItems:'center', justifyContent: 'center', color: '#f87171' }">
-                            Opt
-                        </div>
-                        <div v-else style="color:white">?</div>
+                            <div v-else-if="activeComponent.type === 'options'" 
+                                :style="{ width: '100px', height: '50px', border: '2px dashed #f87171', backgroundColor: 'rgba(31,41,55,0.5)', display: 'flex', alignItems:'center', justifyContent: 'center', color: '#f87171' }">
+                                Opt
+                            </div>
+                            <div v-else style="color:white">?</div>
                         </div>
 
                         <div class="detail-section">
-                        <label class="detail-label">Name:</label>
-                        <input 
-                            v-model="activeComponent.name" 
-                            class="detail-input"
-                            @change="updateSceneContentDisplay"
-                        />
+                            <label class="detail-label">Name:</label>
+                            <input 
+                                v-model="activeComponent.name" 
+                                class="detail-input"
+                                @change="updateSceneContentDisplay"
+                            />
                         </div>
-                        
+
+                        <div class="separator"></div>
+                        <div style="color: #9ca3af; font-size: 0.75rem; text-transform: uppercase; margin-bottom: 12px; font-weight: bold; letter-spacing: 1px;">Component Properties</div>
+
+                        <div v-if="activeComponent.type === 'text'">
+                            <div class="detail-section">
+                                <label class="detail-label">Content:</label>
+                                <input 
+                                v-model="activeComponent.content" 
+                                class="detail-input" 
+                                @input="updateActiveComponentPosition" 
+                                @select="handleTextSelect"
+                                />
+                                
+                                <div v-if="textSelection.text.length > 0" class="formatting-controls">
+                                <button class="format-btn" @click="applyTextStyle('bold', activeComponent.fontWeight === 'bold' ? 'normal' : 'bold')" :class="{ active: activeComponent.fontWeight === 'bold' }" title="Bold">B</button>
+                                <button class="format-btn" @click="applyTextStyle('italic')" :class="{ active: activeComponent.fontStyle === 'italic' }" title="Italic">I</button>
+                                <button class="format-btn" @click="applyTextStyle('underline')" :class="{ active: activeComponent.textDecoration === 'underline' }" title="Underline">U</button>
+                                <button class="format-btn" @click="applyTextStyle('strikethrough')" :class="{ active: activeComponent.textDecoration === 'line-through' }" title="Strikethrough">S</button>
+                                <input type="color" v-model="activeComponent.textDecorationColor" class="mini-color-input" title="Line Color" />
+                                </div>
+                            </div>
+
+                            <div class="detail-section">
+                                <label class="detail-label">Font Family:</label>
+                                <select v-model="activeComponent.fontFamily" class="detail-input" @change="updateActiveComponentPosition" style="font-family: inherit;">
+                                    <option v-for="font in googleFonts" :key="font" :value="font" :style="{ fontFamily: font }">
+                                        {{ font }}
+                                    </option>
+                                </select>
+                            </div>
+                            <div class="detail-section">
+                                <label class="detail-label">Font Size:</label>
+                                <input type="number" v-model.number="activeComponent.fontSize" class="detail-input" @input="updateActiveComponentPosition" />
+                            </div>
+                            <div class="detail-section">
+                                <label class="detail-label">Text Color:</label>
+                                <div class="color-picker-container">
+                                <input type="color" v-model="activeComponent.color" class="color-input" @input="updateActiveComponentPosition" />
+                                <div class="color-preview" :style="{ backgroundColor: activeComponent.color }"></div>
+                                </div>
+                            </div>
+                            <div class="detail-section">
+                                <label class="detail-label">Background Color:</label>
+                                <div class="color-picker-container">
+                                <input type="color" v-model="activeComponent.backgroundColor" class="color-input" @input="updateActiveComponentPosition" />
+                                <div class="color-preview" :style="{ backgroundColor: activeComponent.backgroundColor }"></div>
+                                </div>
+                            </div>
+                            <div class="detail-section">
+                                <label class="detail-label">Border Color:</label>
+                                <div class="color-picker-container">
+                                <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="updateActiveComponentPosition" />
+                                <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
+                                </div>
+                            </div>
+                            <div class="detail-section">
+                                <label class="detail-label">Border Width:</label>
+                                <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="updateActiveComponentPosition" />
+                            </div>
+                            <div class="detail-section">
+                                <label class="detail-label">Round Corners:</label>
+                                <input type="range" v-model.number="activeComponent.borderRadius" min="0" max="50" class="range-input" @input="updateActiveComponentPosition" />
+                            </div>
+                        </div>
+
                         <div v-if="activeComponent.type === 'variable'">
-                            <div class="separator"></div>
-                            
                             <div class="detail-section">
                                 <label class="detail-label" style="color: #f97316;">Variable Source</label>
                                 <select v-model="activeComponent.variableId" class="detail-input">
@@ -5404,8 +5467,6 @@ const onPreviewWheel = (e) => {
                         </div>
 
                         <div v-if="activeComponent.type === 'input'">
-                            <div class="separator"></div>
-                            
                             <div class="detail-section">
                                 <label class="detail-label" style="color: #a855f7;">Variable Assignment</label>
                                 <select v-model="activeComponent.targetVariableId" class="detail-input">
@@ -5534,46 +5595,303 @@ const onPreviewWheel = (e) => {
                                 </div>
                             </div>
                         </div>
-                        <div class="detail-section">
-                        <label class="detail-label">Entrance Animation:</label>
-                        <select v-model="activeComponent.animationType" class="detail-input">
-                            <option value="none">None</option>
-                            <option value="fade">Fade In</option>
-                            <option value="scale">Zoom In</option>
-                            <option value="slide">Slide In (Left)</option>
-                            <option v-if="activeComponent.type === 'text'" value="typewriter">Typewriter</option>
-                        </select>
+
+                        <div v-if="activeComponent.type === 'video'">
+                            <div class="detail-section">
+                                <div class="checkbox-row">
+                                    <label class="detail-label" style="margin-bottom:0;">Loop:</label>
+                                    <input type="checkbox" v-model="activeComponent.isLoop" @change="updateVideoProperties" />
+                                </div>
+                            </div>
+                            <div class="detail-section">
+                                <div class="checkbox-row">
+                                    <label class="detail-label" style="margin-bottom:0;">Mute:</label>
+                                    <input type="checkbox" v-model="activeComponent.isMuted" @change="updateVideoProperties" />
+                                </div>
+                            </div>
+                            
+                            <div class="detail-section">
+                                <label class="detail-label">Background Music Volume:</label>
+                                <div class="input-row">
+                                    <input 
+                                        type="range" 
+                                        v-model.number="activeComponent.bgMusicVolume" 
+                                        min="0" max="1" step="0.05"
+                                        class="range-input"
+                                    />
+                                    <span style="color: #00ff88; font-family: monospace; width: 40px; text-align:right;">
+                                        {{ Math.round((activeComponent.bgMusicVolume || 0.2) * 100) }}%
+                                    </span>
+                                </div>
+                                <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; font-style: italic;">
+                                    Music volume when this video plays.
+                                </div>
+                            </div>
                         </div>
 
-                        <div class="detail-section" v-if="activeComponent.animationType && activeComponent.animationType !== 'none'">
-                        <label class="detail-label">Animation Duration (sec):</label>
-                        <div class="input-row">
-                            <input 
-                            type="range" 
-                            v-model.number="activeComponent.animationDuration" 
-                            min="0.1" max="10" step="0.1"
-                            class="range-input" 
-                            />
-                            <input 
-                            type="number" 
-                            v-model.number="activeComponent.animationDuration" 
-                            class="number-input" 
-                            min="0.1" max="10" step="0.1"
-                            />
+                        <div v-if="activeComponent.type === 'options'" class="options-editor-panel">
+                            <div class="detail-section" style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; margin-bottom: 16px;">
+                                <label class="detail-label" style="color:#00ff88; margin-bottom: 12px;">Container Styles</label>
+                                
+                                <div class="detail-section">
+                                <label class="detail-label">Box Color & Opacity:</label>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                    <input type="color" v-model="activeComponent.boxColor" class="color-input" @input="drawComponents" />
+                                    <div class="input-row" style="flex: 1;">
+                                    <input type="range" v-model.number="activeComponent.boxOpacity" min="0" max="1" step="0.05" class="range-input" @input="drawComponents" />
+                                    <span class="audio-val-text">{{ Math.round((activeComponent.boxOpacity || 0) * 100) }}%</span>
+                                    </div>
+                                </div>
+                                </div>
+                                
+                                <div class="detail-section">
+                                <label class="detail-label">Border Color:</label>
+                                <div class="color-picker-container">
+                                    <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="drawComponents" />
+                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
+                                </div>
+                                </div>
+
+                                <div class="detail-section">
+                                <label class="detail-label">Border Width:</label>
+                                <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="drawComponents" />
+                                </div>
+
+                                <div class="detail-section">
+                                <label class="detail-label">Border Radius:</label>
+                                <input type="number" v-model.number="activeComponent.borderRadius" class="detail-input" @input="drawComponents" />
+                                </div>
+                            </div>
+
+                            <div class="detail-section">
+                                <div class="scene-panel-header" style="margin-bottom: 12px; border-bottom: 0; padding: 0;">
+                                <span class="detail-label" style="font-size: 1rem;">Options List</span>
+                                <button class="add-content-btn" @click="addOptionToComponent" style="padding: 4px 8px;">+ Add Option</button>
+                                </div>
+                                
+                                <div class="options-list-container">
+                                <div v-for="(opt, index) in activeComponent.optionsList" :key="opt.id" class="option-list-item-wrapper">
+                                    <div class="option-list-item">
+                                    <input v-model="opt.text" class="detail-input" @input="drawComponents" />
+                                    <button class="remove-image-btn" @click="removeOptionFromComponent(index)">🗑️</button>
+                                    </div>
+                                    <div style="font-size: 0.75rem; color: #00ff88; margin-top: 4px; padding-left: 4px; font-style: italic;">
+                                    Connected to: {{ getConnectedNodeName(opt.id) }}
+                                    </div>
+                                </div>
+                                <div v-if="activeComponent.optionsList.length === 0" style="text-align:center; color: #6b7280; font-style:italic; padding: 10px;">
+                                    No options.
+                                </div>
+                                </div>
+                            </div>
+
+                            <div class="detail-section">
+                                <label class="detail-label">Button Styles:</label>
+                                
+                                <div class="style-tabs">
+                                <button 
+                                    class="style-tab-btn" 
+                                    :class="{ active: activeStyleState === 'normal' }" 
+                                    @click="activeStyleState = 'normal'"
+                                >
+                                    Normal
+                                </button>
+                                <button 
+                                    class="style-tab-btn" 
+                                    :class="{ active: activeStyleState === 'hovered' }" 
+                                    @click="activeStyleState = 'hovered'"
+                                >
+                                    Hovered
+                                </button>
+                                <button 
+                                    class="style-tab-btn" 
+                                    :class="{ active: activeStyleState === 'clicked' }" 
+                                    @click="activeStyleState = 'clicked'"
+                                >
+                                    Clicked
+                                </button>
+                                </div>
+
+                                <div class="style-editor-box">
+                                <div class="detail-section">
+                                    <label class="detail-label">Background Color:</label>
+                                    <div class="color-picker-container">
+                                    <input type="color" v-model="activeComponent.styles[activeStyleState].backgroundColor" class="color-input" @input="drawComponents" />
+                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].backgroundColor }"></div>
+                                    </div>
+                                </div>
+                                
+                                <div class="detail-section">
+                                    <label class="detail-label">Text Color:</label>
+                                    <div class="color-picker-container">
+                                    <input type="color" v-model="activeComponent.styles[activeStyleState].color" class="color-input" @input="drawComponents" />
+                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].color }"></div>
+                                    </div>
+                                </div>
+                                
+                                <div class="detail-section">
+                                    <label class="detail-label">Border Color:</label>
+                                    <div class="color-picker-container">
+                                    <input type="color" v-model="activeComponent.styles[activeStyleState].borderColor" class="color-input" @input="drawComponents" />
+                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].borderColor }"></div>
+                                    </div>
+                                </div>
+
+                                <div class="detail-section">
+                                    <label class="detail-label">Border Width:</label>
+                                    <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderWidth" class="detail-input" @input="drawComponents" />
+                                </div>
+
+                                <div class="detail-section">
+                                    <label class="detail-label">Border Radius:</label>
+                                    <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderRadius" class="detail-input" @input="drawComponents" />
+                                </div>
+                                <div class="detail-section">
+                                    <label class="detail-label">Font Family:</label>
+                                    <select v-model="activeComponent.styles[activeStyleState].fontFamily" class="detail-input" @change="drawComponents" style="font-family: inherit;">
+                                        <option v-for="font in googleFonts" :key="font" :value="font" :style="{ fontFamily: font }">
+                                            {{ font }}
+                                        </option>
+                                    </select>
+                                </div>
+                                <div class="detail-section">
+                                    <label class="detail-label">Font Size:</label>
+                                    <input type="number" v-model.number="activeComponent.styles[activeStyleState].fontSize" class="detail-input" @input="drawComponents" />
+                                </div>
+                                </div>
+                            </div>
                         </div>
+                        <div class="detail-section" v-if="activeComponent.type === 'options'" style="background: rgba(234, 179, 8, 0.1); padding: 10px; border-radius: 6px; border: 1px solid rgba(234, 179, 8, 0.3); margin-bottom: 16px;">
+                            <div class="checkbox-row">
+                                <label class="detail-label"  style="color: #eab308; margin-bottom:0; flex:1;">⏱ Enable Time Limit</label>
+                                <input type="checkbox" v-model="activeComponent.hasTimeLimit" @change="drawComponents" />
+                            </div>
+
+                            <div v-if="activeComponent.hasTimeLimit" style="margin-top: 12px;">
+                                <div class="detail-section">
+                                    <label class="detail-label">Duration (Seconds):</label>
+                                    <div class="input-row">
+                                        <input type="range" v-model.number="activeComponent.timeLimitDuration" min="1" max="10" step="0.5" class="range-input" />
+                                        <span class="audio-val-text">{{ activeComponent.timeLimitDuration }}s</span>
+                                    </div>
+                                </div>
+
+                                <div class="detail-section">
+                                    <label class="detail-label">On Timeout:</label>
+                                    <div class="toggle-buttons" style="width: 100%; margin-bottom: 8px;">
+                                        <button 
+                                            :class="{ active: activeComponent.timeoutAction === 'random' }" 
+                                            @click="activeComponent.timeoutAction = 'random'"
+                                            style="flex: 1;"
+                                        >
+                                            🎲 Random
+                                        </button>
+                                        <button 
+                                            :class="{ active: activeComponent.timeoutAction === 'manual' }" 
+                                            @click="activeComponent.timeoutAction = 'manual'"
+                                            style="flex: 1;"
+                                        >
+                                            🎯 Specific
+                                        </button>
+                                    </div>
+                                    
+                                    <div v-if="activeComponent.timeoutAction === 'manual'">
+                                         <select v-model="activeComponent.timeoutTargetId" class="detail-input">
+                                            <option :value="null" disabled>Select Option to Choose</option>
+                                            <option v-for="opt in activeComponent.optionsList" :key="opt.id" :value="opt.id">
+                                                {{ opt.text }}
+                                            </option>
+                                         </select>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="separator"></div>
+                        <div style="color: #9ca3af; font-size: 0.75rem; text-transform: uppercase; margin-bottom: 12px; font-weight: bold; letter-spacing: 1px;">Layout & Transform</div>
 
-                            <div class="detail-section">
-                                <label class="detail-label">Exit Animation:</label>
-                                <select v-model="activeComponent.exitAnimationType" class="detail-input">
-                                    <option value="fade">Fade Out</option>
-                                    <option value="none">None</option>
-                                </select>
+                        <div class="detail-section">
+                            <label class="detail-label">Position X:</label>
+                            <div class="input-row">
+                                <input type="range" v-model.number="activeComponent.x" :min="GRAPH_MIN_X" :max="GRAPH_MAX_X" class="range-input" @input="updateActiveComponentPosition" />
+                                <input type="number" v-model.number="activeComponent.x" class="number-input" @input="updateActiveComponentPosition" />
                             </div>
+                        </div>
+                        <div class="detail-section">
+                            <label class="detail-label">Position Y:</label>
+                            <div class="input-row">
+                                <input type="range" v-model.number="activeComponent.y" :min="GRAPH_MIN_Y" :max="GRAPH_MAX_Y" class="range-input" @input="updateActiveComponentPosition" />
+                                <input type="number" v-model.number="activeComponent.y" class="number-input" @input="updateActiveComponentPosition" />
+                            </div>
+                        </div>
+                        
+                        <div class="detail-section">
+                            <label class="detail-label">Width (px):</label>
+                            <div class="input-row">
+                                <input type="range" v-model.number="activeComponent.width" min="10" max="800" class="range-input" @input="updateActiveComponentSize" />
+                                <input type="number" v-model.number="activeComponent.width" class="number-input" @input="updateActiveComponentSize" />
+                            </div>
+                        </div>
+                        
+                        <div class="detail-section">
+                            <label class="detail-label">Height (px):</label>
+                            <div class="input-row">
+                                <input type="range" v-model.number="activeComponent.height" min="10" max="600" class="range-input" @input="updateActiveComponentSize" />
+                                <input type="number" v-model.number="activeComponent.height" class="number-input" @input="updateActiveComponentSize" />
+                            </div>
+                        </div>
 
-                            <div class="detail-section" v-if="activeComponent.exitAnimationType && activeComponent.exitAnimationType !== 'none'">
+                        <div v-if="activeComponent.type !== 'options'">
+                            <div class="detail-section">
+                                <label class="detail-label">Rotation (deg):</label>
+                                <div class="input-row">
+                                <input type="range" v-model.number="activeComponent.rotation" min="0" max="360" class="range-input" @input="updateActiveComponentPosition" />
+                                <input type="number" v-model.number="activeComponent.rotation" class="number-input" @input="updateActiveComponentPosition" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="separator"></div>
+                        <div style="color: #9ca3af; font-size: 0.75rem; text-transform: uppercase; margin-bottom: 12px; font-weight: bold; letter-spacing: 1px;">Animations</div>
+
+                        <div class="detail-section">
+                            <label class="detail-label">Entrance Animation:</label>
+                            <select v-model="activeComponent.animationType" class="detail-input">
+                                <option value="none">None</option>
+                                <option value="fade">Fade In</option>
+                                <option value="scale">Zoom In</option>
+                                <option value="slide">Slide In (Left)</option>
+                                <option v-if="activeComponent.type === 'text'" value="typewriter">Typewriter</option>
+                            </select>
+                        </div>
+
+                        <div class="detail-section" v-if="activeComponent.animationType && activeComponent.animationType !== 'none'">
+                            <label class="detail-label">Entrance Duration (sec):</label>
+                            <div class="input-row">
+                                <input 
+                                type="range" 
+                                v-model.number="activeComponent.animationDuration" 
+                                min="0.1" max="10" step="0.1"
+                                class="range-input" 
+                                />
+                                <input 
+                                type="number" 
+                                v-model.number="activeComponent.animationDuration" 
+                                class="number-input" 
+                                min="0.1" max="10" step="0.1"
+                                />
+                            </div>
+                        </div>
+
+                        <div class="detail-section">
+                            <label class="detail-label">Exit Animation:</label>
+                            <select v-model="activeComponent.exitAnimationType" class="detail-input">
+                                <option value="fade">Fade Out</option>
+                                <option value="none">None</option>
+                            </select>
+                        </div>
+
+                        <div class="detail-section" v-if="activeComponent.exitAnimationType && activeComponent.exitAnimationType !== 'none'">
                             <label class="detail-label">Exit Duration (sec):</label>
                             <div class="input-row">
                                 <input 
@@ -5592,352 +5910,37 @@ const onPreviewWheel = (e) => {
                             <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; font-style: italic;">
                                 Plays when scene ends or option selected.
                             </div>
-                            </div>
-                            <div class="separator"></div>
-                        <div class="detail-section">
-                        <div class="checkbox-row" style="margin-bottom: 8px;">
-                            <label class="detail-label" style="margin-bottom:0; flex: 1;">Render on click:</label>
-                            <input type="checkbox" :checked="activeComponent.renderWhileClicked" @change="updateRenderMode('click')" />
-                        </div>
-                        <div style="font-size: 0.75rem; color: #9ca3af; margin-bottom: 8px; margin-left: 20px;">
-                            User must click to show this component.
-                        </div>
-
-                        <div class="checkbox-row">
-                            <label class="detail-label" style="margin-bottom:0; flex: 1;">Automatic rendering:</label>
-                            <input type="checkbox" :checked="activeComponent.autoRender" @change="updateRenderMode('auto')" />
-                        </div>
-                        <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; margin-left: 20px;">
-                            Renders immediately after the previous component finishes.
-                        </div>
-                        </div>
-
-                        <div class="detail-section">
-                        <label class="detail-label">Layering:</label>
-                        <div class="layering-controls">
-                            <button class="layer-btn" @click="changeLayer('top')" title="Bring to Front">⇈</button>
-                            <button class="layer-btn" @click="changeLayer('up')" title="Bring Forward">↑</button>
-                            <button class="layer-btn" @click="changeLayer('down')" title="Send Backward">↓</button>
-                            <button class="layer-btn" @click="changeLayer('bottom')" title="Send to Back">⇊</button>
-                        </div>
-                        </div>
-                        
-                        <div class="separator"></div>
-
-                        <div v-if="activeComponent.type === 'options'" class="options-editor-panel">
-                        
-                        <div class="detail-section" style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; margin-bottom: 16px;">
-                            <label class="detail-label" style="color:#00ff88; margin-bottom: 12px;">Container Styles</label>
-                            
-                            <div class="detail-section">
-                            <label class="detail-label">Box Color & Opacity:</label>
-                            <div style="display: flex; gap: 8px; align-items: center;">
-                                <input type="color" v-model="activeComponent.boxColor" class="color-input" @input="drawComponents" />
-                                <div class="input-row" style="flex: 1;">
-                                <input type="range" v-model.number="activeComponent.boxOpacity" min="0" max="1" step="0.05" class="range-input" @input="drawComponents" />
-                                <span class="audio-val-text">{{ Math.round((activeComponent.boxOpacity || 0) * 100) }}%</span>
-                                </div>
-                            </div>
-                            </div>
-                            
-                            <div class="detail-section">
-                            <label class="detail-label">Border Color:</label>
-                            <div class="color-picker-container">
-                                <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="drawComponents" />
-                                <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
-                            </div>
-                            </div>
-
-                            <div class="detail-section">
-                            <label class="detail-label">Border Width:</label>
-                            <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="drawComponents" />
-                            </div>
-
-                            <div class="detail-section">
-                            <label class="detail-label">Border Radius:</label>
-                            <input type="number" v-model.number="activeComponent.borderRadius" class="detail-input" @input="drawComponents" />
-                            </div>
-                        </div>
-
-                        <div class="detail-section">
-                            <div class="scene-panel-header" style="margin-bottom: 12px; border-bottom: 0; padding: 0;">
-                            <span class="detail-label" style="font-size: 1rem;">Options List</span>
-                            <button class="add-content-btn" @click="addOptionToComponent" style="padding: 4px 8px;">+ Add Option</button>
-                            </div>
-                            
-                            <div class="options-list-container">
-                            <div v-for="(opt, index) in activeComponent.optionsList" :key="opt.id" class="option-list-item-wrapper">
-                                <div class="option-list-item">
-                                <input v-model="opt.text" class="detail-input" @input="drawComponents" />
-                                <button class="remove-image-btn" @click="removeOptionFromComponent(index)">🗑️</button>
-                                </div>
-                                <div style="font-size: 0.75rem; color: #00ff88; margin-top: 4px; padding-left: 4px; font-style: italic;">
-                                Connected to: {{ getConnectedNodeName(opt.id) }}
-                                </div>
-                            </div>
-                            <div v-if="activeComponent.optionsList.length === 0" style="text-align:center; color: #6b7280; font-style:italic; padding: 10px;">
-                                No options.
-                            </div>
-                            </div>
-                        </div>
-
-                        <div class="detail-section">
-                            <label class="detail-label">Button Styles:</label>
-                            
-                            <div class="style-tabs">
-                            <button 
-                                class="style-tab-btn" 
-                                :class="{ active: activeStyleState === 'normal' }" 
-                                @click="activeStyleState = 'normal'"
-                            >
-                                Normal
-                            </button>
-                            <button 
-                                class="style-tab-btn" 
-                                :class="{ active: activeStyleState === 'hovered' }" 
-                                @click="activeStyleState = 'hovered'"
-                            >
-                                Hovered
-                            </button>
-                            <button 
-                                class="style-tab-btn" 
-                                :class="{ active: activeStyleState === 'clicked' }" 
-                                @click="activeStyleState = 'clicked'"
-                            >
-                                Clicked
-                            </button>
-                            </div>
-
-                            <div class="style-editor-box">
-                            <div class="detail-section">
-                                <label class="detail-label">Background Color:</label>
-                                <div class="color-picker-container">
-                                <input type="color" v-model="activeComponent.styles[activeStyleState].backgroundColor" class="color-input" @input="drawComponents" />
-                                <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].backgroundColor }"></div>
-                                </div>
-                            </div>
-                            
-                            <div class="detail-section">
-                                <label class="detail-label">Text Color:</label>
-                                <div class="color-picker-container">
-                                <input type="color" v-model="activeComponent.styles[activeStyleState].color" class="color-input" @input="drawComponents" />
-                                <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].color }"></div>
-                                </div>
-                            </div>
-                            
-                            <div class="detail-section">
-                                <label class="detail-label">Border Color:</label>
-                                <div class="color-picker-container">
-                                <input type="color" v-model="activeComponent.styles[activeStyleState].borderColor" class="color-input" @input="drawComponents" />
-                                <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].borderColor }"></div>
-                                </div>
-                            </div>
-
-                            <div class="detail-section">
-                                <label class="detail-label">Border Width:</label>
-                                <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderWidth" class="detail-input" @input="drawComponents" />
-                            </div>
-
-                            <div class="detail-section">
-                                <label class="detail-label">Border Radius:</label>
-                                <input type="number" v-model.number="activeComponent.styles[activeStyleState].borderRadius" class="detail-input" @input="drawComponents" />
-                            </div>
-                            <div class="detail-section">
-                                <label class="detail-label">Font Family:</label>
-                                <select v-model="activeComponent.styles[activeStyleState].fontFamily" class="detail-input" @change="drawComponents" style="font-family: inherit;">
-                                    <option v-for="font in googleFonts" :key="font" :value="font" :style="{ fontFamily: font }">
-                                        {{ font }}
-                                    </option>
-                                </select>
-                            </div>
-                            <div class="detail-section">
-                                <label class="detail-label">Font Size:</label>
-                                <input type="number" v-model.number="activeComponent.styles[activeStyleState].fontSize" class="detail-input" @input="drawComponents" />
-                            </div>
-                            </div>
-                        </div>
                         </div>
 
                         <div class="separator"></div>
+                        <div style="color: #9ca3af; font-size: 0.75rem; text-transform: uppercase; margin-bottom: 12px; font-weight: bold; letter-spacing: 1px;">Behavior & Layering</div>
 
                         <div class="detail-section">
-                        <label class="detail-label">Position X:</label>
-                        <div class="input-row">
-                            <input type="range" v-model.number="activeComponent.x" :min="GRAPH_MIN_X" :max="GRAPH_MAX_X" class="range-input" @input="updateActiveComponentPosition" />
-                            <input type="number" v-model.number="activeComponent.x" class="number-input" @input="updateActiveComponentPosition" />
-                        </div>
-                        </div>
-                        <div class="detail-section">
-                        <label class="detail-label">Position Y:</label>
-                        <div class="input-row">
-                            <input type="range" v-model.number="activeComponent.y" :min="GRAPH_MIN_Y" :max="GRAPH_MAX_Y" class="range-input" @input="updateActiveComponentPosition" />
-                            <input type="number" v-model.number="activeComponent.y" class="number-input" @input="updateActiveComponentPosition" />
-                        </div>
-                        </div>
-                        
-                        <div class="detail-section">
-                        <label class="detail-label">Width (px):</label>
-                        <div class="input-row">
-                            <input type="range" v-model.number="activeComponent.width" min="10" max="800" class="range-input" @input="updateActiveComponentSize" />
-                            <input type="number" v-model.number="activeComponent.width" class="number-input" @input="updateActiveComponentSize" />
-                        </div>
-                        </div>
-                        
-                        <div class="detail-section">
-                        <label class="detail-label">Height (px):</label>
-                        <div class="input-row">
-                            <input type="range" v-model.number="activeComponent.height" min="10" max="600" class="range-input" @input="updateActiveComponentSize" />
-                            <input type="number" v-model.number="activeComponent.height" class="number-input" @input="updateActiveComponentSize" />
-                        </div>
-                        </div>
-
-                        <div v-if="activeComponent.type !== 'options'">
-                        <div class="detail-section">
-                            <label class="detail-label">Rotation (deg):</label>
-                            <div class="input-row">
-                            <input type="range" v-model.number="activeComponent.rotation" min="0" max="360" class="range-input" @input="updateActiveComponentPosition" />
-                            <input type="number" v-model.number="activeComponent.rotation" class="number-input" @input="updateActiveComponentPosition" />
+                            <div class="checkbox-row" style="margin-bottom: 8px;">
+                                <label class="detail-label" style="margin-bottom:0; flex: 1;">Render on click:</label>
+                                <input type="checkbox" :checked="activeComponent.renderWhileClicked" @change="updateRenderMode('click')" />
                             </div>
-                        </div>
-                        </div>
-                        <div class="detail-section" v-if="activeComponent.type === 'options'" style="background: rgba(234, 179, 8, 0.1); padding: 10px; border-radius: 6px; border: 1px solid rgba(234, 179, 8, 0.3); margin-bottom: 16px;">
-    <div class="checkbox-row">
-        <label class="detail-label"  style="color: #eab308; margin-bottom:0; flex:1;">⏱ Enable Time Limit</label>
-        <input type="checkbox" v-model="activeComponent.hasTimeLimit" @change="drawComponents" />
-    </div>
+                            <div style="font-size: 0.75rem; color: #9ca3af; margin-bottom: 8px; margin-left: 20px;">
+                                User must click to show this component.
+                            </div>
 
-    <div v-if="activeComponent.hasTimeLimit" style="margin-top: 12px;">
-        <div class="detail-section">
-            <label class="detail-label">Duration (Seconds):</label>
-            <div class="input-row">
-                <input type="range" v-model.number="activeComponent.timeLimitDuration" min="1" max="10" step="0.5" class="range-input" />
-                <span class="audio-val-text">{{ activeComponent.timeLimitDuration }}s</span>
-            </div>
-        </div>
-
-        <div class="detail-section">
-            <label class="detail-label">On Timeout:</label>
-            <div class="toggle-buttons" style="width: 100%; margin-bottom: 8px;">
-                <button 
-                    :class="{ active: activeComponent.timeoutAction === 'random' }" 
-                    @click="activeComponent.timeoutAction = 'random'"
-                    style="flex: 1;"
-                >
-                    🎲 Random
-                </button>
-                <button 
-                    :class="{ active: activeComponent.timeoutAction === 'manual' }" 
-                    @click="activeComponent.timeoutAction = 'manual'"
-                    style="flex: 1;"
-                >
-                    🎯 Specific
-                </button>
-            </div>
-            
-            <div v-if="activeComponent.timeoutAction === 'manual'">
-                 <select v-model="activeComponent.timeoutTargetId" class="detail-input">
-                    <option :value="null" disabled>Select Option to Choose</option>
-                    <option v-for="opt in activeComponent.optionsList" :key="opt.id" :value="opt.id">
-                        {{ opt.text }}
-                    </option>
-                 </select>
-            </div>
-        </div>
-    </div>
-</div>
-                        <div v-if="activeComponent.type === 'video'">
-                        <div class="detail-section">
                             <div class="checkbox-row">
-                                <label class="detail-label" style="margin-bottom:0;">Loop:</label>
-                                <input type="checkbox" v-model="activeComponent.isLoop" @change="updateVideoProperties" />
+                                <label class="detail-label" style="margin-bottom:0; flex: 1;">Automatic rendering:</label>
+                                <input type="checkbox" :checked="activeComponent.autoRender" @change="updateRenderMode('auto')" />
                             </div>
-                        </div>
-                        <div class="detail-section">
-                            <div class="checkbox-row">
-                                <label class="detail-label" style="margin-bottom:0;">Mute:</label>
-                                <input type="checkbox" v-model="activeComponent.isMuted" @change="updateVideoProperties" />
-                            </div>
-                        </div>
-                        
-                        <div class="detail-section">
-                            <label class="detail-label">Background Music Volume:</label>
-                            <div class="input-row">
-                                <input 
-                                    type="range" 
-                                    v-model.number="activeComponent.bgMusicVolume" 
-                                    min="0" max="1" step="0.05"
-                                    class="range-input"
-                                />
-                                <span style="color: #00ff88; font-family: monospace; width: 40px; text-align:right;">
-                                    {{ Math.round((activeComponent.bgMusicVolume || 0.2) * 100) }}%
-                                </span>
-                            </div>
-                            <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; font-style: italic;">
-                                Music volume when this video plays.
-                            </div>
-                        </div>
-                        </div>
-
-                        <div v-if="activeComponent.type === 'text'">
-                        <div class="detail-section">
-                            <label class="detail-label">Content:</label>
-                            <input 
-                            v-model="activeComponent.content" 
-                            class="detail-input" 
-                            @input="updateActiveComponentPosition" 
-                            @select="handleTextSelect"
-                            />
-                            
-                            <div v-if="textSelection.text.length > 0" class="formatting-controls">
-                            <button class="format-btn" @click="applyTextStyle('bold', activeComponent.fontWeight === 'bold' ? 'normal' : 'bold')" :class="{ active: activeComponent.fontWeight === 'bold' }" title="Bold">B</button>
-                            <button class="format-btn" @click="applyTextStyle('italic')" :class="{ active: activeComponent.fontStyle === 'italic' }" title="Italic">I</button>
-                            <button class="format-btn" @click="applyTextStyle('underline')" :class="{ active: activeComponent.textDecoration === 'underline' }" title="Underline">U</button>
-                            <button class="format-btn" @click="applyTextStyle('strikethrough')" :class="{ active: activeComponent.textDecoration === 'line-through' }" title="Strikethrough">S</button>
-                            <input type="color" v-model="activeComponent.textDecorationColor" class="mini-color-input" title="Line Color" />
+                            <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px; margin-left: 20px;">
+                                Renders immediately after the previous component finishes.
                             </div>
                         </div>
 
                         <div class="detail-section">
-                            <label class="detail-label">Font Family:</label>
-                            <select v-model="activeComponent.fontFamily" class="detail-input" @change="updateActiveComponentPosition" style="font-family: inherit;">
-                                <option v-for="font in googleFonts" :key="font" :value="font" :style="{ fontFamily: font }">
-                                    {{ font }}
-                                </option>
-                            </select>
-                        </div>
-                        <div class="detail-section">
-                            <label class="detail-label">Font Size:</label>
-                            <input type="number" v-model.number="activeComponent.fontSize" class="detail-input" @input="updateActiveComponentPosition" />
-                        </div>
-                        <div class="detail-section">
-                            <label class="detail-label">Text Color:</label>
-                            <div class="color-picker-container">
-                            <input type="color" v-model="activeComponent.color" class="color-input" @input="updateActiveComponentPosition" />
-                            <div class="color-preview" :style="{ backgroundColor: activeComponent.color }"></div>
+                            <label class="detail-label">Layering:</label>
+                            <div class="layering-controls">
+                                <button class="layer-btn" @click="changeLayer('top')" title="Bring to Front">⇈</button>
+                                <button class="layer-btn" @click="changeLayer('up')" title="Bring Forward">↑</button>
+                                <button class="layer-btn" @click="changeLayer('down')" title="Send Backward">↓</button>
+                                <button class="layer-btn" @click="changeLayer('bottom')" title="Send to Back">⇊</button>
                             </div>
-                        </div>
-                        <div class="detail-section">
-                            <label class="detail-label">Background Color:</label>
-                            <div class="color-picker-container">
-                            <input type="color" v-model="activeComponent.backgroundColor" class="color-input" @input="updateActiveComponentPosition" />
-                            <div class="color-preview" :style="{ backgroundColor: activeComponent.backgroundColor }"></div>
-                            </div>
-                        </div>
-                        <div class="detail-section">
-                            <label class="detail-label">Border Color:</label>
-                            <div class="color-picker-container">
-                            <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="updateActiveComponentPosition" />
-                            <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
-                            </div>
-                        </div>
-                        <div class="detail-section">
-                            <label class="detail-label">Border Width:</label>
-                            <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="updateActiveComponentPosition" />
-                        </div>
-                        <div class="detail-section">
-                            <label class="detail-label">Round Corners:</label>
-                            <input type="range" v-model.number="activeComponent.borderRadius" min="0" max="50" class="range-input" @input="updateActiveComponentPosition" />
-                        </div>
                         </div>
 
                     </div>
