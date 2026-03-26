@@ -490,6 +490,23 @@ const fetchUserAge = async () => {
   } catch(e) {}
 }
 
+const showWeaverPrompt = ref(false)
+const showDeviceWarning = ref(false)
+
+const handleCreateClick = () => {
+  const isTouchDevice = window.matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0;
+  const isSmallScreen = window.innerWidth <= 1024;
+
+  if (isTouchDevice && isSmallScreen) {
+    // Show the warning instead of routing
+    showDeviceWarning.value = true;
+    return;
+  }
+  
+  // If desktop, proceed to the creation page
+  router.push('/createg');
+}
+
 onMounted(async () => {
   // Star generation and mouse tracking init
   window.addEventListener('mousemove', handleMouseMove)
@@ -514,7 +531,13 @@ onMounted(async () => {
     i = (i + 1) % messages.length
     currentMessage.value = messages[i]
   }, 6000)
-
+  setTimeout(() => {
+    showWeaverPrompt.value = true
+    // Auto-hide after 8 seconds
+    setTimeout(() => {
+      showWeaverPrompt.value = false
+    }, 8000)
+  }, 1000)
   fetchExploreWeaves()
   window.addEventListener('click', closeMenus);
 })
@@ -734,12 +757,22 @@ onUnmounted(() => {
           </Transition>
         </div>
 
-        <button class="create-btn" @click="router.push('/createg')" title="Weave New Thread">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-        </button>
+        <div class="create-btn-wrapper">
+          <button class="create-btn" @click="handleCreateClick" title="Weave New Thread">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+          
+          <Transition name="fade-slide">
+            <div v-if="showWeaverPrompt" class="weaver-prompt">
+              Try Weaver for free! ✨
+              <button class="close-prompt" @click.stop="showWeaverPrompt = false">×</button>
+              <div class="prompt-arrow"></div>
+            </div>
+          </Transition>
+        </div>
 
       </div>
     </nav>
@@ -945,6 +978,30 @@ onUnmounted(() => {
           <div class="auth-buttons">
             <button class="auth-btn login-link" @click="router.push('/login')">Log In</button>
             <button class="auth-btn register-main" @click="router.push('/register')">Register</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+    <Transition name="fade">
+      <div v-if="showDeviceWarning" class="modal-overlay" @click.self="showDeviceWarning = false">
+        <div class="auth-modal glass-panel">
+          <button class="close-modal" @click="showDeviceWarning = false">✕</button>
+          
+          <div class="modal-art">
+             <svg viewBox="0 0 24 24" fill="none" stroke="var(--aura)" stroke-width="1.5">
+              <rect x="6" y="3" width="12" height="18" rx="6" />
+              <line x1="12" y1="3" x2="12" y2="10" />
+              <line x1="6" y1="10" x2="18" y2="10" />
+             </svg>
+          </div>
+
+          <h2 class="modal-title">Desktop Required 🖱️</h2>
+          <p class="modal-desc">
+            Weaver requires precise weaving! Please use a PC, laptop, or a device with a mouse to try the free creation tools.
+          </p>
+          
+          <div class="auth-buttons">
+            <button class="auth-btn register-main" @click="showDeviceWarning = false">I Understand</button>
           </div>
         </div>
       </div>
@@ -1848,6 +1905,69 @@ onUnmounted(() => {
 .page-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.create-btn-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.weaver-prompt {
+  position: absolute;
+  top: 135%; /* Positions it right below the button */
+  right: 0;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid var(--aura);
+  color: #fff;
+  padding: 8px 32px 8px 14px;
+  border-radius: 8px;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.8), 0 0 15px rgba(var(--aura), 0.2);
+  z-index: 1000;
+  backdrop-filter: blur(10px);
+  animation: gentle-bounce 2s infinite ease-in-out;
+}
+
+.prompt-arrow {
+  position: absolute;
+  top: -6px;
+  right: 18px; /* Aligns with the center of your circular button */
+  width: 10px;
+  height: 10px;
+  background: rgba(15, 23, 42, 0.95);
+  border-top: 1px solid var(--aura);
+  border-left: 1px solid var(--aura);
+  transform: rotate(45deg);
+}
+
+.close-prompt {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 1.2rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: color 0.2s;
+}
+
+.close-prompt:hover {
+  color: #fff;
+}
+
+@keyframes gentle-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
 }
 
 .page-indicator {
