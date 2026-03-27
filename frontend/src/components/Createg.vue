@@ -71,6 +71,11 @@ const googleFonts = [
     "Monoton", "Audiowide", "Black Ops One", "UnifrakturMaguntia", "Crete Round"
 ];
 
+// Scene Fade State variables
+const sceneEntranceStartTime = ref(0)
+const sceneExitTotalDuration = ref(0)
+
+
 /* ================= GIFT NODE STATE EXTENSIONS ================= */
 const giftRewardName = ref("") // New: Name of the reward
 const giftRewardFont = ref("Roboto")
@@ -2783,7 +2788,11 @@ const renderComponent = (ctx, comp, screenPos, animationOverride = null) => {
         // Setup Exit Animation Variables
         const isExiting = animationOverride?.isExiting || false;
         const exitProgress = animationOverride?.exitProgress || 0;
-        
+        const exitType = comp.exitAnimationType || 'fade';
+        if (isExiting && exitType === 'none') {
+            ctx.translate(-screenPos.x, -screenPos.y);
+            return; 
+        }
         // Box Opacity
         const boxBaseOpacity = (comp.boxOpacity !== undefined) ? comp.boxOpacity : 0.8;
         const currentBoxOpacity = isExiting ? (boxBaseOpacity * (1 - exitProgress)) : boxBaseOpacity;
@@ -3935,6 +3944,8 @@ const startPreview = () => {
     currentPreviewComponentIndex.value = -1 
     componentStartTime.value = 0; 
 
+    sceneEntranceStartTime.value = Date.now();
+
     if (sequenceAudio.value && sequenceAudio.value.url) {
         previewAudioElement.value = new Audio(sequenceAudio.value.url)
         previewAudioElement.value.volume = sequenceAudio.value.volume || 1.0 
@@ -3958,7 +3969,7 @@ const startPreview = () => {
         const firstScene = nodeScenes.value[0]
         if (firstScene && firstScene.components && firstScene.components.length > 0) {
             if (firstScene.components[0].autoRender) {
-                advancePreview()
+                setTimeout(() => advancePreview(), 500) // WAIT 500MS FOR SCENE TO FADE IN
             }
         }
     })
@@ -4131,15 +4142,17 @@ const advancePreview = () => {
             // Transition Animation Wait
             let maxExitDuration = 0;
             components.forEach(c => {
-                if (c.exitAnimationDuration && c.exitAnimationDuration > maxExitDuration) {
-                    maxExitDuration = c.exitAnimationDuration;
+                if (c.exitAnimationType !== 'none') {
+                    if (c.exitAnimationDuration && c.exitAnimationDuration > maxExitDuration) {
+                        maxExitDuration = c.exitAnimationDuration;
+                    }
                 }
             });
-            if (maxExitDuration === 0) maxExitDuration = 0.5;
+            if (maxExitDuration < 0.5) maxExitDuration = 0.5; // FORCE SCENE FADE TIME
 
             isSceneExiting.value = true;
             sceneExitStartTime.value = Date.now();
-
+            sceneExitTotalDuration.value = maxExitDuration;
             setTimeout(() => {
                 stopVideosInScene(currentScene);
                 currentPreviewSceneIndex.value++
@@ -4147,11 +4160,13 @@ const advancePreview = () => {
                 
                 isSceneExiting.value = false;
                 sceneExitStartTime.value = 0;
+                sceneExitTotalDuration.value = 0; // RESET
+                sceneEntranceStartTime.value = Date.now(); // SET NEW ENTRANCE TIME
                 
                 const nextScene = nodeScenes.value[currentPreviewSceneIndex.value]
                 if (nextScene.components && nextScene.components.length > 0) {
                      if (nextScene.components[0].autoRender) {
-                         setTimeout(() => advancePreview(), 50)
+                         setTimeout(() => advancePreview(), 500) // WAIT 500MS FOR SCENE TO FADE IN
                      }
                 }
             }, maxExitDuration * 1000);
@@ -4167,22 +4182,27 @@ const advancePreview = () => {
                  
                  if (currentStatus && currentStatus.Next !== null && currentStatus.Next !== undefined) {
                      // Calculate wait time for the exit animation of the final component
-                     let maxExitDuration = 0.5;
+                     let maxExitDuration = 0; 
                      if (components) {
                          components.forEach(c => {
-                             if (c.exitAnimationDuration && c.exitAnimationDuration > maxExitDuration) {
-                                 maxExitDuration = c.exitAnimationDuration;
+                             if (c.exitAnimationType !== 'none') {
+                                 if (c.exitAnimationDuration && c.exitAnimationDuration > maxExitDuration) {
+                                     maxExitDuration = c.exitAnimationDuration;
+                                 }
                              }
                          });
                      }
+                     if (maxExitDuration < 0.5) maxExitDuration = 0.5; // FORCE SCENE FADE TIME
                      
                      pendingNavigationTargetId.value = currentStatus.Next;
                      isSceneExiting.value = true;
                      sceneExitStartTime.value = Date.now();
-                     
+                     sceneExitTotalDuration.value = maxExitDuration; // SET TOTAL DURATION
+
                      setTimeout(() => {
                          isSceneExiting.value = false;
                          sceneExitStartTime.value = 0;
+                         sceneExitTotalDuration.value = 0; // RESET
                          const target = pendingNavigationTargetId.value;
                          pendingNavigationTargetId.value = null;
                          
@@ -4317,9 +4337,12 @@ const drawPreview = () => {
             } 
             // APPLY EXIT (Standard Components)
             else if (comp.type !== 'options') {
-                 // Standard Exit: Fade out based on progress
-                 // You can expand this with 'exitAnimationType' later
-                 ctx.globalAlpha = 1 - exitProgress;
+                 if (comp.exitAnimationType === 'none') {
+                     ctx.globalAlpha = 0; // FIX: Instantly disappear
+                 } else {
+                     // Standard Exit: Fade out based on progress
+                     ctx.globalAlpha = 1 - exitProgress;
+                 }
             }
 
             ctx.translate(screenPos.x, screenPos.y)
@@ -4338,6 +4361,31 @@ const drawPreview = () => {
             renderComponent(ctx, comp, screenPos, animationOverride)
             
             ctx.restore()
+        }
+        let overlayAlpha = 0;
+
+        // 1. Entrance Fade
+        const entranceElapsed = now - sceneEntranceStartTime.value;
+        if (entranceElapsed < 500) {
+            overlayAlpha = 1 - (entranceElapsed / 500);
+        }
+
+        // 2. Exit Fade (Fades to black over the last 500ms of the transition)
+        if (isSceneExiting.value && sceneExitTotalDuration.value > 0) {
+            const exitElapsed = now - sceneExitStartTime.value;
+            const totalExitMs = sceneExitTotalDuration.value * 1000;
+            const timeUntilEnd = totalExitMs - exitElapsed;
+            const fadeOutWindow = Math.min(500, totalExitMs); 
+
+            if (timeUntilEnd < fadeOutWindow) {
+                overlayAlpha = 1 - (timeUntilEnd / fadeOutWindow);
+            }
+        }
+
+        if (overlayAlpha > 0) {
+            if (overlayAlpha > 1) overlayAlpha = 1;
+            ctx.fillStyle = `rgba(0, 0, 0, ${overlayAlpha})`;
+            ctx.fillRect(0, 0, logicalWidth, logicalHeight);
         }
     }
     ctx.restore(); 
@@ -4362,10 +4410,13 @@ const exitPreview = () => {
     isSceneExiting.value = false
     sceneExitStartTime.value = 0
     pendingNavigationTargetId.value = null
+    
+    // NEW RESETS
+    sceneEntranceStartTime.value = 0
+    sceneExitTotalDuration.value = 0
     // ----------------------------
 
     isPreviewMode.value = false
-    // isSceneExiting.value = false; // Removed duplicate
 }
 
 const getInputType = (comp) => {
@@ -4560,19 +4611,24 @@ const handleOptionNavigation = (compId, optionId) => {
     let maxExitDuration = 0;
     
     components.forEach(c => {
-        const duration = c.exitAnimationDuration || 0.5;
-        if (duration > maxExitDuration) maxExitDuration = duration;
+        if (c.exitAnimationType !== 'none') {
+            const duration = c.exitAnimationDuration || 0.5;
+            if (duration > maxExitDuration) maxExitDuration = duration;
+        }
     });
+    if (maxExitDuration < 0.5) maxExitDuration = 0.5; // FORCE SCENE FADE TIME
 
     pendingNavigationTargetId.value = nextNodeId;
     
     isSceneExiting.value = true;
     sceneExitStartTime.value = Date.now();
+    sceneExitTotalDuration.value = maxExitDuration; // SET TOTAL DURATION
 
     // 3. Wait, then Load Node
     setTimeout(() => {
         isSceneExiting.value = false;
         sceneExitStartTime.value = 0;
+        sceneExitTotalDuration.value = 0; // RESET
         const target = pendingNavigationTargetId.value;
         pendingNavigationTargetId.value = null;
         
@@ -4668,6 +4724,8 @@ const loadNodeForPreview = (targetNodeId) => {
     currentPreviewComponentIndex.value = -1;
     componentStartTime.value = 0;
     
+    sceneEntranceStartTime.value = Date.now();
+
     nextTick(() => {
         if (!previewCanvasRef.value) return;
         
@@ -4687,7 +4745,7 @@ const loadNodeForPreview = (targetNodeId) => {
         const firstScene = nodeScenes.value[0]
         if (firstScene && firstScene.components && firstScene.components.length > 0) {
             if (firstScene.components[0].autoRender) {
-                setTimeout(() => advancePreview(), 50)
+                setTimeout(() => advancePreview(), 500) // WAIT 500MS FOR SCENE TO FADE IN
             }
         }
     });

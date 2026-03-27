@@ -7,6 +7,8 @@ import Share from './Share.vue'
 const showSharePopup = ref(false)
 const selectedBadge = ref(null)
 
+
+
 const openImageShare = () => {
     if (!selectedAchievement.value) return;
 
