@@ -121,6 +121,8 @@ const isProcessingPayment = ref(false)
 const paymentError = ref('')
 const purchasedGames = ref([])
 
+const isSaving = ref(false)
+
 const likedGames = ref(new Map()) // Map of gameId -> liked status
 const likesCountMap = ref(new Map()) // Map of gameId -> likes count
 const isLikingGame = ref(new Map()) // Prevent double-liking
@@ -1440,10 +1442,13 @@ const handlePlayClick = async (id) => {
   }, 1500) // Match animation duration
 }
 
-const openGameModal = (gameId) => {
+const openGameModal = async (gameId) => {
     isPopupOpen.value = true
     activeDataTab.value = 'pfp' // Reset tab on open
     activePostId.value = gameId
+    
+    // 🚀 AWAIT CLOUD DATA BEFORE LOADING UI
+    await loadGameProgress(gameId);
     
     // 🚀 START BACKGROUND PRELOADING IMMEDIATELY
     backgroundPreloadPromise = (async () => {
@@ -2188,36 +2193,53 @@ const loadGameProgress = async (gameId) => {
     });
     if (res.ok) {
       const savedState = await res.json();
-      return savedState; // Returns { currentNodeIndex, currentSceneIndex, variables }
+      if (savedState) {
+        // Initialize the game object if it doesn't exist locally
+        if (!Console_Status.value.games[gameId]) {
+          Console_Status.value.games[gameId] = { instances: [], achievements: { pfp: [], badges: [] } };
+        }
+        // Overwrite local session storage with cloud data
+        if (savedState.instances) Console_Status.value.games[gameId].instances = savedState.instances;
+        if (savedState.achievements) Console_Status.value.games[gameId].achievements = savedState.achievements;
+        
+        // Force reactivity to update the UI
+        Console_Status.value = { ...Console_Status.value };
+      }
     }
   } catch (err) {
-    console.error("Failed to load progress:", err);
+    console.error("Failed to load cloud progress:", err);
   }
-  return null;
 };
 
-// 🚀 Silently saves the game to the backend without interrupting gameplay
-const saveGameProgress = async (gameId, nodeIndex, sceneIndex) => {
-  // Map your current variables so we only save the raw data
-  const currentVariables = {};
-  // Assuming you have an array/object of global variables in your state
-  // globalVariables.value.forEach(v => currentVariables[v.id] = v.value);
-
+const saveConsoleProgress = async () => {
+  if (!activePostId.value) return;
+  isSaving.value = true;
+  
   try {
-    await fetch(`${API_URL}/console/progress/${gameId}`, {
+    const gameData = Console_Status.value.games[activePostId.value];
+    const instances = gameData?.instances || [];
+    const achievements = gameData?.achievements || { pfp: [], badges: [] };
+
+    const res = await fetch(`${API_URL}/console/progress/${activePostId.value}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`
       },
-      body: JSON.stringify({
-        currentNodeIndex: nodeIndex,
-        currentSceneIndex: sceneIndex,
-        variables: currentVariables
-      })
+      body: JSON.stringify({ instances, achievements })
     });
+
+    if (res.ok) {
+      console.log("Progress saved to cloud successfully!");
+    } else {
+      alert("Failed to save progress to the cloud.");
+    }
   } catch (err) {
-    console.error("Failed to save progress:", err);
+    console.error("Save Progress Error:", err);
+    alert("Network error while saving progress.");
+  } finally {
+    // Small delay so the "Saving..." text is visible for at least a moment
+    setTimeout(() => { isSaving.value = false; }, 500);
   }
 };
 
@@ -2909,7 +2931,6 @@ const preloadUrls = (urls) => {
                                 ✅ Owned
                             </div>
                             
-                            <!-- Show purchase button if not owned -->
                             <button 
                                 v-else-if="isCurrentGamePaid && !hasPurchasedCurrentGame" 
                                 class="purchase-btn" 
@@ -2918,7 +2939,17 @@ const preloadUrls = (urls) => {
                                 💎 Purchase
                             </button>
                             
-                            <!-- Start button - disabled for paid games with no demo unless owned -->
+                            <div class="save-btn-container">
+                                <button 
+                                    class="save-progress-btn" 
+                                    @click="saveConsoleProgress"
+                                    :disabled="!activeInstanceId || isSaving"
+                                >
+                                    💾 {{ isSaving ? 'Saving...' : 'Save' }}
+                                </button>
+                                <span class="save-tooltip">save all instances</span>
+                            </div>
+
                             <button 
                                 class="start-game-btn" 
                                 :disabled="!activeInstanceId || (isCurrentGamePaidNoDemo && !hasPurchasedCurrentGame)"
@@ -2928,7 +2959,7 @@ const preloadUrls = (urls) => {
                             >
                                 ▶ Start
                             </button>
-                            </div>      
+                        </div>      
                     </div>
 
                     <div class="workspace-grid">
@@ -5296,5 +5327,77 @@ const preloadUrls = (urls) => {
     opacity: 1;
   }
 }
+/* Disabled Start Button for Paid No-Demo Games */
+.start-game-btn.disabled-paid {
+    background: #475569;
+    color: #94a3b8;
+    box-shadow: none;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
 
+.start-game-btn.disabled-paid:hover {
+    transform: none;
+    background: #475569;
+    box-shadow: none;
+}
+
+/* ================= SAVE BUTTON & TOOLTIP ================= */
+.save-btn-container {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.save-progress-btn {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    padding: 8px 24px;
+    border-radius: 20px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+.save-progress-btn:not(:disabled):hover {
+    background: rgba(59, 130, 246, 0.4);
+    color: #fff;
+    transform: scale(1.05);
+}
+
+.save-progress-btn:disabled {
+    background: #334155;
+    color: #64748b;
+    border-color: #475569;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+/* Tooltip text styling */
+.save-tooltip {
+    position: absolute;
+    bottom: -25px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: #cbd5e1;
+    font-size: 0.7rem;
+    padding: 4px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.2s ease;
+    pointer-events: none;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Show tooltip on hover */
+.save-btn-container:hover .save-tooltip {
+    opacity: 1;
+    visibility: visible;
+    bottom: -30px; /* Slight drop animation */
+}
 </style>
