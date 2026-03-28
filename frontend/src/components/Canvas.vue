@@ -650,6 +650,48 @@ const loadProjectData = async () => {
   }
 };
 
+const getBaseColor = (colorStr) => {
+    if (!colorStr) return '#000000';
+    if (colorStr.startsWith('#')) return colorStr.substring(0, 7);
+    if (colorStr === 'transparent') return '#000000';
+    return '#000000';
+}
+
+const getAlphaValue = (colorStr) => {
+    if (!colorStr) return 1;
+    if (colorStr === 'transparent') return 0;
+    if (colorStr.startsWith('#') && colorStr.length === 9) {
+        return parseInt(colorStr.substring(7, 9), 16) / 255;
+    }
+    return 1;
+}
+
+const updateColor = (event, targetObj, propName, callback) => {
+    const baseHex = event.target.value; 
+    const currentAlpha = getAlphaValue(targetObj[propName]);
+    
+    if (currentAlpha < 1) {
+        const alphaHex = Math.round(currentAlpha * 255).toString(16).padStart(2, '0');
+        targetObj[propName] = baseHex + alphaHex;
+    } else {
+        targetObj[propName] = baseHex;
+    }
+    if (callback) callback();
+}
+
+const updateAlpha = (event, targetObj, propName, callback) => {
+    const alpha = parseFloat(event.target.value);
+    const baseHex = getBaseColor(targetObj[propName]);
+    
+    if (alpha < 1) {
+        const alphaHex = Math.round(alpha * 255).toString(16).padStart(2, '0');
+        targetObj[propName] = baseHex + alphaHex;
+    } else {
+        targetObj[propName] = baseHex;
+    }
+    if (callback) callback();
+}
+
 /* ================= IF-ELSE EDITOR STATE ================= */
 const ifElseVarId = ref("")
 const ifElseOperator = ref("==")
@@ -2534,84 +2576,12 @@ const drawGraph = () => {
   const canvas = graphCanvasRef.value
   const ctx = graphCtx
   
+  // Clear the canvas
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   
-  const centerX = canvas.width / 2
-  const centerY = canvas.height / 2
-  
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'
-  ctx.lineWidth = 1
-  drawGridLines(ctx, canvas, centerX, centerY, GRAPH_MINOR_GRID, 10) 
-  
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)'
-  ctx.lineWidth = 1.5
-  drawGridLines(ctx, canvas, centerX, centerY, GRAPH_MAJOR_GRID, 10) 
-  
-  ctx.strokeStyle = '#00ff88'
-  ctx.lineWidth = 2
-  
-  ctx.beginPath()
-  ctx.moveTo(centerX, 0)
-  ctx.lineTo(centerX, canvas.height)
-  ctx.stroke()
-  
-  ctx.beginPath()
-  ctx.moveTo(0, centerY)
-  ctx.lineTo(canvas.width, centerY)
-  ctx.stroke()
-  
-  ctx.fillStyle = '#00ff88'
-  ctx.font = '12px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  
-  for (let x = -GRAPH_MAX_X; x <= GRAPH_MAX_X; x += GRAPH_MAJOR_GRID) {
-    if (x === 0) continue 
-    const screenX = centerX + (x * 2) 
-    if (screenX >= 20 && screenX <= canvas.width - 20) {
-      ctx.fillText(x.toString(), screenX, centerY + 15)
-      ctx.beginPath()
-      ctx.moveTo(screenX, centerY - 5)
-      ctx.lineTo(screenX, centerY + 5)
-      ctx.stroke()
-    }
-  }
-  
-  for (let y = -GRAPH_MAX_Y; y <= GRAPH_MAX_Y; y += GRAPH_MAJOR_GRID) {
-    if (y === 0) continue 
-    const screenY = centerY - (y * 2) 
-    if (screenY >= 20 && screenY <= canvas.height - 20) {
-      ctx.fillText(y.toString(), centerX - 15, screenY)
-      ctx.beginPath()
-      ctx.moveTo(centerX - 5, screenY)
-      ctx.lineTo(centerX + 5, screenY)
-      ctx.stroke()
-    }
-  }
-  
-  ctx.fillText('0', centerX - 12, centerY + 12)
-  
-  ctx.strokeStyle = 'rgba(255, 0, 0, 0.3)'
-  ctx.lineWidth = 1
-  ctx.setLineDash([5, 5])
-  ctx.strokeRect(
-    centerX + (GRAPH_MIN_X * 2),
-    centerY - (GRAPH_MAX_Y * 2),
-    (GRAPH_MAX_X - GRAPH_MIN_X) * 2,
-    (GRAPH_MAX_Y - GRAPH_MIN_Y) * 2
-  )
-  ctx.setLineDash([])
-  
-  ctx.fillStyle = 'rgba(255, 0, 0, 0.7)'
-  ctx.font = '10px sans-serif'
-  
-  const minXScreen = centerX + (GRAPH_MIN_X * 2)
-  const maxYScreen = centerY - (GRAPH_MAX_Y * 2)
-  ctx.fillText(`(${GRAPH_MIN_X}, ${GRAPH_MAX_Y})`, minXScreen + 40, maxYScreen + 15)
-  
-  const maxXScreen = centerX + (GRAPH_MAX_X * 2)
-  const minYScreen = centerY - (GRAPH_MIN_Y * 2)
-  ctx.fillText(`(${GRAPH_MAX_X}, ${GRAPH_MIN_Y})`, maxXScreen - 40, minYScreen - 10)
+  // The grid lines, numbers, and axes drawing logic has been intentionally 
+  // removed here so that the graph remains completely invisible when 
+  // lowering the alpha value of the scene's background color.
 }
 
 const drawGridLines = (ctx, canvas, centerX, centerY, gridSize, pixelsPerUnit) => {
@@ -5358,9 +5328,18 @@ const onPreviewWheel = (e) => {
                         <div class="color-picker-container">
                           <input 
                             type="color" 
-                            v-model="sceneSettings.backgroundColor"
-                            @change="updateBackgroundColor"
+                            :value="getBaseColor(sceneSettings.backgroundColor)" 
+                            @input="updateColor($event, sceneSettings, 'backgroundColor', updateBackgroundColor)"
                             class="color-input"
+                          />
+                          <input 
+                            type="range" 
+                            :value="getAlphaValue(sceneSettings.backgroundColor)" 
+                            @input="updateAlpha($event, sceneSettings, 'backgroundColor', updateBackgroundColor)" 
+                            min="0" max="1" step="0.05" 
+                            class="alpha-slider" 
+                            :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(sceneSettings.backgroundColor)})` }" 
+                            title="Opacity" 
                           />
                           <div class="color-preview" :style="{ backgroundColor: sceneSettings.backgroundColor }"></div>
                           <span class="color-value">{{ sceneSettings.backgroundColor }}</span>
@@ -5456,7 +5435,7 @@ const onPreviewWheel = (e) => {
                                 <input 
                                 v-model="activeComponent.content" 
                                 class="detail-input" 
-                                @input="updateActiveComponentPosition" 
+                                @input="drawComponents" 
                                 @select="handleTextSelect"
                                 />
                                 
@@ -5471,7 +5450,7 @@ const onPreviewWheel = (e) => {
 
                             <div class="detail-section">
                                 <label class="detail-label">Font Family:</label>
-                                <select v-model="activeComponent.fontFamily" class="detail-input" @change="updateActiveComponentPosition" style="font-family: inherit;">
+                                <select v-model="activeComponent.fontFamily" class="detail-input" @change="drawComponents" style="font-family: inherit;">
                                     <option v-for="font in googleFonts" :key="font" :value="font" :style="{ fontFamily: font }">
                                         {{ font }}
                                     </option>
@@ -5479,36 +5458,39 @@ const onPreviewWheel = (e) => {
                             </div>
                             <div class="detail-section">
                                 <label class="detail-label">Font Size:</label>
-                                <input type="number" v-model.number="activeComponent.fontSize" class="detail-input" @input="updateActiveComponentPosition" />
+                                <input type="number" v-model.number="activeComponent.fontSize" class="detail-input" @input="drawComponents" />
                             </div>
                             <div class="detail-section">
                                 <label class="detail-label">Text Color:</label>
                                 <div class="color-picker-container">
-                                <input type="color" v-model="activeComponent.color" class="color-input" @input="updateActiveComponentPosition" />
-                                <div class="color-preview" :style="{ backgroundColor: activeComponent.color }"></div>
+                                    <input type="color" :value="getBaseColor(activeComponent.color)" @input="updateColor($event, activeComponent, 'color', drawComponents)" class="color-input" />
+                                    <input type="range" :value="getAlphaValue(activeComponent.color)" @input="updateAlpha($event, activeComponent, 'color', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.color)})` }" title="Opacity" />
+                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.color }"></div>
                                 </div>
                             </div>
                             <div class="detail-section">
                                 <label class="detail-label">Background Color:</label>
                                 <div class="color-picker-container">
-                                <input type="color" v-model="activeComponent.backgroundColor" class="color-input" @input="updateActiveComponentPosition" />
-                                <div class="color-preview" :style="{ backgroundColor: activeComponent.backgroundColor }"></div>
+                                    <input type="color" :value="getBaseColor(activeComponent.backgroundColor)" @input="updateColor($event, activeComponent, 'backgroundColor', drawComponents)" class="color-input" />
+                                    <input type="range" :value="getAlphaValue(activeComponent.backgroundColor)" @input="updateAlpha($event, activeComponent, 'backgroundColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.backgroundColor)})` }" title="Opacity" />
+                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.backgroundColor }"></div>
                                 </div>
                             </div>
                             <div class="detail-section">
                                 <label class="detail-label">Border Color:</label>
                                 <div class="color-picker-container">
-                                <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="updateActiveComponentPosition" />
-                                <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
+                                    <input type="color" :value="getBaseColor(activeComponent.borderColor)" @input="updateColor($event, activeComponent, 'borderColor', drawComponents)" class="color-input" />
+                                    <input type="range" :value="getAlphaValue(activeComponent.borderColor)" @input="updateAlpha($event, activeComponent, 'borderColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.borderColor)})` }" title="Opacity" />
+                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
                                 </div>
                             </div>
                             <div class="detail-section">
                                 <label class="detail-label">Border Width:</label>
-                                <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="updateActiveComponentPosition" />
+                                <input type="number" v-model.number="activeComponent.borderWidth" class="detail-input" @input="drawComponents" />
                             </div>
                             <div class="detail-section">
                                 <label class="detail-label">Round Corners:</label>
-                                <input type="range" v-model.number="activeComponent.borderRadius" min="0" max="50" class="range-input" @input="updateActiveComponentPosition" />
+                                <input type="range" v-model.number="activeComponent.borderRadius" min="0" max="50" class="range-input" @input="drawComponents" />
                             </div>
                         </div>
 
@@ -5538,7 +5520,8 @@ const onPreviewWheel = (e) => {
                             <div class="detail-section">
                                 <label class="detail-label">Text Color:</label>
                                 <div class="color-picker-container">
-                                    <input type="color" v-model="activeComponent.color" class="color-input" @input="drawComponents" />
+                                    <input type="color" :value="getBaseColor(activeComponent.color)" @input="updateColor($event, activeComponent, 'color', drawComponents)" class="color-input" />
+                                    <input type="range" :value="getAlphaValue(activeComponent.color)" @input="updateAlpha($event, activeComponent, 'color', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.color)})` }" title="Opacity" />
                                     <div class="color-preview" :style="{ backgroundColor: activeComponent.color }"></div>
                                 </div>
                             </div>
@@ -5553,14 +5536,16 @@ const onPreviewWheel = (e) => {
                              <div class="detail-section">
                                 <label class="detail-label">Background Color:</label>
                                 <div class="color-picker-container">
-                                    <input type="color" v-model="activeComponent.backgroundColor" class="color-input" @input="drawComponents" />
+                                    <input type="color" :value="getBaseColor(activeComponent.backgroundColor)" @input="updateColor($event, activeComponent, 'backgroundColor', drawComponents)" class="color-input" />
+                                    <input type="range" :value="getAlphaValue(activeComponent.backgroundColor)" @input="updateAlpha($event, activeComponent, 'backgroundColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.backgroundColor)})` }" title="Opacity" />
                                     <div class="color-preview" :style="{ backgroundColor: activeComponent.backgroundColor }"></div>
                                 </div>
                             </div>
                             <div class="detail-section">
                                 <label class="detail-label">Border Color:</label>
                                 <div class="color-picker-container">
-                                    <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="drawComponents" />
+                                    <input type="color" :value="getBaseColor(activeComponent.borderColor)" @input="updateColor($event, activeComponent, 'borderColor', drawComponents)" class="color-input" />
+                                    <input type="range" :value="getAlphaValue(activeComponent.borderColor)" @input="updateAlpha($event, activeComponent, 'borderColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.borderColor)})` }" title="Opacity" />
                                     <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
                                 </div>
                             </div>
@@ -5585,6 +5570,30 @@ const onPreviewWheel = (e) => {
                                 </select>
                                 <div style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px;">
                                     User input will be validated against variable type.
+                                </div>
+                            </div>
+
+                            <div class="detail-section" v-if="activeComponent.targetVariableId" style="background: rgba(168, 85, 247, 0.1); padding: 12px; border-radius: 6px; border: 1px solid rgba(168, 85, 247, 0.3);">
+                                <label class="detail-label" style="color: #d8b4fe; margin-bottom: 12px;">Input Constraints</label>
+                                
+                                <div v-if="globalVariables.find(v => v.id == activeComponent.targetVariableId)?.type === 'string'">
+                                    <div class="detail-section" style="margin-bottom: 0;">
+                                        <label class="detail-label">Maximum Characters:</label>
+                                        <input type="number" v-model.number="activeComponent.maxChars" class="detail-input" placeholder="e.g. 50" min="1" />
+                                    </div>
+                                </div>
+
+                                <div v-if="globalVariables.find(v => v.id == activeComponent.targetVariableId)?.type === 'integer'">
+                                    <div style="display: flex; gap: 12px;">
+                                        <div class="detail-section" style="flex: 1; margin-bottom: 0;">
+                                            <label class="detail-label">Minimum Value:</label>
+                                            <input type="number" v-model.number="activeComponent.minNum" class="detail-input" placeholder="e.g. 0" />
+                                        </div>
+                                        <div class="detail-section" style="flex: 1; margin-bottom: 0;">
+                                            <label class="detail-label">Maximum Value:</label>
+                                            <input type="number" v-model.number="activeComponent.maxNum" class="detail-input" placeholder="e.g. 100" />
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
@@ -5618,7 +5627,8 @@ const onPreviewWheel = (e) => {
                                 <div class="detail-section">
                                     <label class="detail-label">Background:</label>
                                     <div class="color-picker-container">
-                                        <input type="color" v-model="activeComponent.backgroundColor" class="color-input" @input="drawComponents" />
+                                        <input type="color" :value="getBaseColor(activeComponent.backgroundColor)" @input="updateColor($event, activeComponent, 'backgroundColor', drawComponents)" class="color-input" />
+                                        <input type="range" :value="getAlphaValue(activeComponent.backgroundColor)" @input="updateAlpha($event, activeComponent, 'backgroundColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.backgroundColor)})` }" title="Opacity" />
                                         <div class="color-preview" :style="{ backgroundColor: activeComponent.backgroundColor }"></div>
                                     </div>
                                 </div>
@@ -5626,7 +5636,8 @@ const onPreviewWheel = (e) => {
                                 <div class="detail-section">
                                     <label class="detail-label">Text Color:</label>
                                     <div class="color-picker-container">
-                                        <input type="color" v-model="activeComponent.textColor" class="color-input" @input="drawComponents" />
+                                        <input type="color" :value="getBaseColor(activeComponent.textColor)" @input="updateColor($event, activeComponent, 'textColor', drawComponents)" class="color-input" />
+                                        <input type="range" :value="getAlphaValue(activeComponent.textColor)" @input="updateAlpha($event, activeComponent, 'textColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.textColor)})` }" title="Opacity" />
                                         <div class="color-preview" :style="{ backgroundColor: activeComponent.textColor }"></div>
                                     </div>
                                 </div>
@@ -5634,7 +5645,8 @@ const onPreviewWheel = (e) => {
                                 <div class="detail-section">
                                     <label class="detail-label">Border:</label>
                                     <div class="color-picker-container">
-                                        <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="drawComponents" />
+                                        <input type="color" :value="getBaseColor(activeComponent.borderColor)" @input="updateColor($event, activeComponent, 'borderColor', drawComponents)" class="color-input" />
+                                        <input type="range" :value="getAlphaValue(activeComponent.borderColor)" @input="updateAlpha($event, activeComponent, 'borderColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.borderColor)})` }" title="Opacity" />
                                         <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
                                     </div>
                                 </div>
@@ -5649,14 +5661,16 @@ const onPreviewWheel = (e) => {
                                 <div class="detail-section">
                                     <label class="detail-label">Focus Background:</label>
                                     <div class="color-picker-container">
-                                        <input type="color" v-model="activeComponent.focusBackgroundColor" class="color-input" />
+                                        <input type="color" :value="getBaseColor(activeComponent.focusBackgroundColor)" @input="updateColor($event, activeComponent, 'focusBackgroundColor', drawComponents)" class="color-input" />
+                                        <input type="range" :value="getAlphaValue(activeComponent.focusBackgroundColor)" @input="updateAlpha($event, activeComponent, 'focusBackgroundColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.focusBackgroundColor)})` }" title="Opacity" />
                                         <div class="color-preview" :style="{ backgroundColor: activeComponent.focusBackgroundColor }"></div>
                                     </div>
                                 </div>
                                 <div class="detail-section">
                                     <label class="detail-label">Focus Border:</label>
                                     <div class="color-picker-container">
-                                        <input type="color" v-model="activeComponent.focusBorderColor" class="color-input" />
+                                        <input type="color" :value="getBaseColor(activeComponent.focusBorderColor)" @input="updateColor($event, activeComponent, 'focusBorderColor', drawComponents)" class="color-input" />
+                                        <input type="range" :value="getAlphaValue(activeComponent.focusBorderColor)" @input="updateAlpha($event, activeComponent, 'focusBorderColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.focusBorderColor)})` }" title="Opacity" />
                                         <div class="color-preview" :style="{ backgroundColor: activeComponent.focusBorderColor }"></div>
                                     </div>
                                 </div>
@@ -5676,28 +5690,32 @@ const onPreviewWheel = (e) => {
                                 <div class="detail-section">
                                     <label class="detail-label">Normal Color:</label>
                                     <div class="color-picker-container">
-                                        <input type="color" v-model="activeComponent.buttonNormalColor" class="color-input" @input="drawComponents" />
+                                        <input type="color" :value="getBaseColor(activeComponent.buttonNormalColor)" @input="updateColor($event, activeComponent, 'buttonNormalColor', drawComponents)" class="color-input" />
+                                        <input type="range" :value="getAlphaValue(activeComponent.buttonNormalColor)" @input="updateAlpha($event, activeComponent, 'buttonNormalColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.buttonNormalColor)})` }" title="Opacity" />
                                         <div class="color-preview" :style="{ backgroundColor: activeComponent.buttonNormalColor }"></div>
                                     </div>
                                 </div>
                                 <div class="detail-section">
                                     <label class="detail-label">Hover Color:</label>
                                     <div class="color-picker-container">
-                                        <input type="color" v-model="activeComponent.buttonHoverColor" class="color-input" />
+                                        <input type="color" :value="getBaseColor(activeComponent.buttonHoverColor)" @input="updateColor($event, activeComponent, 'buttonHoverColor', drawComponents)" class="color-input" />
+                                        <input type="range" :value="getAlphaValue(activeComponent.buttonHoverColor)" @input="updateAlpha($event, activeComponent, 'buttonHoverColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.buttonHoverColor)})` }" title="Opacity" />
                                         <div class="color-preview" :style="{ backgroundColor: activeComponent.buttonHoverColor }"></div>
                                     </div>
                                 </div>
                                 <div class="detail-section">
                                     <label class="detail-label">Click Color:</label>
                                     <div class="color-picker-container">
-                                        <input type="color" v-model="activeComponent.buttonClickColor" class="color-input" />
+                                        <input type="color" :value="getBaseColor(activeComponent.buttonClickColor)" @input="updateColor($event, activeComponent, 'buttonClickColor', drawComponents)" class="color-input" />
+                                        <input type="range" :value="getAlphaValue(activeComponent.buttonClickColor)" @input="updateAlpha($event, activeComponent, 'buttonClickColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.buttonClickColor)})` }" title="Opacity" />
                                         <div class="color-preview" :style="{ backgroundColor: activeComponent.buttonClickColor }"></div>
                                     </div>
                                 </div>
                                 <div class="detail-section">
                                     <label class="detail-label">Text Color:</label>
                                     <div class="color-picker-container">
-                                        <input type="color" v-model="activeComponent.buttonTextColor" class="color-input" @input="drawComponents" />
+                                        <input type="color" :value="getBaseColor(activeComponent.buttonTextColor)" @input="updateColor($event, activeComponent, 'buttonTextColor', drawComponents)" class="color-input" />
+                                        <input type="range" :value="getAlphaValue(activeComponent.buttonTextColor)" @input="updateAlpha($event, activeComponent, 'buttonTextColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.buttonTextColor)})` }" title="Opacity" />
                                         <div class="color-preview" :style="{ backgroundColor: activeComponent.buttonTextColor }"></div>
                                     </div>
                                 </div>
@@ -5708,13 +5726,13 @@ const onPreviewWheel = (e) => {
                             <div class="detail-section">
                                 <div class="checkbox-row">
                                     <label class="detail-label" style="margin-bottom:0;">Loop:</label>
-                                    <input type="checkbox" v-model="activeComponent.isLoop" @change="updateVideoProperties" />
+                                    <input type="checkbox" v-model="activeComponent.isLoop" @change="drawComponents" />
                                 </div>
                             </div>
                             <div class="detail-section">
                                 <div class="checkbox-row">
                                     <label class="detail-label" style="margin-bottom:0;">Mute:</label>
-                                    <input type="checkbox" v-model="activeComponent.isMuted" @change="updateVideoProperties" />
+                                    <input type="checkbox" v-model="activeComponent.isMuted" @change="drawComponents" />
                                 </div>
                             </div>
                             
@@ -5744,7 +5762,10 @@ const onPreviewWheel = (e) => {
                                 <div class="detail-section">
                                 <label class="detail-label">Box Color & Opacity:</label>
                                 <div style="display: flex; gap: 8px; align-items: center;">
-                                    <input type="color" v-model="activeComponent.boxColor" class="color-input" @input="drawComponents" />
+                                    <div class="color-picker-container">
+                                        <input type="color" :value="getBaseColor(activeComponent.boxColor)" @input="updateColor($event, activeComponent, 'boxColor', drawComponents)" class="color-input" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.boxColor }"></div>
+                                    </div>
                                     <div class="input-row" style="flex: 1;">
                                     <input type="range" v-model.number="activeComponent.boxOpacity" min="0" max="1" step="0.05" class="range-input" @input="drawComponents" />
                                     <span class="audio-val-text">{{ Math.round((activeComponent.boxOpacity || 0) * 100) }}%</span>
@@ -5755,7 +5776,8 @@ const onPreviewWheel = (e) => {
                                 <div class="detail-section">
                                 <label class="detail-label">Border Color:</label>
                                 <div class="color-picker-container">
-                                    <input type="color" v-model="activeComponent.borderColor" class="color-input" @input="drawComponents" />
+                                    <input type="color" :value="getBaseColor(activeComponent.borderColor)" @input="updateColor($event, activeComponent, 'borderColor', drawComponents)" class="color-input" />
+                                    <input type="range" :value="getAlphaValue(activeComponent.borderColor)" @input="updateAlpha($event, activeComponent, 'borderColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.borderColor)})` }" title="Opacity" />
                                     <div class="color-preview" :style="{ backgroundColor: activeComponent.borderColor }"></div>
                                 </div>
                                 </div>
@@ -5824,24 +5846,27 @@ const onPreviewWheel = (e) => {
                                 <div class="detail-section">
                                     <label class="detail-label">Background Color:</label>
                                     <div class="color-picker-container">
-                                    <input type="color" v-model="activeComponent.styles[activeStyleState].backgroundColor" class="color-input" @input="drawComponents" />
-                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].backgroundColor }"></div>
+                                        <input type="color" :value="getBaseColor(activeComponent.styles[activeStyleState].backgroundColor)" @input="updateColor($event, activeComponent.styles[activeStyleState], 'backgroundColor', drawComponents)" class="color-input" />
+                                        <input type="range" :value="getAlphaValue(activeComponent.styles[activeStyleState].backgroundColor)" @input="updateAlpha($event, activeComponent.styles[activeStyleState], 'backgroundColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.styles[activeStyleState].backgroundColor)})` }" title="Opacity" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].backgroundColor }"></div>
                                     </div>
                                 </div>
                                 
                                 <div class="detail-section">
                                     <label class="detail-label">Text Color:</label>
                                     <div class="color-picker-container">
-                                    <input type="color" v-model="activeComponent.styles[activeStyleState].color" class="color-input" @input="drawComponents" />
-                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].color }"></div>
+                                        <input type="color" :value="getBaseColor(activeComponent.styles[activeStyleState].color)" @input="updateColor($event, activeComponent.styles[activeStyleState], 'color', drawComponents)" class="color-input" />
+                                        <input type="range" :value="getAlphaValue(activeComponent.styles[activeStyleState].color)" @input="updateAlpha($event, activeComponent.styles[activeStyleState], 'color', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.styles[activeStyleState].color)})` }" title="Opacity" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].color }"></div>
                                     </div>
                                 </div>
                                 
                                 <div class="detail-section">
                                     <label class="detail-label">Border Color:</label>
                                     <div class="color-picker-container">
-                                    <input type="color" v-model="activeComponent.styles[activeStyleState].borderColor" class="color-input" @input="drawComponents" />
-                                    <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].borderColor }"></div>
+                                        <input type="color" :value="getBaseColor(activeComponent.styles[activeStyleState].borderColor)" @input="updateColor($event, activeComponent.styles[activeStyleState], 'borderColor', drawComponents)" class="color-input" />
+                                        <input type="range" :value="getAlphaValue(activeComponent.styles[activeStyleState].borderColor)" @input="updateAlpha($event, activeComponent.styles[activeStyleState], 'borderColor', drawComponents)" min="0" max="1" step="0.05" class="alpha-slider" :style="{ background: `linear-gradient(to right, transparent, ${getBaseColor(activeComponent.styles[activeStyleState].borderColor)})` }" title="Opacity" />
+                                        <div class="color-preview" :style="{ backgroundColor: activeComponent.styles[activeStyleState].borderColor }"></div>
                                     </div>
                                 </div>
 
@@ -5921,15 +5946,15 @@ const onPreviewWheel = (e) => {
                         <div class="detail-section">
                             <label class="detail-label">Position X:</label>
                             <div class="input-row">
-                                <input type="range" v-model.number="activeComponent.x" :min="GRAPH_MIN_X" :max="GRAPH_MAX_X" class="range-input" @input="updateActiveComponentPosition" />
-                                <input type="number" v-model.number="activeComponent.x" class="number-input" @input="updateActiveComponentPosition" />
+                                <input type="range" v-model.number="activeComponent.x" :min="GRAPH_MIN_X" :max="GRAPH_MAX_X" class="range-input" @input="drawComponents" />
+                                <input type="number" v-model.number="activeComponent.x" class="number-input" @input="drawComponents" />
                             </div>
                         </div>
                         <div class="detail-section">
                             <label class="detail-label">Position Y:</label>
                             <div class="input-row">
-                                <input type="range" v-model.number="activeComponent.y" :min="GRAPH_MIN_Y" :max="GRAPH_MAX_Y" class="range-input" @input="updateActiveComponentPosition" />
-                                <input type="number" v-model.number="activeComponent.y" class="number-input" @input="updateActiveComponentPosition" />
+                                <input type="range" v-model.number="activeComponent.y" :min="GRAPH_MIN_Y" :max="GRAPH_MAX_Y" class="range-input" @input="drawComponents" />
+                                <input type="number" v-model.number="activeComponent.y" class="number-input" @input="drawComponents" />
                             </div>
                         </div>
                         
@@ -5953,8 +5978,8 @@ const onPreviewWheel = (e) => {
                             <div class="detail-section">
                                 <label class="detail-label">Rotation (deg):</label>
                                 <div class="input-row">
-                                <input type="range" v-model.number="activeComponent.rotation" min="0" max="360" class="range-input" @input="updateActiveComponentPosition" />
-                                <input type="number" v-model.number="activeComponent.rotation" class="number-input" @input="updateActiveComponentPosition" />
+                                <input type="range" v-model.number="activeComponent.rotation" min="0" max="360" class="range-input" @input="drawComponents" />
+                                <input type="number" v-model.number="activeComponent.rotation" class="number-input" @input="drawComponents" />
                                 </div>
                             </div>
                         </div>
@@ -7332,5 +7357,27 @@ const onPreviewWheel = (e) => {
 .detail-input option {
     font-size: 1rem;
     padding: 10px;
+}
+
+.alpha-slider {
+    width: 70px;
+    height: 8px;
+    -webkit-appearance: none;
+    appearance: none;
+    border-radius: 4px;
+    outline: none;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    cursor: pointer;
+}
+.alpha-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: #fff;
+    border-radius: 50%;
+    border: 2px solid #374151;
+    box-shadow: 0 0 4px rgba(0,0,0,0.5);
+    cursor: ew-resize;
 }
 </style>
