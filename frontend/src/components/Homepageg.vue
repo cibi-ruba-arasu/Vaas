@@ -29,6 +29,10 @@ const starsLarge = ref('')
 const mouseX = ref(0)
 const mouseY = ref(0)
 
+const showAgeGate = ref(false)
+const ageGateRejected = ref(false)
+const rejectionMessage = ref("")
+
 // Function to generate stars where 80% match the Aura Color
 const generateStars = (count, blur) => {
   let shadows = []
@@ -511,7 +515,10 @@ onMounted(async () => {
   // Star generation and mouse tracking init
   window.addEventListener('mousemove', handleMouseMove)
   updateStarFields()
-
+  const hasPassedAgeGate = sessionStorage.getItem('guestAgeVerified')
+  if (!hasPassedAgeGate) {
+    showAgeGate.value = true
+  }
   const res = await fetch(`${API_URL}/user/theme`, {
     headers: { Authorization: `Bearer ${token}` }
   })
@@ -548,6 +555,20 @@ onUnmounted(() => {
   window.removeEventListener('mousemove', handleMouseMove)
   window.removeEventListener('click', closeMenus);
 })
+const handleAgeConfirm = () => {
+  sessionStorage.setItem('guestAgeVerified', 'true')
+  showAgeGate.value = false
+}
+
+const handleAgeReject = () => {
+  ageGateRejected.value = true
+  rejectionMessage.value = "The Loom requires the maturity of time. Your thread is not yet ready to weave these realms. Return when the seasons have turned."
+  
+  // Reroute back to landing page after a few seconds so they can read the message
+  setTimeout(() => {
+    router.push('/')
+  }, 4500)
+}
 </script>
 
 <template>
@@ -1003,6 +1024,40 @@ onUnmounted(() => {
           <div class="auth-buttons">
             <button class="auth-btn register-main" @click="showDeviceWarning = false">I Understand</button>
           </div>
+        </div>
+      </div>
+    </Transition>
+    <Transition name="fade">
+      <div v-if="showAgeGate" class="modal-overlay">
+        <div class="auth-modal glass-panel age-gate-modal">
+          
+          <div class="modal-art">
+            <div class="mini-soul-glow"></div>
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--aura)" stroke-width="1.5">
+              <path d="M12 2v20" />
+              <path d="M5 2h14" />
+              <path d="M5 22h14" />
+              <path d="M5 2l7 7 7-7" />
+              <path d="M5 22l7-7 7 7" />
+            </svg>
+          </div>
+
+          <div v-if="!ageGateRejected">
+            <h2 class="modal-title">The Toll of Time</h2>
+            <p class="modal-desc">Beyond this threshold lie realms woven with mature visions and unguarded truths. Do you swear by the Loom that you have seen at least 18 cycles of the sun?</p>
+            
+            <div class="auth-buttons">
+              <button class="auth-btn register-main" @click="handleAgeConfirm">I am 18 or older</button>
+              <button class="auth-btn login-link" @click="handleAgeReject">I have not yet reached 18</button>
+            </div>
+          </div>
+
+          <div v-else class="rejection-state">
+             <h2 class="modal-title" style="color: #fca5a5;">The Gates Remain Closed</h2>
+             <p class="modal-desc" style="font-style: italic;">{{ rejectionMessage }}</p>
+             <div class="tiny-spinner" style="margin: 20px auto 0; border-top-color: #fca5a5;"></div>
+          </div>
+
         </div>
       </div>
     </Transition>
@@ -2383,5 +2438,19 @@ input:checked + .slider:before {
   .modal-title { font-size: 1.5rem; }
   
   .auth-btn { padding: 16px; } /* Larger touch target */
+}
+.age-gate-modal {
+  /* Prevent clicking outside to close by removing the @click.self on the overlay */
+  /* Make it slightly wider for the text */
+  max-width: 450px;
+}
+
+.rejection-state {
+  animation: fade-in-slow 1s ease forwards;
+}
+
+@keyframes fade-in-slow {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 </style>

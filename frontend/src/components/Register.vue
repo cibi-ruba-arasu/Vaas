@@ -3,6 +3,7 @@ import { ref, watch, watchEffect, onMounted, onBeforeUnmount } from "vue"
 import bcrypt from "bcryptjs"
 import { useRouter } from "vue-router"
 import { API_URL } from '../config.js';
+import TermsModal from './TermsModal.vue'
 
 const router = useRouter()
 
@@ -83,6 +84,8 @@ const rePasswordError = ref("")
 
 const isFormComplete = ref(false)
 const isLoading = ref(false)
+const agreedToTerms = ref(false) // NEW: Track checkbox state
+const showTermsModal = ref(false)
 
 /* ===== SUBMIT ===== */
 const handlesubmit = async () => {
@@ -174,7 +177,8 @@ watchEffect(() => {
     email.value && !emailError.value &&
     username.value && !usernameError.value &&
     password.value && !passwordError.value &&
-    rePassword.value && !rePasswordError.value
+    rePassword.value && !rePasswordError.value &&
+    agreedToTerms.value // Form is only complete if terms are agreed
 })
 </script>
 
@@ -244,7 +248,12 @@ watchEffect(() => {
             <span class="eye" @click="showRePassword = !showRePassword" :title="showRePassword ? 'Hide password' : 'Show password'">𓂀</span>
           </div>
           <p v-if="rePasswordError" class="error-text">{{ rePasswordError }}</p>
-
+          <div class="terms-wrapper">
+            <input type="checkbox" id="terms-check" v-model="agreedToTerms" class="custom-checkbox" />
+            <label for="terms-check" class="terms-label">
+              I agree to the <a href="#" @click.prevent="showTermsModal = true">Terms of Service & Privacy Policy</a>
+            </label>
+          </div>
           <button
             class="register-btn"
             type="submit"
@@ -261,6 +270,7 @@ watchEffect(() => {
       </form>
     </div>
   </div>
+  <TermsModal v-if="showTermsModal" @close="showTermsModal = false" />
 </template>
 
 <style scoped>
@@ -405,5 +415,67 @@ watchEffect(() => {
 
 @media (max-width: 500px) {
   .registerdiv { padding: 30px 20px; }
+}
+/* ===== Terms Checkbox ===== */
+.terms-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 5px;
+  margin-bottom: 5px;
+}
+
+.custom-checkbox {
+  appearance: none;
+  background-color: rgba(2, 6, 23, 0.6);
+  margin: 0;
+  font: inherit;
+  color: #3b82f6;
+  width: 1.15em;
+  height: 1.15em;
+  border: 1px solid rgba(59, 131, 246, 0.5);
+  border-radius: 4px;
+  display: grid;
+  place-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.custom-checkbox::before {
+  content: "";
+  width: 0.65em;
+  height: 0.65em;
+  transform: scale(0);
+  transition: 120ms transform ease-in-out;
+  box-shadow: inset 1em 1em white;
+  transform-origin: center;
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+}
+
+.custom-checkbox:checked {
+  background-color: #3b82f6;
+  border-color: #3b82f6;
+}
+
+.custom-checkbox:checked::before {
+  transform: scale(1);
+}
+
+.terms-label {
+  font-size: 0.85rem;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.terms-label a {
+  color: #60a5fa;
+  text-decoration: none;
+  font-weight: 600;
+  transition: color 0.2s;
+}
+
+.terms-label a:hover {
+  color: #93c5fd;
+  text-decoration: underline;
 }
 </style>
