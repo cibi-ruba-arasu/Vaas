@@ -227,6 +227,21 @@ const replyText = ref("")
 const replyingTo = ref(null) // Holds the _id of the comment being replied to
 const isSubmittingComment = ref(false)
 
+
+// --- NEW SPOILER STATE ---
+const newCommentSpoiler = ref(false); // Checkbox for new comments
+const replySpoiler = ref(false);      // Checkbox for replies
+const editCommentSpoiler = ref(false); // Checkbox for editing
+const revealedSpoilers = ref(new Set()); // Tracks which spoiler IDs the user has clicked
+
+const toggleSpoilerReveal = (commentId) => {
+  if (revealedSpoilers.value.has(commentId)) {
+    revealedSpoilers.value.delete(commentId);
+  } else {
+    revealedSpoilers.value.add(commentId);
+  }
+};
+
 // Convert flat comments array into a nested tree for replies
 const threadedComments = computed(() => {
   const map = {}
@@ -285,10 +300,13 @@ const fetchComments = async () => {
 
 const submitComment = async (parentId = null) => {
   if (!token) return triggerAuthModal('comment');
-  const text = parentId ? replyText.value : newCommentText.value
-  if (!text.trim() || isSubmittingComment.value) return
+  const text = parentId ? replyText.value : newCommentText.value;
+  // Determine if it's a spoiler based on whether it's a reply or new comment
+  const isSpoiler = parentId ? replySpoiler.value : newCommentSpoiler.value;
 
-  isSubmittingComment.value = true
+  if (!text.trim() || isSubmittingComment.value) return;
+
+  isSubmittingComment.value = true;
   try {
     const res = await fetch(`${API_URL}/posts/${postId}/comments`, {
       method: "POST",
@@ -296,27 +314,28 @@ const submitComment = async (parentId = null) => {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}` 
       },
-      body: JSON.stringify({ content: text, parentId })
-    })
+      body: JSON.stringify({ content: text, parentId, isSpoiler }) // Include spoiler flag
+    });
 
     if (res.ok) {
-      const data = await res.json()
-      comments.value.unshift(data.comment) // Add to UI
+      const data = await res.json();
+      comments.value.unshift(data.comment); 
       
-      // Clear inputs
       if (parentId) {
-        replyText.value = ""
-        replyingTo.value = null
+        replyText.value = "";
+        replySpoiler.value = false;
+        replyingTo.value = null;
       } else {
-        newCommentText.value = ""
+        newCommentText.value = "";
+        newCommentSpoiler.value = false;
       }
     }
   } catch (err) {
-    console.error("Failed to post comment", err)
+    console.error("Failed to post comment", err);
   } finally {
-    isSubmittingComment.value = false
+    isSubmittingComment.value = false;
   }
-}
+};
 
 const toggleCommentLike = async (commentId) => {
   try {
@@ -340,6 +359,60 @@ const toggleCommentLike = async (commentId) => {
     console.error("Failed to like comment", err)
   }
 }
+
+const editingCommentId = ref(null);
+const editCommentText = ref("");
+const isUpdatingComment = ref(false);
+
+const startEditing = (comment) => {
+  editingCommentId.value = comment._id;
+  editCommentText.value = comment.content;
+  editCommentSpoiler.value = comment.isSpoiler || false; // Set initial state
+};
+
+const cancelEditing = () => {
+  editingCommentId.value = null;
+  editCommentText.value = "";
+  editCommentSpoiler.value = false;
+};
+
+const updateComment = async (commentId) => {
+  if (!editCommentText.value.trim() || isUpdatingComment.value) return;
+
+  isUpdatingComment.value = true;
+  try {
+    const res = await fetch(`${API_URL}/comments/${commentId}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ 
+        content: editCommentText.value,
+        isSpoiler: editCommentSpoiler.value // Include spoiler status
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      
+      const commentToUpdate = comments.value.find(c => c._id === commentId);
+      if (commentToUpdate) {
+        commentToUpdate.content = data.content;
+        commentToUpdate.isSpoiler = data.isSpoiler;
+      }
+      
+      cancelEditing();
+    } else {
+      const errorData = await res.json();
+      alert(errorData.message || "Failed to edit comment");
+    }
+  } catch (err) {
+    console.error("Failed to update comment", err);
+  } finally {
+    isUpdatingComment.value = false;
+  }
+};
 
 onMounted(() => {
   fetchPost()
@@ -522,11 +595,19 @@ onMounted(() => {
             placeholder="Leave a whisper..."
             @keyup.ctrl.enter="submitComment(null)"
           ></textarea>
-          <button 
-            :disabled="!newCommentText.trim() || isSubmittingComment" 
-            @click="submitComment(null)"
-            :class="{ 'active-btn': newCommentText.trim() }"
-          >Post</button>
+          
+          <div class="input-actions-row">
+            <label class="spoiler-toggle">
+              <input type="checkbox" v-model="newCommentSpoiler">
+              <span class="toggle-label">Mark as Spoiler</span>
+            </label>
+            
+            <button 
+              :disabled="!newCommentText.trim() || isSubmittingComment" 
+              @click="submitComment(null)"
+              :class="{ 'active-btn': newCommentText.trim() }"
+            >Post</button>
+          </div>
         </div>
 
         <div v-if="comments.length === 0" class="empty-comments">
@@ -545,26 +626,69 @@ onMounted(() => {
                   </span>
                   <span class="comment-time">{{ timeAgo(thread.createdAt) }}</span>
                 </div>
-                <p class="comment-text">{{ thread.content }}</p>
                 
-                <div class="comment-actions">
+                <div v-if="editingCommentId === thread._id" class="edit-input-area">
+                  <textarea v-model="editCommentText" class="edit-textarea"></textarea>
+                  <div class="edit-actions-row">
+                    <label class="spoiler-toggle">
+                      <input type="checkbox" v-model="editCommentSpoiler">
+                      <span class="toggle-label">Spoiler</span>
+                    </label>
+                    <div class="reply-actions">
+                      <button class="cancel-btn" @click="cancelEditing">Cancel</button>
+                      <button class="submit-btn" :disabled="isUpdatingComment" @click="updateComment(thread._id)">Save</button>
+                    </div>
+                  </div>
+                </div>
+                
+                <div v-else class="comment-text-wrapper">
+                  <p 
+                    v-if="!thread.isSpoiler || revealedSpoilers.has(thread._id)" 
+                    class="comment-text"
+                  >
+                    {{ thread.content }}
+                  </p>
+                  
+                  <div 
+                    v-else 
+                    class="spoiler-box" 
+                    @click="toggleSpoilerReveal(thread._id)"
+                  >
+                    <span class="spoiler-icon">⚠️</span>
+                    <span class="spoiler-text">Spoiler - Click to Reveal</span>
+                  </div>
+                </div>
+                
+                <div class="comment-actions" v-if="editingCommentId !== thread._id">
                   <button class="action-btn-small" :class="{ liked: thread.isLiked }" @click="toggleCommentLike(thread._id)">
                     {{ thread.isLiked ? '❤️' : '🤍' }} {{ thread.likeCount || '' }}
                   </button>
                   <button class="action-btn-small" @click="replyingTo = replyingTo === thread._id ? null : thread._id">
                     Reply
                   </button>
+                  <button 
+                    v-if="currentUserId && thread.author._id === currentUserId" 
+                    class="action-btn-small" 
+                    @click="startEditing(thread)">
+                    Edit
+                  </button>
                 </div>
 
                 <div v-if="replyingTo === thread._id" class="reply-input-area">
                   <textarea v-model="replyText" placeholder="Write a reply..."></textarea>
-                  <div class="reply-actions">
-                    <button class="cancel-btn" @click="replyingTo = null">Cancel</button>
-                    <button 
-                      class="submit-btn" 
-                      :disabled="!replyText.trim() || isSubmittingComment"
-                      @click="submitComment(thread._id)"
-                    >Reply</button>
+                  <div class="edit-actions-row">
+                    <label class="spoiler-toggle">
+                      <input type="checkbox" v-model="replySpoiler">
+                      <span class="toggle-label">Spoiler</span>
+                    </label>
+                    <div class="reply-actions">
+                      <button class="cancel-btn" @click="replyingTo = null">Cancel</button>
+                      <button 
+                        class="submit-btn" 
+                        :disabled="!replyText.trim() || isSubmittingComment"
+                        @click="submitComment(thread._id)"
+                      >Reply</button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -580,11 +704,48 @@ onMounted(() => {
                     </span>
                     <span class="comment-time">{{ timeAgo(reply.createdAt) }}</span>
                   </div>
-                  <p class="comment-text">{{ reply.content }}</p>
                   
-                  <div class="comment-actions">
+                  <div v-if="editingCommentId === reply._id" class="edit-input-area">
+                    <textarea v-model="editCommentText" class="edit-textarea"></textarea>
+                    <div class="edit-actions-row">
+                      <label class="spoiler-toggle">
+                        <input type="checkbox" v-model="editCommentSpoiler">
+                        <span class="toggle-label">Spoiler</span>
+                      </label>
+                      <div class="reply-actions">
+                        <button class="cancel-btn" @click="cancelEditing">Cancel</button>
+                        <button class="submit-btn" :disabled="isUpdatingComment" @click="updateComment(reply._id)">Save</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div v-else class="comment-text-wrapper">
+                    <p 
+                      v-if="!reply.isSpoiler || revealedSpoilers.has(reply._id)" 
+                      class="comment-text"
+                    >
+                      {{ reply.content }}
+                    </p>
+                    
+                    <div 
+                      v-else 
+                      class="spoiler-box" 
+                      @click="toggleSpoilerReveal(reply._id)"
+                    >
+                      <span class="spoiler-icon">⚠️</span>
+                      <span class="spoiler-text">Spoiler - Click to Reveal</span>
+                    </div>
+                  </div>
+                  
+                  <div class="comment-actions" v-if="editingCommentId !== reply._id">
                     <button class="action-btn-small" :class="{ liked: reply.isLiked }" @click="toggleCommentLike(reply._id)">
                       {{ reply.isLiked ? '❤️' : '🤍' }} {{ reply.likeCount || '' }}
+                    </button>
+                    <button 
+                      v-if="currentUserId && reply.author._id === currentUserId" 
+                      class="action-btn-small" 
+                      @click="startEditing(reply)">
+                      Edit
                     </button>
                   </div>
                 </div>
@@ -758,7 +919,78 @@ onMounted(() => {
 .comment-author:hover { color: #3b82f6; text-decoration: underline; }
 .comment-time { font-size: 0.8rem; color: #64748b; }
 
-.comment-text { margin: 0; color: #cbd5e1; line-height: 1.5; font-size: 0.95rem; white-space: pre-wrap; }
+.input-actions-row, .edit-actions-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.spoiler-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: #94a3b8;
+  font-size: 0.85rem;
+  user-select: none;
+  transition: color 0.2s;
+}
+
+.spoiler-toggle:hover {
+  color: #cbd5e1;
+}
+
+.spoiler-toggle input[type="checkbox"] {
+  accent-color: #3b82f6; /* Style the native checkbox */
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+}
+
+/* The dark blue spoiler overlay box */
+.comment-text-wrapper {
+  margin: 5px 0;
+}
+
+.spoiler-box {
+  background: rgba(30, 58, 138, 0.4); /* Dark blue background */
+  border: 1px dashed rgba(59, 130, 246, 0.5);
+  border-radius: 8px;
+  padding: 12px 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(2px);
+}
+
+.spoiler-box:hover {
+  background: rgba(30, 58, 138, 0.6);
+  border-color: rgba(59, 130, 246, 0.8);
+}
+
+.spoiler-icon {
+  font-size: 1.1rem;
+}
+
+.spoiler-text {
+  color: #93c5fd;
+  font-weight: 600;
+  font-size: 0.9rem;
+  letter-spacing: 0.5px;
+}
+
+/* Ensure original comment text area behaves nicely */
+.comment-text { 
+  margin: 0; 
+  color: #cbd5e1; 
+  line-height: 1.5; 
+  font-size: 0.95rem; 
+  white-space: pre-wrap; 
+  word-wrap: break-word;
+}
 
 .comment-actions { display: flex; gap: 15px; margin-top: 5px; }
 .action-btn-small { background: transparent; border: none; color: #64748b; font-size: 0.85rem; cursor: pointer; display: flex; align-items: center; gap: 5px; padding: 0; transition: color 0.2s; font-family: inherit; }
@@ -804,5 +1036,30 @@ onMounted(() => {
 .auth-btn:hover {
   transform: translateY(-2px);
   filter: brightness(1.1);
+}
+
+.edit-input-area {
+  margin-top: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.edit-textarea {
+  width: 100%;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid #3b82f6;
+  border-radius: 8px;
+  color: white;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 60px;
+  padding: 10px;
+  outline: none;
+}
+.input-actions-row, .edit-actions-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
 }
 </style>

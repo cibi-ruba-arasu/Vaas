@@ -18,14 +18,19 @@ const commentSchema = new mongoose.Schema({
   parentId: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'Comment', 
-    default: null // If null, it's a top-level comment. If set, it's a reply.
+    default: null 
   },
   likes: [{ 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'User' 
-  }]
+  }],
+  // NEW FIELD
+  isSpoiler: {
+    type: Boolean,
+    default: false
+  }
 }, { 
-  timestamps: true // Automatically gives us createdAt and updatedAt
+  timestamps: true 
 });
 
 export default mongoose.model("Comment", commentSchema);

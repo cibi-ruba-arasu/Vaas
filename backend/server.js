@@ -2518,7 +2518,8 @@ app.get("/posts/:id/comments", async (req, res) => {
         parentId: c.parentId,
         createdAt: c.createdAt,
         likeCount: c.likes.length,
-        isLiked: isLiked
+        isLiked: isLiked,
+        isSpoiler: c.isSpoiler // NEW
       };
     });
 
@@ -2528,11 +2529,12 @@ app.get("/posts/:id/comments", async (req, res) => {
     res.status(500).json({ message: "Failed to fetch comments" });
   }
 });
+
 /* ===== POST A COMMENT OR REPLY ===== */
 app.post("/posts/:id/comments", authMiddleware, async (req, res) => {
   const { id } = req.params;
   const { mongoId } = req.user;
-  const { content, parentId } = req.body;
+  const { content, parentId, isSpoiler } = req.body; // NEW: extract isSpoiler
 
   if (!content || content.trim() === "") {
     return res.status(400).json({ message: "Comment cannot be empty" });
@@ -2543,7 +2545,8 @@ app.post("/posts/:id/comments", authMiddleware, async (req, res) => {
       postId: id,
       authorId: mongoId,
       content,
-      parentId: parentId || null
+      parentId: parentId || null,
+      isSpoiler: isSpoiler || false // NEW: save it
     });
 
     await newComment.save();
@@ -2560,7 +2563,8 @@ app.post("/posts/:id/comments", authMiddleware, async (req, res) => {
         parentId: populatedComment.parentId,
         createdAt: populatedComment.createdAt,
         likeCount: 0,
-        isLiked: false
+        isLiked: false,
+        isSpoiler: populatedComment.isSpoiler // NEW
       }
     });
   } catch (err) {
@@ -2595,11 +2599,40 @@ app.post("/comments/:commentId/like", authMiddleware, async (req, res) => {
   }
 });
 
-//app.use(express.static(path.join(__dirname, '../frontend/dist')));
+app.put("/comments/:commentId", authMiddleware, async (req, res) => {
+  const { commentId } = req.params;
+  const { mongoId } = req.user;
+  const { content, isSpoiler } = req.body; // NEW: extract isSpoiler
 
-//app.get(/.*/, (req, res) => {
-//  res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
-//});
+  if (!content || content.trim() === "") {
+    return res.status(400).json({ message: "Comment cannot be empty" });
+  }
+
+  try {
+    const comment = await Comment.findById(commentId);
+    
+    if (!comment) {
+      return res.status(404).json({ message: "Comment not found" });
+    }
+
+    if (comment.authorId.toString() !== mongoId) {
+      return res.status(403).json({ message: "Not authorized to edit this comment" });
+    }
+
+    comment.content = content;
+    // NEW: Update spoiler status if provided in the request
+    if (isSpoiler !== undefined) {
+      comment.isSpoiler = isSpoiler;
+    }
+    
+    await comment.save();
+
+    res.json({ success: true, content: comment.content, isSpoiler: comment.isSpoiler });
+  } catch (err) {
+    console.error("Edit comment error:", err);
+    res.status(500).json({ message: "Failed to edit comment" });
+  }
+});
 
 mongoose
   .connect(process.env.MONGO_URI)
