@@ -5,7 +5,7 @@ import { API_URL } from '../config.js';
 
 const router = useRouter()
 const token = sessionStorage.getItem("token")
-
+const hidePfpPrompt = ref(false);
 const loading = ref(true)
 const isEditing = ref(false)
 const isSaving = ref(false)
@@ -206,7 +206,8 @@ watch(showPfpEditor, (newVal) => {
 });
 
 const openPfpInventory = () => {
-  if (!isEditing.value) return; 
+  // Allow opening if editing, OR if they don't have a PFP yet (quick onboarding)
+  if (!isEditing.value && user.value.profilePic) return; 
   showPfpInventory.value = true;
 }
 
@@ -736,7 +737,7 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
               <div class="pfp-wrapper">
                 <div 
                   class="pfp-circle" 
-                  :class="{ editable: isEditing }"
+                  :class="{ editable: isEditing, 'needs-pfp': !user.profilePic }"
                   @click="openPfpInventory" >
                    <span v-if="!user.profilePic" class="initial">{{ user.username.charAt(0) }}</span>
                    
@@ -745,6 +746,15 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
                    <div v-if="isEditing" class="pfp-overlay">
                      <span class="edit-icon">🖼️</span> <span>Collection</span>
                    </div>
+                </div>
+
+                <div v-if="!user.profilePic && !hidePfpPrompt" class="pfp-prompt" @click="openPfpInventory">
+                  
+                  <button class="dismiss-prompt-btn" @click.stop="hidePfpPrompt = true" title="Dismiss">×</button>
+                  
+                  <div class="prompt-arrow"></div>
+                  <span class="prompt-title">🎨 No boring uploads here!</span>
+                  <p class="prompt-desc">We do PFPs differently. Click here to draw your own custom pixel-art avatar, or earn exclusive designs by playing weaves.</p>
                 </div>
               </div>
 
@@ -1510,5 +1520,138 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
 .remove-badge-btn:hover {
   transform: scale(1.2);
   background: #dc2626;
+}
+
+.pfp-circle.needs-pfp {
+  cursor: pointer;
+  border-color: rgba(59, 130, 246, 0.6);
+  box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
+  animation: pfp-pulse 2s infinite cubic-bezier(0.66, 0, 0, 1);
+}
+
+@keyframes pfp-pulse {
+  to {
+    box-shadow: 0 0 0 20px rgba(59, 130, 246, 0);
+  }
+}
+
+/* The Onboarding Message Box */
+.pfp-prompt {
+  position: absolute;
+  top: 50%;
+  left: 140px; /* Positions it to the right of the 120px PFP */
+  transform: translateY(-50%);
+  width: max-content;
+  max-width: 280px;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  border-radius: 12px;
+  padding: 12px 16px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.5), inset 0 0 15px rgba(59, 130, 246, 0.1);
+  cursor: pointer;
+  z-index: 10;
+  transition: all 0.3s ease;
+}
+
+.pfp-prompt:hover {
+  background: rgba(30, 41, 59, 0.95);
+  border-color: rgba(59, 130, 246, 0.8);
+  transform: translateY(-50%) scale(1.02);
+}
+
+.prompt-title {
+  display: block;
+  font-weight: 600;
+  color: #60a5fa;
+  font-size: 0.9rem;
+  margin-bottom: 6px;
+  letter-spacing: 0.5px;
+}
+
+.prompt-desc {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+  line-height: 1.4;
+}
+
+/* The Arrow pointing at the PFP */
+.prompt-arrow {
+  position: absolute;
+  top: 50%;
+  left: -6px;
+  transform: translateY(-50%) rotate(45deg);
+  width: 12px;
+  height: 12px;
+  background: rgba(15, 23, 42, 0.85);
+  border-left: 1px solid rgba(59, 130, 246, 0.4);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.4);
+}
+
+/* ================= RESPONSIVE ADJUSTMENTS ================= */
+@media (max-width: 900px) {
+  
+  /* 🚀 FIX 1: Turn the wrapper into a strict flex column to cleanly stack both items */
+  .pfp-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+  }
+
+  /* 🚀 FIX 2: Force the circle to never shrink or collapse under pressure */
+  .pfp-circle {
+    flex-shrink: 0;
+    margin: 0 auto;
+    z-index: 5; /* Keeps it above the prompt if they get close */
+  }
+
+  /* 🚀 FIX 3: Stack the prompt below the PFP naturally using margin */
+  .pfp-prompt {
+    position: relative;
+    top: 0;           /* Erase the desktop positioning */
+    left: 0;          /* Erase the desktop positioning */
+    transform: none;  /* Erase the desktop positioning */
+    margin-top: 20px; /* Use clean margin to push it below the circle */
+    max-width: 90%;   /* Give it breathing room from screen edges */
+    text-align: center;
+  }
+  
+  .pfp-prompt:hover {
+    transform: scale(1.02);
+  }
+
+  /* Move the arrow to point UP instead of LEFT */
+  .prompt-arrow {
+    top: -6px;
+    left: 50%;
+    transform: translateX(-50%) rotate(135deg);
+  }
+}
+.dismiss-prompt-btn {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 4px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s;
+  z-index: 2; /* Ensures it sits above the text */
+}
+
+.dismiss-prompt-btn:hover {
+  color: #ef4444; /* Changes to red on hover */
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Add a little top padding to the title so it doesn't collide with the X */
+.pfp-prompt .prompt-title {
+  padding-right: 20px;
 }
 </style>
