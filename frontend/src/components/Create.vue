@@ -7,6 +7,8 @@ const router = useRouter()
 const token = sessionStorage.getItem("token")
 const projects = ref([])
 
+const isLoadingPage = ref(true)
+
 const showModal = ref(false)
 const showDeleteModal = ref(false)
 const editingProject = ref(null)
@@ -35,6 +37,7 @@ const removeThumbnail = () => {
 }
 
 const fetchProjects = async () => {
+  isLoadingPage.value = true // Ensure it's true when starting
   try {
     const res = await fetch(`${API_URL}/projects`, {
       headers: { Authorization: `Bearer ${token}` }
@@ -42,6 +45,9 @@ const fetchProjects = async () => {
     if (res.ok) projects.value = await res.json()
   } catch (e) {
     console.error("Fetch failed", e)
+  } finally {
+    // Stop the loading screen even if the fetch fails
+    isLoadingPage.value = false 
   }
 }
 
@@ -247,6 +253,18 @@ onMounted(() => {
         </div>
       </div>
     </div>
+    <transition name="fade">
+      <div v-if="isLoadingPage" class="mystical-overlay initial-load">
+        <div class="loom-container">
+          <div class="ring ring-1"></div>
+          <div class="ring ring-2"></div>
+          <div class="ring ring-3"></div>
+          <div class="core-light"></div>
+        </div>
+        <p class="mystical-text">Awakening the Tapestry...</p>
+        <span class="loading-subtext">Summoning your creations from the ether</span>
+      </div>
+    </transition>
     <div v-if="isProcessing" class="mystical-overlay">
         <div class="loom-container"><div class="ring ring-1"></div><div class="ring ring-2"></div><div class="ring ring-3"></div><div class="core-light"></div></div>
         <p class="mystical-text">Weaving Reality...</p>
@@ -367,4 +385,26 @@ onMounted(() => {
 @keyframes spin-left { 100% { transform: rotate(-360deg); } }
 @keyframes pulse-core { 0%, 100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.5); opacity: 0.4; } }
 @keyframes text-glow { from { opacity: 0.6; filter: blur(0px); } to { opacity: 1; filter: blur(1px); } }
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.8s ease;
+}
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
+}
+
+/* Solid background for initial load */
+.initial-load {
+    background: #020617; /* Solid slate color instead of rgba */
+    z-index: 1000;
+}
+
+/* Optional styling for the smaller subtext */
+.loading-subtext {
+    margin-top: 10px;
+    color: #64748b;
+    font-size: 0.85rem;
+    letter-spacing: 1px;
+    font-style: italic;
+    opacity: 0.7;
+}
 </style>
