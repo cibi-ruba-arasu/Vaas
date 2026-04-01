@@ -5038,7 +5038,7 @@ const onPreviewWheel = (e) => {
                     v-else
                     type="text" 
                     v-model="newVarValue" 
-                    placeholder="Value (Optional)" 
+                    placeholder="Value (Required)" 
                     class="var-input" 
                 />
 
