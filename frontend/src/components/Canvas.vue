@@ -1589,7 +1589,7 @@ const addTextComponent = () => {
   const newText = {
     id: Date.now(),
     type: 'text',
-    name: 'New Text',
+    name: 'Hello World',
     content: 'Hello World',
     x: 0,
     y: 0,
@@ -1639,6 +1639,14 @@ const handleTextSelect = (e) => {
     } else {
         textSelection.value = { start: 0, end: 0, text: '' }
     }
+}
+
+const handleTextContentChange = () => {
+    if (activeComponent.value && activeComponent.value.type === 'text') {
+        activeComponent.value.name = activeComponent.value.content || 'Empty Text';
+    }
+    drawComponents();
+    updateSceneContentDisplay(); // Refreshes the sidebar list to show the new name
 }
 
 const applyTextStyle = (styleType, value) => {
@@ -5417,7 +5425,7 @@ const onPreviewWheel = (e) => {
                             <div v-else style="color:white">?</div>
                         </div>
 
-                        <div class="detail-section">
+                        <div class="detail-section" v-if="activeComponent.type !== 'text'">
                             <label class="detail-label">Name:</label>
                             <input 
                                 v-model="activeComponent.name" 
@@ -5435,8 +5443,7 @@ const onPreviewWheel = (e) => {
                                 <input 
                                 v-model="activeComponent.content" 
                                 class="detail-input" 
-                                @input="drawComponents" 
-                                @select="handleTextSelect"
+                                @input="handleTextContentChange"  @select="handleTextSelect"
                                 />
                                 
                                 <div v-if="textSelection.text.length > 0" class="formatting-controls">
