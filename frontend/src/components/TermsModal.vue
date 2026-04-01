@@ -22,8 +22,9 @@ const emit = defineEmits(['close'])
 
         <h3>2. Monetization & Revenue</h3>
         <ul>
-          <li><strong>The 65/35 Split:</strong> Creators can choose to make their projects Premium/Paid. For every copy sold, the creator retains 65% of the revenue, and LoomArt takes a 35% platform fee to maintain the servers and ecosystem.</li>
-          <li><strong>Payouts:</strong> Payments are processed securely via RazorpayX (currently in active development). Creators must provide valid banking/UPI details to receive payouts.</li>
+          <li><strong>The Launch Threshold (First $500):</strong> LoomArt takes a <strong>0% platform fee</strong> on your first $500 USD in gross lifetime revenue. You keep 100% of your earnings, minus mandatory third-party payment processing fees and applicable international transaction taxes deducted by our global payment gateways.</li>
+          <li><strong>Standard Ecosystem Fee:</strong> Once your gross lifetime revenue exceeds $500 USD, LoomArt applies a flat <strong>15% platform fee</strong> on all subsequent sales to maintain server hosting and ecosystem development. You retain the remaining 85% (minus standard third-party processing fees).</li>
+          <li><strong>Payout Schedule:</strong> To maximize your profits and minimize the impact of cross-border transfer fees and international bank routing charges, creator balances are pooled and disbursed on a monthly basis. Payouts are automatically initiated at the end of each calendar month. Creators must provide valid banking details to receive these payouts.</li>
         </ul>
 
         <h3>3. Content Guidelines & Moderation</h3>
@@ -36,7 +37,7 @@ const emit = defineEmits(['close'])
         <h3>4. Privacy Policy & Data Collection</h3>
         <ul>
           <li><strong>What We Collect:</strong> We collect your email address and username to manage your account. For creators earning revenue, your payment details are collected and stored securely.</li>
-          <li><strong>Third-Party Infrastructure:</strong> We utilize Vercel (Frontend hosting), Railway (Backend hosting), Razorpay (Inbound player payments), and RazorpayX (Outbound creator payouts). Your data interacts with these services strictly to facilitate platform functionality.</li>
+          <li><strong>Third-Party Infrastructure:</strong> We utilize Vercel (Frontend hosting), Railway (Backend hosting), and industry-standard global payment processors for secure inbound payments and outbound creator payouts. Your data interacts with these services strictly to facilitate platform functionality.</li>
           <li><strong>Cookies & Security:</strong> We use JSON Web Tokens (JWT) for secure authentication, stored in your session storage. A unique signature is utilized in cookies strictly for keeping your session active and secure, not for invasive third-party tracking.</li>
         </ul>
 
@@ -54,6 +55,7 @@ const emit = defineEmits(['close'])
 </template>
 
 <style scoped>
+/* Your existing CSS remains exactly the same */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -166,7 +168,6 @@ const emit = defineEmits(['close'])
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
 }
 
-/* Custom Scrollbar for Modal */
 .modal-body::-webkit-scrollbar {
   width: 8px;
 }
