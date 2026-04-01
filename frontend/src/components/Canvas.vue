@@ -938,6 +938,99 @@ const showContextMenu = ref(false)
 const contextMenuPos = ref({ x: 0, y: 0 })
 const contextMenuTargetNode = ref(null)
 
+const showComponentContextMenu = ref(false)
+const componentContextMenuPos = ref({ x: 0, y: 0 })
+const contextMenuTargetComponentIndex = ref(null)
+
+const onComponentCanvasContextMenu = (e) => {
+    if (!imagesCanvasRef.value || !selectedScene.value) return;
+    const rect = imagesCanvasRef.value.getBoundingClientRect();
+    const mouseX = e.clientX; 
+    const mouseY = e.clientY;
+
+    if (mouseX >= rect.left && mouseX <= rect.right && mouseY >= rect.top && mouseY <= rect.bottom) {
+        const coords = screenToGraphCoords(mouseX, mouseY);
+        let clickedCompIndex = -1;
+
+        // Iterate backwards to hit the top-most component first
+        for (let i = sceneComponents.value.length - 1; i >= 0; i--) {
+            const comp = sceneComponents.value[i];
+            if (coords.x >= comp.x - comp.width/2 && coords.x <= comp.x + comp.width/2 &&
+                coords.y <= comp.y + comp.height/2 && coords.y >= comp.y - comp.height/2) {
+                clickedCompIndex = i;
+                break;
+            }
+        }
+
+        if (clickedCompIndex !== -1) {
+            contextMenuTargetComponentIndex.value = clickedCompIndex;
+            componentContextMenuPos.value = { x: e.clientX, y: e.clientY };
+            showComponentContextMenu.value = true;
+        } else {
+            showComponentContextMenu.value = false;
+        }
+        if (clickedCompIndex !== -1) {
+            contextMenuTargetComponentIndex.value = clickedCompIndex;
+            
+            // --- MODIFIED: Safe positioning to keep modal on-screen ---
+            const menuWidth = 200; // Estimated modal width
+            const menuHeight = 220; // Estimated modal height
+            let safeX = e.clientX;
+            let safeY = e.clientY;
+            
+            if (safeX + menuWidth > window.innerWidth) safeX = window.innerWidth - menuWidth;
+            if (safeY + menuHeight > window.innerHeight) safeY = window.innerHeight - menuHeight;
+            
+            componentContextMenuPos.value = { x: safeX, y: safeY };
+            // ----------------------------------------------------------
+            
+            showComponentContextMenu.value = true;
+        } else {
+            showComponentContextMenu.value = false;
+        }
+    }
+}
+
+const closeComponentContextMenu = () => {
+    showComponentContextMenu.value = false;
+    contextMenuTargetComponentIndex.value = null;
+}
+
+const quickUpdateRenderMode = (mode) => {
+    if (contextMenuTargetComponentIndex.value === null) return;
+    const comp = sceneComponents.value[contextMenuTargetComponentIndex.value];
+    
+    if (mode === 'auto') {
+        comp.autoRender = !comp.autoRender;
+        if (comp.autoRender) comp.renderWhileClicked = false;
+    } else if (mode === 'click') {
+        comp.renderWhileClicked = !comp.renderWhileClicked;
+        if (comp.renderWhileClicked) comp.autoRender = false;
+    }
+    
+    drawComponents();
+    closeComponentContextMenu();
+}
+
+const quickChangeLayer = (action) => {
+    if (contextMenuTargetComponentIndex.value === null) return;
+    const idx = contextMenuTargetComponentIndex.value;
+    
+    // Temporarily hijack the active component to use the existing layer logic
+    const originalActive = activeComponent.value;
+    activeComponent.value = sceneComponents.value[idx];
+    changeLayer(action);
+    activeComponent.value = originalActive;
+    
+    closeComponentContextMenu();
+}
+
+const quickDeleteComponent = () => {
+    if (contextMenuTargetComponentIndex.value === null) return;
+    confirmRemoveComponent(contextMenuTargetComponentIndex.value);
+    closeComponentContextMenu();
+}
+
 let draggingNode = null
 let dragOffset = { x: 0, y: 0 }
 let menuDragging = false
@@ -1881,6 +1974,23 @@ const updateSceneContentDisplay = () => {
                     imageContainer.classList.add('selected')
                 })
 
+                imageContainer.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    contextMenuTargetComponentIndex.value = index;
+                    
+                    const menuWidth = 200; // Estimated modal width
+                    const menuHeight = 220; // Estimated modal height
+                    let safeX = e.clientX;
+                    let safeY = e.clientY;
+                    
+                    if (safeX + menuWidth > window.innerWidth) safeX = window.innerWidth - menuWidth;
+                    if (safeY + menuHeight > window.innerHeight) safeY = window.innerHeight - menuHeight;
+
+                    componentContextMenuPos.value = { x: safeX, y: safeY };
+                    showComponentContextMenu.value = true;
+                });
+
                 if (comp.type !== 'options') {
                     imageContainer.draggable = true 
                 }
@@ -2043,6 +2153,10 @@ const removeComponent = (index) => {
 
 /* ================= GRAPH INTERACTION ================= */
 const onGraphMouseDown = (event) => {
+    if (showComponentContextMenu.value) {
+      closeComponentContextMenu();
+      return;
+  }
   if (!imagesCanvasRef.value) return
   const rect = imagesCanvasRef.value.getBoundingClientRect()
   const mouseX = event.clientX; const mouseY = event.clientY
@@ -4892,7 +5006,32 @@ const onPreviewWheel = (e) => {
         🔗 Remove all links
       </div>
     </div>
-
+    <div 
+      v-if="showComponentContextMenu" 
+      class="context-menu-click-outside-overlay" 
+      @click="closeComponentContextMenu" 
+      @contextmenu.prevent="closeComponentContextMenu"
+    ></div>
+    <div 
+      v-if="showComponentContextMenu" 
+      class="context-menu" 
+      :style="{ top: componentContextMenuPos.y + 'px', left: componentContextMenuPos.x + 'px', zIndex: 9999 }"
+    >
+      <div style="padding: 4px 12px; font-size: 0.75rem; color: #9ca3af; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 4px; pointer-events: none;">
+        Component Properties
+      </div>
+      <div class="context-menu-item" @click="quickUpdateRenderMode('click')">
+        <span style="width: 20px; text-align: center; display: inline-block;">{{ sceneComponents[contextMenuTargetComponentIndex]?.renderWhileClicked ? '✅' : '⬛' }}</span> Render on Click
+      </div>
+      <div class="context-menu-item" @click="quickUpdateRenderMode('auto')">
+        <span style="width: 20px; text-align: center; display: inline-block;">{{ sceneComponents[contextMenuTargetComponentIndex]?.autoRender ? '✅' : '⬛' }}</span> Auto Render
+      </div>
+      <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 4px 0;"></div>
+      <div class="context-menu-item" @click="quickChangeLayer('top')">⇈ Bring to Front</div>
+      <div class="context-menu-item" @click="quickChangeLayer('bottom')">⇊ Send to Back</div>
+      <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 4px 0;"></div>
+      <div class="context-menu-item" style="color: #f87171;" @click="quickDeleteComponent">🗑️ Delete</div>
+    </div>
     <header class="header">
       <button class="hamburger" @click="toggleMenu">☰</button>
       <div class="canvas-container" :style="{ cursor: cursorStyle }">
@@ -5191,6 +5330,7 @@ const onPreviewWheel = (e) => {
                     ref="imagesCanvasRef" 
                     class="images-canvas"
                     :style="{ display: selectedScene ? 'block' : 'none' }"
+                    @contextmenu.prevent="onComponentCanvasContextMenu"
                   ></canvas>
                   
                   <div v-if="!selectedScene" class="welcome-message">
@@ -7188,6 +7328,15 @@ const onPreviewWheel = (e) => {
 .context-menu-item { padding: 8px 12px; color: #e2e8f0; font-size: 0.9rem; cursor: pointer; border-radius: 4px; transition: background 0.2s; display: flex; align-items: center; gap: 8px; }
 .context-menu-item:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
 
+/* --- ADDED: Overlay CSS --- */
+.context-menu-click-outside-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 9998; /* Sits just behind the menu's 9999 z-index */
+}
 /* Transitions */
 .fade-enter-active, .fade-leave-active { transition: opacity 0.5s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
