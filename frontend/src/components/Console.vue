@@ -7,7 +7,7 @@ import Share from './Share.vue'
 const showSharePopup = ref(false)
 const selectedBadge = ref(null)
 
-
+document.title = "Your Console";
 
 const openImageShare = () => {
     if (!selectedAchievement.value) return;
@@ -254,20 +254,9 @@ const hasPurchasedCurrentGame = computed(() => {
   return purchasedGames.value.some(p => p.gameId === activePostId.value);
 });
 
-// Open purchase modal
-const openPurchaseModal = (game) => {
-  selectedGameForPurchase.value = game;
-  showPurchaseModal.value = true;
-  paymentError.value = '';
-}
 
-// Close purchase modal
-const closePurchaseModal = () => {
-  showPurchaseModal.value = false;
-  selectedGameForPurchase.value = null;
-  isProcessingPayment.value = false;
-  paymentError.value = '';
-}
+
+
 
 const fetchLikeStatuses = async () => {
   if (!myGames.value.length) return;
@@ -1478,10 +1467,18 @@ const openGameModal = async (gameId) => {
     }
 
     gameInstances.value = Console_Status.value.games[gameId].instances || []
-    isWorkspaceGameLoaded.value = gameInstances.value.length > 0
     isEngineRunning.value = false
     activeInstanceId.value = null
     activeEngineData.value = null
+
+    // ✅ AUTO-CREATE OR AUTO-SELECT DEFAULT INSTANCE
+    if (gameInstances.value.length === 0) {
+        addGameInstance(); // Automatically generates 'Instance 1' and selects it
+    } else {
+        selectInstance(gameInstances.value[0].id); // Automatically loads the preview graph
+    }
+
+    isWorkspaceGameLoaded.value = gameInstances.value.length > 0
 
     trackAction("OPENED_GAME_MODAL", { gameId: gameId })
 
@@ -1734,9 +1731,13 @@ const removeGameInstance = (id) => {
     }
 
     if (gameInstances.value.length === 0) {
-        isWorkspaceGameLoaded.value = false
-        isEngineRunning.value = false
+        // ✅ ENFORCE DEFAULT INSTANCE: If they delete the last one, immediately create a new one
+        addGameInstance();
+    } else if (!activeInstanceId.value) {
+        // ✅ AUTO-SELECT FIRST: If they deleted the active instance, switch to the top one
+        selectInstance(gameInstances.value[0].id);
     }
+    
     trackAction("REMOVED_INSTANCE", { gameId: activePostId.value, totalInstances: gameInstances.value.length })
 }
 
@@ -2952,12 +2953,12 @@ const preloadUrls = (urls) => {
 
                             <button 
                                 class="start-game-btn" 
-                                :disabled="!activeInstanceId || (isCurrentGamePaidNoDemo && !hasPurchasedCurrentGame)"
+                                :disabled="!isEngineRunning || !activeInstanceId || (isCurrentGamePaidNoDemo && !hasPurchasedCurrentGame)"
                                 :class="{ 'disabled-paid': isCurrentGamePaidNoDemo && !hasPurchasedCurrentGame }"
                                 @click="startGame(filteredGames.find(g => g._id === activePostId))"
                                 :title="isCurrentGamePaidNoDemo && !hasPurchasedCurrentGame ? 'Purchase required to play' : ''"
                             >
-                                ▶ Start
+                                ▶ {{ !isEngineRunning ? 'Loading...' : 'Start' }}
                             </button>
                         </div>      
                     </div>

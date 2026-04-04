@@ -4,7 +4,7 @@ import { useRouter } from "vue-router"
 import { API_URL } from '../config.js';
 
 const router = useRouter()
-
+document.title = "OTP";
 const success = ref(false)
 const otp = ref(["", "", "", "", "", ""])
 const error = ref(false)

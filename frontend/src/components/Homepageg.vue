@@ -2,11 +2,12 @@
 import { ref, onMounted, onUnmounted, computed, watch } from "vue"
 import { useRouter } from "vue-router"
 import { API_URL } from '../config.js';
+sessionStorage.clear();
 const router = useRouter()
 const auraColor = ref("#0077ff") 
 const token = sessionStorage.getItem("token")
 const userAge = ref(0) // Default to 0 (Restricted) until loaded
-
+document.title = "Hey there, Guest";
 // UI States
 const showSettings = ref(false)
 const showCustomize = ref(false)
@@ -572,6 +573,7 @@ const handleAgeReject = () => {
 </script>
 
 <template>
+  
   <div class="loom-container" :style="{ '--aura': auraColor, '--mouse-x': mouseX + 'px', '--mouse-y': mouseY + 'px' }">
     
     <div class="soul-container">

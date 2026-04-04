@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-
+document.title = "Documentation";
 // Contains the first half of the extracted documentation data.
 // The rest (Components, Logic Engine, Settings, and Preview Mode) will be provided next.
 const docSections = ref([

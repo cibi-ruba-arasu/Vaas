@@ -1130,7 +1130,7 @@ app.post("/projects", authMiddleware, async (req, res) => {
 
 app.put("/projects/:id", authMiddleware, async (req, res) => {
   const { mongoId } = req.user
-  const { name, description, thumbnail, titleFont } = req.body 
+  const { name, description, thumbnail, titleFont, allowGuestPlay } = req.body
   
   const bucket = await Project.findOne({ userId: mongoId })
   if (!bucket) return res.status(404).json({ message: "Bucket not found" })
@@ -1159,6 +1159,7 @@ app.put("/projects/:id", authMiddleware, async (req, res) => {
   project.name = name
   project.description = description
   if (titleFont) project.titleFont = titleFont; 
+  if (allowGuestPlay !== undefined) project.allowGuestPlay = allowGuestPlay;
   project.updatedAt = new Date()
 
   await bucket.save()
@@ -1533,7 +1534,8 @@ app.post("/publish", authMiddleware, async (req, res) => {
   const { 
     id, name, titleFont, description, language, categories, 
     customCategories, warnings, isThumbnailNSFW, monetization, 
-    updateCanvas
+    updateCanvas, 
+    allowGuestPlay // ✅ 1. EXTRACT IT HERE
   } = req.body;
 
  const price = monetization?.price || 0;
@@ -1572,6 +1574,7 @@ app.post("/publish", authMiddleware, async (req, res) => {
       authorName: author.username,
       name, titleFont, description, language, categories, customCategories, warnings, 
       isThumbnailNSFW, 
+      allowGuestPlay,
       monetization: {
         isPaid: monetization?.isPaid || false,
         price: monetization?.price || 0,

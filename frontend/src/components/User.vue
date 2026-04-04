@@ -8,7 +8,7 @@ const route = useRoute()
 const router = useRouter()
 const token = sessionStorage.getItem("token")
 let myUserId = null
-
+document.title = "Profile";
 if (token) {
   try {
     const payload = JSON.parse(atob(token.split('.')[1]))

@@ -6,7 +6,7 @@ const router = useRouter()
 const auraColor = ref("#0077ff") 
 const token = sessionStorage.getItem("token")
 const userAge = ref(0) // Default to 0 (Restricted) until loaded
-
+document.title = "The Loom";
 // UI States
 const showSettings = ref(false)
 const showCustomize = ref(false)

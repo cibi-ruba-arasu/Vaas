@@ -4,7 +4,7 @@ import { useRouter } from "vue-router"
 import { API_URL } from '../config.js';
 
 const router = useRouter()
-
+document.title = "Login";
 const email = ref("")
 const password = ref("")
 const showPassword = ref(false)

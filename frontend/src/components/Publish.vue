@@ -15,7 +15,7 @@ const fetchError = ref(null);
 
 const localName = ref("");
 const titleFont = ref("Cinzel"); 
-
+document.title = "Publish";
 /* --- FONTS --- */
 const FONT_OPTIONS = [
   "Cinzel", "Playfair Display", "Merriweather", "Lora", "Libre Baskerville", "Cormorant Garamond", "EB Garamond",
@@ -365,6 +365,19 @@ const containerStyle = computed(() => ({
 const gamePrice = ref(0.00);
 const priceError = ref('');
 
+const allowGuestPlay = ref(false);
+
+const isGuestPlayDisabled = computed(() => {
+  return isPaid.value && !hasDemo.value;
+});
+
+// Watcher to auto-turn off Guest Play if the user makes it a Paid game without a demo
+watch(isGuestPlayDisabled, (disabled) => {
+  if (disabled) {
+    allowGuestPlay.value = false;
+  }
+});
+
 // Price validation method
 const validatePrice = (event) => {
   let value = event.target.value;
@@ -417,6 +430,7 @@ const Publish_Status = computed(() => {
     customCategories: customCategories.value,
     warnings: selectedWarnings.value,
     isThumbnailNSFW: isThumbnailNSFW.value,
+    allowGuestPlay: allowGuestPlay.value,
     monetization: {
       isPaid: isPaid.value,
       price: isPaid.value ? gamePrice.value : 0,
@@ -696,7 +710,7 @@ const fetchProjectDetails = async () => {
       if (selectedWarnings.value.length === 0 && project.value.isSafeContent) isSafeContent.value = true;
       if (project.value.language) selectedLanguage.value = project.value.language;
       if (project.value.isThumbnailNSFW) isThumbnailNSFW.value = project.value.isThumbnailNSFW;
-
+      if (project.value.allowGuestPlay !== undefined) allowGuestPlay.value = project.value.allowGuestPlay;
       if (project.value.monetization) {
         // TEMPORARY FIX: Force isPaid to false so users don't get stuck if they previously saved it as paid during your testing
         isPaid.value = false; 
@@ -805,6 +819,7 @@ const saveProject = async (newThumbnail = null) => {
       isSafeContent: isSafeContent.value,
       language: selectedLanguage.value, 
       isThumbnailNSFW: isThumbnailNSFW.value,
+      allowGuestPlay: allowGuestPlay.value,
       monetization: { 
         isPaid: isPaid.value,
         hasDemo: hasDemo.value,
@@ -834,6 +849,8 @@ onMounted(() => {
 const activeBlock = computed(() => {
   return blocks.value.find(b => b.id === activeBlockId.value);
 });
+
+
 </script>
 
 <template>
@@ -1150,7 +1167,24 @@ const activeBlock = computed(() => {
               </label>
            </div>
         </div>
-
+        <div class="section-container">
+          <label class="input-label">ACCESS SETTINGS</label>
+          <div class="categories-wrapper">
+            <div class="nsfw-toggle-row no-border mb-0">
+              <div class="nsfw-info">
+                 <span class="nsfw-label">Allow Guest Play?</span>
+                 <p class="nsfw-desc">Let unregistered users play this project.</p>
+              </div>
+              <label class="toggle-switch" :style="isGuestPlayDisabled ? 'opacity: 0.5; pointer-events: none;' : ''">
+                 <input type="checkbox" v-model="allowGuestPlay" :disabled="isGuestPlayDisabled" />
+                 <span class="slider"></span>
+              </label>
+            </div>
+            <div v-if="isGuestPlayDisabled" class="validation-error" style="margin-top: 5px;">
+              ⚠️ Guest play is unavailable for paid games without an enabled demo.
+            </div>
+          </div>
+        </div>
         <div class="section-container">
           <label class="input-label">MONETIZATION</label>
           <div class="categories-wrapper" style="border-color: rgba(59, 130, 246, 0.3);">

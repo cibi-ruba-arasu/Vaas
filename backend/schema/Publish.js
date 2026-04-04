@@ -13,7 +13,7 @@ const publishSchema = new mongoose.Schema({
     default: { blocks: [], container: { colors: ['transparent'], angle: 135 } }
    }, 
   language: { type: String, default: "en" },
-  
+  allowGuestPlay: { type: Boolean, default: false },
   categories: [String],
   customCategories: [String],
   warnings: [String],

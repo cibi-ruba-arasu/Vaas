@@ -20,7 +20,7 @@ const form = ref({
   description: "",
   thumbnail: null
 })
-
+document.title = "Dashboard";
 const handleFileChange = (e) => {
     const file = e.target.files[0]
     if (!file) return

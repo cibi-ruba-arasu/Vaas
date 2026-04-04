@@ -12,7 +12,7 @@ const roles = [
   "Dreamer", "Explorer", "Magician", "Manic", "Builder",
   "Weaver", "Architect", "Visionary", "Creator", "Seeker"
 ]
-
+document.title = "Register";
 const currentRole = ref(roles[0])
 let roleIndex = 0
 let roleInterval = null

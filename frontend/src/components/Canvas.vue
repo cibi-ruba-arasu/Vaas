@@ -101,6 +101,8 @@ const selectGiftType = (type) => {
     initializePixelGrid() // Start with empty new grid
 }
 
+document.title = "The Weaver";
+
 const renderPixelCanvas = () => {
     if (!pixelCanvasRef.value) return
     const ctx = pixelCanvasRef.value.getContext('2d')

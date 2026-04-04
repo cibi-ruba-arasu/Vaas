@@ -5,12 +5,12 @@ import { API_URL } from '../config.js';
 import Popup from './Popup.vue'; //
 const showAuthModal = ref(false); //
 const authModalConfig = ref({ title: '', desc: '', icon: '' }); //
-
+document.title = "The Weave";
 const triggerAuthModal = (type) => {
   if (type === 'play') {
     authModalConfig.value = {
-      title: 'Console Restricted',
-      desc: 'To add this weave to your collection and begin your journey, you must first claim an identity.',
+      title: 'Guest Play Not Enabled',
+      desc: 'This weave does not have guest play enabled. You must claim an identity to add it to your collection and begin your journey.',
       icon: 'M2 6h20v12H2z M6 12h4 M8 10v4 M15 13h.01 M18 11h.01'
     };
   } else {
@@ -22,6 +22,7 @@ const triggerAuthModal = (type) => {
   }
   showAuthModal.value = true;
 };
+
 const route = useRoute()
 const router = useRouter()
 const postId = route.params.id
@@ -113,43 +114,48 @@ const descriptionBlocks = computed(() => {
 
 const fetchPost = async () => {
   try {
-    const res = await fetch(`${API_URL}/posts/${postId}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
+    const headers = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const res = await fetch(`${API_URL}/posts/${postId}`, { headers });
     
     if (res.ok) {
-      const data = await res.json()
-      // Handle both nested { post: ... } and flat response
-      post.value = data.post || data 
+      const data = await res.json();
+      post.value = data.post || data; 
       
-      // Merge separate stats object if present
       if (data.stats) {
-          post.value.views = data.stats.views
-          post.value.visits = data.stats.visits
-          post.value.plays = data.stats.plays
-          post.value.likes = data.stats.likes
-          likesCount.value = data.stats.likes
+          post.value.views = data.stats.views;
+          post.value.visits = data.stats.visits;
+          post.value.plays = data.stats.plays;
+          post.value.likes = data.stats.likes;
+          likesCount.value = data.stats.likes;
       }
 
-      // Assign console status
       if (data.inConsole !== undefined) {
-          inConsole.value = data.inConsole
+          inConsole.value = data.inConsole;
+      }
+      if (data.liked !== undefined) {
+          liked.value = data.liked;
       }
 
-      // NEW: Assign like status
-      if (data.liked !== undefined) {
-          liked.value = data.liked
+      // ✅ GUEST CHECK: Verify if game is in Guest Console
+      if (!token) {
+        const guestGames = JSON.parse(localStorage.getItem('guest_games') || '[]');
+        if (guestGames.includes(postId)) {
+          inConsole.value = true;
+        }
       }
+      
     } else {
-      error.value = "The scroll you seek has crumbled to dust."
+      error.value = "The scroll you seek has crumbled to dust.";
     }
   } catch (e) {
-    console.error(e)
-    error.value = "Connection to the Archive severed."
+    console.error(e);
+    error.value = "Connection to the Archive severed.";
   } finally {
-    loading.value = false
+    loading.value = false;
   }
-}
+};
 
 const toggleLike = async () => {
   if (!token) return router.push('/login');
@@ -180,46 +186,63 @@ const toggleLike = async () => {
 };
 
 const handlePlay = async () => {
-  if (!token) return triggerAuthModal('play');
-  if (isAuthor.value) {
-    alert("Creators cannot add their own project to the console. Use Preview in Create mode.")
-    return
+  // 1. Guest User Logic
+  if (!token) {
+    if (post.value && post.value.allowGuestPlay) {
+      if (inConsole.value) {
+        router.push('/consoleg');
+        return;
+      }
+      // Add to Guest Console local storage
+      let guestGames = JSON.parse(localStorage.getItem('guest_games') || '[]');
+      if (!guestGames.includes(postId)) {
+        guestGames.push(postId);
+        localStorage.setItem('guest_games', JSON.stringify(guestGames));
+      }
+      alert("Added to your Guest Console! 🎮");
+      inConsole.value = true;
+      return;
+    } else {
+      return triggerAuthModal('play');
+    }
   }
 
-  // If already in console, just take them there instead of re-adding
+  // 2. Registered User Logic
+  if (isAuthor.value) {
+    alert("Creators cannot add their own project to the console. Use Preview in Create mode.");
+    return;
+  }
+
   if (inConsole.value) {
-    router.push('/console')
-    return
+    router.push('/console');
+    return;
   }
 
   try {
     const res = await fetch(`${API_URL}/console/add/${postId}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` }
-    })
+    });
     
     if (res.ok) {
-        inConsole.value = true // Update UI instantly
+        inConsole.value = true; 
         
-        // 🚀 NEW: Track play when added to console
-        // For free games: This counts as a play
-        // For paid games: Play will be counted when purchased and played
+        // Track play when added to console
         if (!post.value.monetization?.isPaid) {
-          // Track play for free games
           await fetch(`${API_URL}/posts/${postId}/play`, {
             method: "POST",
             headers: { Authorization: `Bearer ${token}` }
           });
         }
         
-        alert("Added to your Console! 🎮")
+        alert("Added to your Console! 🎮");
     } else {
-        alert("Failed to add to console.")
+        alert("Failed to add to console.");
     }
   } catch (e) { 
-      console.error("Add to Console failed") 
+      console.error("Add to Console failed");
   }
-}
+};
 
 const comments = ref([])
 const newCommentText = ref("")

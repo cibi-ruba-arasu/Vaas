@@ -16,7 +16,7 @@ const networkList = ref({ followers: [], following: [] })
 const isNetworkLoading = ref(false)
 
 const publishedProjects = ref([])
-
+document.title = "Your Profile";
 const fetchNetwork = async () => {
   if (isNetworkLoading.value) return
   isNetworkLoading.value = true

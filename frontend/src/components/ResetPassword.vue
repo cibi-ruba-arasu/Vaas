@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from "vue"
 import { useRouter } from "vue-router"
 import { API_URL } from '../config.js';
 const router = useRouter()
-
+document.title = "Password Reset";
 const email = ref("")
 const password = ref("")
 const confirmPassword = ref("")

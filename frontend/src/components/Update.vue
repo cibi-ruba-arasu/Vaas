@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed, nextTick } from "vue";
+import { ref, onMounted, computed, nextTick, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { API_URL } from '../config.js';
 const route = useRoute();
@@ -10,7 +10,7 @@ const token = sessionStorage.getItem("token");
 const loading = ref(true);
 const isUpdating = ref(false);
 const fetchError = ref(null);
-
+document.title = "Update";
 // --- FORM STATE ---
 const form = ref({
   name: "",
@@ -25,6 +25,7 @@ const form = ref({
   customCategories: [],
   warnings: [],
   isThumbnailNSFW: false,
+  allowGuestPlay: false,
   monetization: { isPaid: false, hasDemo: false, demoNodeLimit: 10, payoutCurrency: 'USD' },
   
   // ✅ THE CRITICAL TOGGLE
@@ -264,7 +265,7 @@ const fetchPublishedData = async () => {
       form.value.customCategories = data.customCategories || [];
       form.value.warnings = data.warnings || [];
       form.value.isThumbnailNSFW = data.isThumbnailNSFW || false;
-      
+      if (data.allowGuestPlay !== undefined) form.value.allowGuestPlay = data.allowGuestPlay;
       if (data.monetization) form.value.monetization = data.monetization;
 
       if (data.description) {
@@ -365,6 +366,14 @@ const addCustomCategory = () => {
   newCustomCategory.value = "";
   showCustomCategoryInput.value = false;
 };
+
+const isGuestPlayDisabled = computed(() => {
+  return form.value.monetization.isPaid && !form.value.monetization.hasDemo;
+});
+
+watch(isGuestPlayDisabled, (disabled) => {
+  if (disabled) form.value.allowGuestPlay = false;
+});
 
 onMounted(() => {
   if (!token) {
@@ -499,7 +508,19 @@ onMounted(() => {
               <label for="nsfw">Thumbnail contains NSFW content?</label>
             </div>
           </div>
-
+          <div class="meta-card glass-panel">
+            <h3>Access Settings</h3>
+            <div class="toggle-header" style="margin-bottom: 0;">
+              <div>
+                <span style="font-size: 0.9rem; color: #cbd5e1; display: block;">Allow Guest Play?</span>
+                <span style="font-size: 0.75rem; color: #64748b;">Let unregistered users play (Requires Free or Demo)</span>
+              </div>
+              <label class="switch" :style="isGuestPlayDisabled ? 'opacity: 0.5; pointer-events: none;' : ''">
+                <input type="checkbox" v-model="form.allowGuestPlay" :disabled="isGuestPlayDisabled">
+                <span class="slider round"></span>
+              </label>
+            </div>
+          </div>
           <div class="meta-card glass-panel" v-if="form.monetization.isPaid">
             <h3>Demo Settings</h3>
             <div class="toggle-header" style="margin-bottom: 0;">

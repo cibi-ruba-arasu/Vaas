@@ -2,6 +2,8 @@
 import { ref, onMounted, onBeforeUnmount, nextTick, watch, computed } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { API_URL } from '../config.js';
+sessionStorage.clear();
+
 /* ================= ROUTE ================= */
 const route = useRoute()
 const projectId = route.params.projectId
@@ -45,7 +47,7 @@ const currentTip = ref("")  // <--- NEW STATE
 const previewGiftMode = ref(false)
 const previewGiftData = ref(null) // Stores current gift node data
 const previewGiftCanvasRef = ref(null) // Reference to the canvas in preview
-
+document.title = "The Weaver";
 const tips = [
     "⚠️ Important: For the best experience, please create and edit your project on a single device to avoid sync conflicts.",
     "💡 Pro Tip: Use the 'Preview' mode often to test your logic flows before publishing.",

@@ -12,7 +12,8 @@ const singleProjectSchema = new mongoose.Schema(
     // ✅ ADD THIS FIELD
     thumbnail: {
         type: String 
-    }
+    },
+    allowGuestPlay: { type: Boolean, default: false }
   },
   { timestamps: true }
 )

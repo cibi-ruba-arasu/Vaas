@@ -9,7 +9,7 @@ const searchQuery = ref(route.query.q || "");
 const isLoading = ref(true);
 const searchResults = ref({ games: [], users: [] });
 const token = sessionStorage.getItem("token");
-
+document.title = "Search Results";
 // --- AURA & STAR BACKGROUND LOGIC ---
 const auraColor = ref("#0077ff");
 const starsSmall = ref('');
