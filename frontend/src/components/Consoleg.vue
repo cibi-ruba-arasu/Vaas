@@ -232,6 +232,15 @@ const handleTouchEnd = (e) => {
 const hasPurchasedCurrentGame = computed(() => false);
 const showGuestAuthPopup = ref(false);
 
+// Add dynamic states for the auth popup
+const guestAuthPopupTitle = ref("Account Required");
+const guestAuthPopupMessage = ref("You must be signed in to equip profile pictures, showcase badges, or save your progress to the cloud.");
+
+const triggerGuestPopup = (title, message) => {
+    guestAuthPopupTitle.value = title;
+    guestAuthPopupMessage.value = message;
+    showGuestAuthPopup.value = true;
+};
 // Open purchase modal
 const openPurchaseModal = (game) => {
   selectedGameForPurchase.value = game;
@@ -262,36 +271,15 @@ const fetchLikeStatuses = async () => {
   }
 };
 
-const toggleLikeGame = async (gameId, event) => {
+const toggleLikeGame = (gameId, event) => {
   event.stopPropagation(); // Prevent triggering the game click
   
-  if (isLikingGame.value.get(gameId)) return;
-  isLikingGame.value.set(gameId, true);
-  
-  try {
-    const res = await fetch(`${API_URL}/posts/${gameId}/like`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    
-    if (res.ok) {
-      const data = await res.json();
-      likedGames.value.set(gameId, data.liked);
-      likesCountMap.value.set(gameId, data.likes);
-      
-      // Update the game object itself for consistency
-      const game = myGames.value.find(g => g._id === gameId);
-      if (game) {
-        game.likes = data.likes;
-      }
-    }
-  } catch (err) {
-    console.error("Like failed:", err);
-  } finally {
-    isLikingGame.value.set(gameId, false);
-  }
+  // Trigger the custom message for supporting the weavers
+  triggerGuestPopup(
+      "Show Some Love! ❤️", 
+      "The weavers would appreciate the thought of you trying to show them your love! You like their creation, but you need an account to leave a like."
+  );
 };
-
 
 // Call this on mount
 onMounted(() => {
@@ -819,15 +807,7 @@ const closeAchievementPopup = () => {
     isShareMenuOpen.value = false
 }
 
-const setAsPfp = () => {
-    closeAchievementPopup();
-    showGuestAuthPopup.value = true;
-}
 
-const addToAchievements = () => {
-    closeAchievementPopup();
-    showGuestAuthPopup.value = true;
-}
 
 const shareToSocial = (platform) => {
     const text = encodeURIComponent(`I just unlocked the "${selectedAchievement.value.name}" ${achievementPopupType.value === 'pfp' ? 'Profile Picture' : 'Badge'} on this awesome console!`)
@@ -1007,7 +987,14 @@ const fetchConsole = async () => {
     );
     
     const results = await Promise.all(fetchPromises);
-    myGames.value = results.map(data => data.post || data).filter(g => g !== null);
+    myGames.value = results.map(data => {
+        const game = data.post || data;
+        if (game) {
+            // Map the likes count so it appears on the spinning CD UI
+            likesCountMap.value.set(game._id, game.likes || 0);
+        }
+        return game;
+    }).filter(g => g !== null);
 
   } catch (err) {
     console.error("Failed to load guest games:", err);
@@ -1989,8 +1976,18 @@ const loadGameProgress = async (gameId) => {
   }
 };
 
+const setAsPfp = () => {
+    closeAchievementPopup();
+    triggerGuestPopup("Account Required", "You must be signed in to equip profile pictures, showcase badges, or save your progress to the cloud.");
+}
+
+const addToAchievements = () => {
+    closeAchievementPopup();
+    triggerGuestPopup("Account Required", "You must be signed in to equip profile pictures, showcase badges, or save your progress to the cloud.");
+}
+
 const saveConsoleProgress = () => {
-    showGuestAuthPopup.value = true;
+    triggerGuestPopup("Account Required", "You must be signed in to equip profile pictures, showcase badges, or save your progress to the cloud.");
 }
 
 const drawViewport = () => {
@@ -2932,8 +2929,10 @@ const preloadUrls = (urls) => {
                 <button class="close-ach-btn" @click="showGuestAuthPopup = false">✕</button>
                 <div class="ach-modal-header" style="text-align: center;">
                     <span style="font-size: 3rem;">🔒</span>
-                    <h3 style="margin-top: 15px;">Account Required</h3>
-                    <p style="color: #94a3b8; margin-top: 10px; font-size: 0.95rem; line-height: 1.5;">You must be signed in to equip profile pictures, showcase badges, or save your progress to the cloud.</p>
+                    
+                    <h3 style="margin-top: 15px;">{{ guestAuthPopupTitle }}</h3>
+                    <p style="color: #94a3b8; margin-top: 10px; font-size: 0.95rem; line-height: 1.5;">{{ guestAuthPopupMessage }}</p>
+                    
                 </div>
                 <div class="ach-modal-actions" style="margin-top: 20px;">
                     <button class="primary-action-btn" @click="router.push('/login')" style="margin-bottom: 10px;">Log In</button>
