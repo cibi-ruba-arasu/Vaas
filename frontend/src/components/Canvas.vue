@@ -4594,6 +4594,35 @@ const getInputType = (comp) => {
     return 'text';
 }
 
+const isStringInput = (comp) => {
+    const targetVar = globalVariables.value.find(v => v.id == comp.targetVariableId);
+    return targetVar && targetVar.type === 'string';
+}
+
+const isIntegerInput = (comp) => {
+    const targetVar = globalVariables.value.find(v => v.id == comp.targetVariableId);
+    return targetVar && targetVar.type === 'integer';
+}
+
+const getIntegerError = (comp) => {
+    if (!isIntegerInput(comp)) return null;
+    
+    // Allow empty typing state without shouting an error immediately
+    if (comp.currentValue === '' || comp.currentValue === null || comp.currentValue === undefined) return null;
+    
+    const num = Number(comp.currentValue);
+    if (isNaN(num)) return "Invalid number";
+    
+    if (comp.minNum !== undefined && comp.minNum !== null && comp.minNum !== '' && num < comp.minNum) {
+        return `Value must be ≥ ${comp.minNum}`;
+    }
+    if (comp.maxNum !== undefined && comp.maxNum !== null && comp.maxNum !== '' && num > comp.maxNum) {
+        return `Value must be ≤ ${comp.maxNum}`;
+    }
+    
+    return null;
+}
+
 // --- PREVIEW MOUSE EVENT HANDLERS FOR CLICKABLE OPTIONS ---
 
 const getPreviewLogicalCoords = (e) => {
@@ -5722,29 +5751,7 @@ const onPreviewWheel = (e) => {
                                 </div>
                             </div>
 
-                            <div class="detail-section" v-if="activeComponent.targetVariableId" style="background: rgba(168, 85, 247, 0.1); padding: 12px; border-radius: 6px; border: 1px solid rgba(168, 85, 247, 0.3);">
-                                <label class="detail-label" style="color: #d8b4fe; margin-bottom: 12px;">Input Constraints</label>
-                                
-                                <div v-if="globalVariables.find(v => v.id == activeComponent.targetVariableId)?.type === 'string'">
-                                    <div class="detail-section" style="margin-bottom: 0;">
-                                        <label class="detail-label">Maximum Characters:</label>
-                                        <input type="number" v-model.number="activeComponent.maxChars" class="detail-input" placeholder="e.g. 50" min="1" />
-                                    </div>
-                                </div>
-
-                                <div v-if="globalVariables.find(v => v.id == activeComponent.targetVariableId)?.type === 'integer'">
-                                    <div style="display: flex; gap: 12px;">
-                                        <div class="detail-section" style="flex: 1; margin-bottom: 0;">
-                                            <label class="detail-label">Minimum Value:</label>
-                                            <input type="number" v-model.number="activeComponent.minNum" class="detail-input" placeholder="e.g. 0" />
-                                        </div>
-                                        <div class="detail-section" style="flex: 1; margin-bottom: 0;">
-                                            <label class="detail-label">Maximum Value:</label>
-                                            <input type="number" v-model.number="activeComponent.maxNum" class="detail-input" placeholder="e.g. 100" />
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                            
 
                             <div class="detail-section">
                                 <label class="detail-label" style="color: #a855f7;">Text Settings</label>
@@ -7538,4 +7545,6 @@ const onPreviewWheel = (e) => {
     box-shadow: 0 0 4px rgba(0,0,0,0.5);
     cursor: ew-resize;
 }
+
+.preview-input-btn { height: 100%; padding: 0 20px; border: none;}
 </style>

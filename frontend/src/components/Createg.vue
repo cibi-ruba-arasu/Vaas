@@ -5656,29 +5656,6 @@ const onPreviewWheel = (e) => {
                                 </div>
                             </div>
 
-                            <div class="detail-section" v-if="activeComponent.targetVariableId" style="background: rgba(168, 85, 247, 0.1); padding: 12px; border-radius: 6px; border: 1px solid rgba(168, 85, 247, 0.3);">
-                                <label class="detail-label" style="color: #d8b4fe; margin-bottom: 12px;">Input Constraints</label>
-                                
-                                <div v-if="globalVariables.find(v => v.id == activeComponent.targetVariableId)?.type === 'string'">
-                                    <div class="detail-section" style="margin-bottom: 0;">
-                                        <label class="detail-label">Maximum Characters:</label>
-                                        <input type="number" v-model.number="activeComponent.maxChars" class="detail-input" placeholder="e.g. 50" min="1" />
-                                    </div>
-                                </div>
-
-                                <div v-if="globalVariables.find(v => v.id == activeComponent.targetVariableId)?.type === 'integer'">
-                                    <div style="display: flex; gap: 12px;">
-                                        <div class="detail-section" style="flex: 1; margin-bottom: 0;">
-                                            <label class="detail-label">Minimum Value:</label>
-                                            <input type="number" v-model.number="activeComponent.minNum" class="detail-input" placeholder="e.g. 0" />
-                                        </div>
-                                        <div class="detail-section" style="flex: 1; margin-bottom: 0;">
-                                            <label class="detail-label">Maximum Value:</label>
-                                            <input type="number" v-model.number="activeComponent.maxNum" class="detail-input" placeholder="e.g. 100" />
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
 
                             <div class="detail-section">
                                 <label class="detail-label" style="color: #a855f7;">Text Settings</label>
