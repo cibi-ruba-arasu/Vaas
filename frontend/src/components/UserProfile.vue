@@ -130,7 +130,7 @@ const getTotalTagCount = (pub) => {
 
 /* --- PFP EDITOR STATE --- */
 const showPfpEditor = ref(false)
-
+const editingPfpId = ref(null);
 const pfpCanvasRef = ref(null)
 
 // ✅ 64x64 Grid (4096 Pixels total)
@@ -138,6 +138,8 @@ const MATRIX_SIZE = 64
 
 const isPainting = ref(false)
 const currentPaintColor = ref('#000000') 
+const currentTool = ref('brush')
+
 const editorState = ref({
   matrix: [], // This will always hold the full 4096 "Dense" array for the editor to use
   bgColors: ['#ffffff'],
@@ -173,37 +175,36 @@ const unpackMatrix = (sparseArray, size) => {
     return dense;
 }
 
-/* --- PFP LOGIC --- */
-const initMatrix = () => {
-  const size = MATRIX_SIZE * MATRIX_SIZE;
-  const savedStatus = user.value.pfp_status;
+const floodFill = (startX, startY, targetColor, replacementColor) => {
+  // If clicking on the exact same color, do nothing
+  if (targetColor === replacementColor) return;
+  
+  const matrix = editorState.value.matrix;
+  const stack = [{ x: startX, y: startY }];
 
-  // 1. Load Background
-  editorState.value.bgColors = savedStatus?.background?.colors?.length 
-      ? [...savedStatus.background.colors] 
-      : ['#ffffff'];
-  editorState.value.bgAngle = savedStatus?.background?.angle || 90;
+  while (stack.length > 0) {
+    const { x, y } = stack.pop();
+    
+    // Bounds check
+    if (x < 0 || x >= MATRIX_SIZE || y < 0 || y >= MATRIX_SIZE) continue;
 
-  // 2. Load Matrix (The Fix)
-  // We check if there is data in the matrix array
-  if (savedStatus && Array.isArray(savedStatus.matrix) && savedStatus.matrix.length > 0) {
-      // Decompress the DB data back into the Editor Grid
-      editorState.value.matrix = unpackMatrix(savedStatus.matrix, size);
-  } else {
-      // No data? Start with a blank canvas
-      editorState.value.matrix = new Array(size).fill(null); 
-  }
-}
-
-// Watch for modal opening to trigger render
-watch(showPfpEditor, (newVal) => {
-    if (newVal) {
-        initMatrix(); // Load data
-        nextTick(() => {
-            drawCanvas(); // Paint data to canvas
-        });
+    const index = y * MATRIX_SIZE + x;
+    
+    // If this pixel matches the color we want to replace...
+    if (matrix[index] === targetColor) {
+      matrix[index] = replacementColor; // Change it
+      
+      // Add adjacent pixels to the stack to be checked next
+      stack.push({ x: x + 1, y });
+      stack.push({ x: x - 1, y });
+      stack.push({ x, y: y + 1 });
+      stack.push({ x, y: y - 1 });
     }
-});
+  }
+  
+  // Repaint the whole canvas once the mathematical fill is complete
+  drawCanvas(); 
+}
 
 const openPfpInventory = () => {
   // Allow opening if editing, OR if they don't have a PFP yet (quick onboarding)
@@ -212,16 +213,43 @@ const openPfpInventory = () => {
 }
 
 const openPixelStudio = () => {
-  showPfpInventory.value = false; // Close collection
-  showPfpEditor.value = true;     // Open pixel studio
+  editingPfpId.value = null; // Reset ID for new creation
+  
+  // Start with a clean slate
+  editorState.value.bgColors = ['#ffffff'];
+  editorState.value.bgAngle = 90;
+  editorState.value.matrix = new Array(MATRIX_SIZE * MATRIX_SIZE).fill(null);
+  
+  showPfpInventory.value = false; 
+  showPfpEditor.value = true;     
+}
+
+const editCustomPfp = (item) => {
+  editingPfpId.value = item.id; // Mark which item we are editing
+  
+  // Safely parse the matrix string back into an array
+  let parsedMatrix = [];
+  try {
+      parsedMatrix = typeof item.matrix === 'string' ? JSON.parse(item.matrix) : item.matrix;
+  } catch (e) {
+      parsedMatrix = [];
+  }
+
+  // Load the specific item's data into the editor state
+  editorState.value.bgColors = [...item.background.colors];
+  editorState.value.bgAngle = item.background.angle;
+  editorState.value.matrix = unpackMatrix(parsedMatrix, MATRIX_SIZE * MATRIX_SIZE);
+  
+  // Switch modals
+  showPfpInventory.value = false;
+  showPfpEditor.value = true;
 }
 
 // Watch for modal opening to trigger render
 watch(showPfpEditor, (newVal) => {
     if (newVal) {
-        initMatrix(); // Load data
         nextTick(() => {
-            drawCanvas(); // Paint data to canvas
+            drawCanvas(); 
         });
     }
 });
@@ -247,28 +275,48 @@ const drawCanvas = () => {
 }
 
 const handleCanvasAction = (e) => {
-  if (!isPainting.value && e.type !== 'mousedown') return;
+  // Allow bucket only on initial tap/click. Allow brush/eraser on click+drag / touch+drag.
+  if (!isPainting.value && e.type !== 'mousedown' && e.type !== 'touchstart') return;
+  
   const canvas = pfpCanvasRef.value;
   const rect = canvas.getBoundingClientRect();
   
-  // Calculate scale (Visual Size / Logical 64px Size)
+  // 🚀 NEW: Extract coordinates (Handles both Mouse and Touch screens)
+  let clientX, clientY;
+  if (e.touches && e.touches.length > 0) {
+    clientX = e.touches[0].clientX;
+    clientY = e.touches[0].clientY;
+  } else {
+    clientX = e.clientX;
+    clientY = e.clientY;
+  }
+
   const scaleX = MATRIX_SIZE / rect.width;
   const scaleY = MATRIX_SIZE / rect.height;
 
-  const x = Math.floor((e.clientX - rect.left) * scaleX);
-  const y = Math.floor((e.clientY - rect.top) * scaleY);
+  const x = Math.floor((clientX - rect.left) * scaleX);
+  const y = Math.floor((clientY - rect.top) * scaleY);
 
   if (x >= 0 && x < MATRIX_SIZE && y >= 0 && y < MATRIX_SIZE) {
     const index = y * MATRIX_SIZE + x;
-    editorState.value.matrix[index] = currentPaintColor.value; // Update State
-    
-    // Update Canvas Visual immediately
-    const ctx = canvas.getContext('2d');
-    if (currentPaintColor.value) {
-        ctx.fillStyle = currentPaintColor.value;
-        ctx.fillRect(x, y, 1, 1);
-    } else {
-        ctx.clearRect(x, y, 1, 1); // Eraser
+
+    // 1. Bucket Tool Logic (Fires on mousedown or touchstart)
+    if (currentTool.value === 'bucket' && (e.type === 'mousedown' || e.type === 'touchstart')) {
+       const targetColor = editorState.value.matrix[index];
+       floodFill(x, y, targetColor, currentPaintColor.value || '#000000');
+    } 
+    // 2. Brush & Eraser Logic
+    else if (currentTool.value === 'brush' || currentTool.value === 'eraser') {
+       const colorToApply = currentTool.value === 'brush' ? currentPaintColor.value : null;
+       editorState.value.matrix[index] = colorToApply;
+       
+       const ctx = canvas.getContext('2d', { willReadFrequently: true });
+       if (colorToApply) {
+           ctx.fillStyle = colorToApply;
+           ctx.fillRect(x, y, 1, 1);
+       } else {
+           ctx.clearRect(x, y, 1, 1);
+       }
     }
   }
 }
@@ -306,29 +354,50 @@ const applyPfpChanges = () => {
     }
   }
 
-
   const base64Image = tempCanvas.toDataURL('image/png'); 
-  
-  // 🚀 FIX: Convert the massive array into a single lightweight string
   const compressedMatrix = JSON.stringify(packMatrix(editorState.value.matrix));
 
-  // 3. Create new Custom PFP Object
-  const newCustomPfp = {
-    id: Date.now().toString(),
-    matrix: compressedMatrix, // Now a string!
+  // 3. Create the Updated/New PFP Object
+  const updatedCustomPfp = {
+    id: editingPfpId.value || Date.now().toString(), // Keep old ID if editing!
+    matrix: compressedMatrix,
     background: {
       colors: [...editorState.value.bgColors],
       angle: editorState.value.bgAngle
     },
     base64: base64Image
   };
-  
 
-  // 4. Ensure inventory arrays exist, then push
+  // 4. Ensure inventory arrays exist
   if (!user.value.pfp_inventory) user.value.pfp_inventory = { custom: [], earned: [] };
   if (!user.value.pfp_inventory.custom) user.value.pfp_inventory.custom = [];
   
-  user.value.pfp_inventory.custom.push(newCustomPfp);
+  // 🚀 NEW: Overwrite if editing, otherwise push new
+  if (editingPfpId.value) {
+      const index = user.value.pfp_inventory.custom.findIndex(p => p.id === editingPfpId.value);
+      if (index !== -1) {
+          user.value.pfp_inventory.custom[index] = updatedCustomPfp;
+      } else {
+          user.value.pfp_inventory.custom.push(updatedCustomPfp); // Fallback
+      }
+  } else {
+      user.value.pfp_inventory.custom.push(updatedCustomPfp);
+  }
+
+  // 5. Set it as active immediately
+  user.value.active_pfp_type = 'custom';
+  user.value.active_earned_ref = null;
+  user.value.profilePic = base64Image;
+  
+  // Legacy support fallback
+  user.value.pfp_status = { 
+    matrix: compressedMatrix,
+    background: updatedCustomPfp.background
+  };
+  
+  showPfpEditor.value = false;
+  editingPfpId.value = null; // 🚀 Reset the ID tracker!
+  saveProfile();
 
   // 5. Set it as active immediately
   user.value.active_pfp_type = 'custom';
@@ -593,6 +662,10 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
                  @mousemove="handleCanvasAction"
                  @mouseup="stopPainting"
                  @mouseleave="stopPainting"
+                 @touchstart.prevent="startPainting"
+                 @touchmove.prevent="handleCanvasAction"
+                 @touchend="stopPainting"
+                 @touchcancel="stopPainting"
                  :style="{ background: getGradient(editorState.bgColors, editorState.bgAngle) }">
               <canvas ref="pfpCanvasRef" width="64" height="64" class="pixel-canvas"></canvas>
             </div>
@@ -601,13 +674,18 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
           
           <div class="settings-section">
             <div class="setting-group">
-              <label>Brush Color</label>
-              <div class="color-picker-row">
-                <div class="color-preview" :style="{ backgroundColor: currentPaintColor || 'transparent' }"></div>
-                <input type="color" v-model="currentPaintColor" class="main-color-input" v-if="currentPaintColor !== null" />
-                <button class="eraser-btn" :class="{ active: currentPaintColor === null }" @click="currentPaintColor = null">
-                  Eraser
-                </button>
+              <label>Tools & Color</label>
+              <div class="tool-picker-row">
+                <div class="tools">
+                  <button class="tool-btn" :class="{ active: currentTool === 'brush' }" @click="currentTool = 'brush'" title="Paint Brush">🖌️</button>
+                  <button class="tool-btn" :class="{ active: currentTool === 'bucket' }" @click="currentTool = 'bucket'" title="Fill Bucket">🪣</button>
+                  <button class="tool-btn" :class="{ active: currentTool === 'eraser' }" @click="currentTool = 'eraser'" title="Eraser">🧽</button>
+                </div>
+                
+                <div class="color-picker-wrap">
+                  <div class="color-preview" :style="{ backgroundColor: currentPaintColor || '#000000' }"></div>
+                  <input type="color" v-model="currentPaintColor" @input="currentTool = 'brush'" class="main-color-input" />
+                </div>
               </div>
             </div>
 
@@ -661,6 +739,7 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
                 <div class="pfp-preview" :style="{ backgroundImage: `url(${item.base64})` }"></div>
                 <div class="pfp-actions">
                   <button class="equip-btn" @click="equipPfp('custom', item)">Equip</button>
+                  <button class="edit-btn" @click="editCustomPfp(item)">Edit</button>
                   <button class="delete-btn" @click="deleteCustomPfp(item.id, $event)" title="Delete Design">🗑️</button>
                 </div>
                 
@@ -1064,11 +1143,9 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
 .setting-group { display: flex; flex-direction: column; gap: 10px; }
 .setting-group label { color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
 
-.color-picker-row { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.05); padding: 8px; border-radius: 8px; }
 .color-preview { width: 30px; height: 30px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2); }
 .main-color-input { flex: 1; height: 30px; border: none; padding: 0; background: none; cursor: pointer; }
 
-.eraser-btn { padding: 6px 12px; font-size: 0.8rem; background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #cbd5e1; border-radius: 4px; cursor: pointer; transition: 0.2s; }
 .eraser-btn:hover { background: rgba(255,255,255,0.1); color: white; }
 .eraser-btn.active { background: #3b82f6; border-color: #3b82f6; color: white; }
 
@@ -1654,4 +1731,59 @@ const removeColor = (array, index) => { if (array.length > 1) array.splice(index
 .pfp-prompt .prompt-title {
   padding-right: 20px;
 }
+
+.edit-btn {
+  background: rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+.edit-btn:hover { background: rgba(255, 255, 255, 0.2); color: white; }
+
+.tool-picker-row { 
+  display: flex; 
+  align-items: center; 
+  justify-content: space-between;
+  background: rgba(255,255,255,0.05); 
+  padding: 8px; 
+  border-radius: 8px; 
+}
+
+.tools {
+  display: flex;
+  gap: 8px;
+}
+
+.tool-btn {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: white;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  transition: all 0.2s;
+}
+
+.tool-btn:hover { background: rgba(255,255,255,0.1); }
+.tool-btn.active { background: #3b82f6; border-color: #60a5fa; box-shadow: 0 0 10px rgba(59, 130, 246, 0.4); }
+
+.color-picker-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+}
+
+.color-preview { width: 30px; height: 30px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2); }
+.main-color-input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 </style>
