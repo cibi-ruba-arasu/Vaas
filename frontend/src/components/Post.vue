@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { API_URL } from '../config.js';
 import Popup from './Popup.vue'; //
+import AgeConfirm from './AgeConfirm.vue';
 const showAuthModal = ref(false); //
 const authModalConfig = ref({ title: '', desc: '', icon: '' }); //
 document.title = "The Weave";
@@ -792,6 +793,7 @@ onMounted(() => {
         <button class="auth-btn register-main" @click="router.push('/register')">Register</button>
       </template>
     </Popup>
+    <AgeConfirm />
   </div>
 </template>
 

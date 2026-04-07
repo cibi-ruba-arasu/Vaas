@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, computed, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { API_URL } from '../config.js';
 import Popup from './Popup.vue'; //
+import AgeConfirm from './AgeConfirm.vue';
 const showAuthModal = ref(false);
 const route = useRoute()
 const router = useRouter()
@@ -546,6 +547,7 @@ watch(() => projects.value, (newVal) => {
         <button class="auth-btn register-main" @click="router.push('/register')">Register</button>
       </template>
     </Popup>
+    <AgeConfirm />
   </div>
 </template>
 
@@ -684,9 +686,21 @@ watch(() => projects.value, (newVal) => {
 .card-meta { display: flex; justify-content: space-between; font-size: 0.75rem; color: #64748b; }
 
 @media (max-width: 768px) {
-  .header-content { flex-direction: column; align-items: center; text-align: center; }
-  .identity-col { flex-direction: column; }
+  /* 1. Reduce massive padding on small screens to prevent squeezing/overflow */
+  .profile-header { padding: 1.5rem 1rem; }
+  
+  /* 2. Force center alignment on all main column containers */
+  .header-content { flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .identity-col { flex-direction: column; align-items: center; width: 100%; }
+  
+  /* 3. Ensure inline flex rows center their content instead of defaulting to the left */
+  .name-row { justify-content: center; width: 100%; flex-wrap: wrap; text-align: center; }
+  .location-row { display: flex; justify-content: center; width: 100%; text-align: center; }
+  
   .actions-col { align-items: center; width: 100%; }
+  
+  /* 4. Slightly shrink the stats gap so they don't cause right-side overflow on very narrow phones */
+  .stats-row { justify-content: center; width: 100%; gap: 15px; } 
 }
 
 .badges-section {
