@@ -584,6 +584,22 @@ const continueAfterGift = () => {
     }, 400); // Slightly shorter than animation to ensure smooth transition
 }
 
+const sanitizeInput = (comp) => {
+    // 1. Find the active variables for this specific instance
+    const inst = gameInstances.value.find(i => i.id === activeInstanceId.value);
+    const activeVars = (inst && inst.variables) ? inst.variables : (activeEngineData.value?.canvasState?.globalVariables || []);
+    
+    // 2. Locate the specific variable this input is bound to
+    const targetVar = activeVars.find(v => String(v.id) === String(comp.targetVariableId));
+
+    // 3. If it's an integer, scrub the input in real-time
+    if (targetVar && targetVar.type === 'integer') {
+        let currentVal = inputValues.value[comp.id] || '';
+        // Replace anything that is NOT a digit (allows a minus sign at the very beginning)
+        inputValues.value[comp.id] = String(currentVal).replace(/(?!^-)[^0-9]/g, '');
+    }
+}
+
 // Submits the input and saves it to the current instance's variables
 const submitInput = (comp) => {
     if (comp.isSubmitted) return;
@@ -2568,6 +2584,7 @@ const preloadUrls = (urls) => {
                                             <input 
                                                 type="text" 
                                                 v-model="inputValues[comp.id]"
+                                                @input="sanitizeInput(comp)"
                                                 :placeholder="comp.placeholderText" 
                                                 :disabled="comp.isSubmitted"
                                                 @focus="inputFocusState[comp.id] = true"
