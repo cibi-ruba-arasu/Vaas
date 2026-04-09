@@ -1314,8 +1314,18 @@ const handleWheel = (e) => {
 }
 
 const removeGame = async (id) => {
+    // 1. Remove from the visual UI
     myGames.value = myGames.value.filter(g => g._id !== id)
+    
+    // 2. Clean up the user's progress/status tracker in the browser memory
+    if (Console_Status.value.games[id]) {
+        delete Console_Status.value.games[id];
+        Console_Status.value = { ...Console_Status.value };
+    }
+
     trackAction("EJECTED_GAME", { gameId: id })
+    
+    // 3. Permanently remove it from the backend database
     try {
         await fetch(`${API_URL}/console/remove/${id}`, {
             method: 'DELETE',

@@ -1082,16 +1082,21 @@ const handleWheel = (e) => {
 }
 
 const removeGame = async (id) => {
+    // 1. Remove from the visual UI
     myGames.value = myGames.value.filter(g => g._id !== id)
-    trackAction("EJECTED_GAME", { gameId: id })
-    try {
-        await fetch(`${API_URL}/console/remove/${id}`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${token}` }
-        })
-    } catch(err) {
-        console.error("Failed to remove", err)
+    
+    // 2. CRITICAL FIX: Remove from Guest's Local Storage
+    const guestGameIds = JSON.parse(localStorage.getItem('guest_games') || '[]');
+    const updatedIds = guestGameIds.filter(gameId => gameId !== id);
+    localStorage.setItem('guest_games', JSON.stringify(updatedIds));
+
+    // 3. Clean up the guest's progress/status tracker to free up memory
+    if (Console_Status.value.games[id]) {
+        delete Console_Status.value.games[id];
+        Console_Status.value = { ...Console_Status.value }; 
     }
+
+    trackAction("EJECTED_GAME", { gameId: id })
 }
 
 /* ================= GAME POPUP MODAL LOGIC & ANIMATION ================= */
