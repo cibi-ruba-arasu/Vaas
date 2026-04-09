@@ -407,4 +407,13 @@ onMounted(() => {
     font-style: italic;
     opacity: 0.7;
 }
+
+.header-left-actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-right: auto; /* Pushes the rest of your header items to the right */
+    padding-left: 10px;
+}
+
 </style>

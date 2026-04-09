@@ -8,7 +8,7 @@ sessionStorage.clear();
 const route = useRoute()
 const projectId = route.params.projectId
 const token = sessionStorage.getItem("token")
-
+const router = useRouter()
 const cursorStyle = ref('default') // Needed for the template :style="{ cursor: cursorStyle }"
 
 const giftPixelData = ref([]) // 2D Array [64][64] storing hex codes or null
@@ -362,6 +362,10 @@ const formattedAutoSaveTime = computed(() => {
 
 
 
+
+
+
+
 const Canvas_Status = ref([]) 
 
 
@@ -400,6 +404,12 @@ const mediaLoadingCount = computed(() => {
     });
     return { loaded, total };
 });
+
+const openTutorials = () => {
+    window.open("https://www.youtube.com/watch?v=uBE2cR4qaLY&list=PLAC06_fjjQFWUJ4VDSSZsu4D3pEjpCnKP", "_blank")
+}
+const goToLogin = () => router.push("/login")
+const goToRegister = () => router.push("/register")
 
 const registerMedia = (id, name, type) => {
     mediaRegistry.value.set(id, { id, name, type, status: 'loading' });
@@ -4969,15 +4979,29 @@ const onPreviewWheel = (e) => {
       <div class="context-menu-item" style="color: #f87171;" @click="quickDeleteComponent">🗑️ Delete</div>
     </div>
     <header class="header">
-      <button class="hamburger" @click="toggleMenu">☰</button>
-      <div class="canvas-container" :style="{ cursor: cursorStyle }">
-    
+      <div class="header-left-actions">
+        <button class="hamburger" @click="toggleMenu">☰</button>
+        
+        <button class="tutorial-btn" @click="openTutorials" title="Watch Tutorials">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28">
+              <path fill="#FF0000" d="M21.582,6.186c-0.23-0.86-0.908-1.538-1.768-1.768C18.254,4,12,4,12,4S5.746,4,4.186,4.418c-0.86,0.23-1.538,0.908-1.768,1.768 C2,7.746,2,12,2,12s0,4.254,0.418,5.814c0.23,0.86,0.908,1.538,1.768,1.768C5.746,20,12,20,12,20s6.254,0,7.814-0.418 c0.86-0.23,1.538-0.908,1.768-1.768C22,16.254,22,12,22,12S22,7.746,21.582,6.186z"/>
+              <polygon fill="#FFFFFF" points="10,15.464 16,12 10,8.536"/>
+            </svg>
+        </button>
+
+        <button class="auth-btn" @click="goToLogin">Login</button>
+        <button class="auth-btn register" @click="goToRegister">Register</button>
+    </div>
+      
+        <div class="canvas-container" :style="{ cursor: cursorStyle }">
+        
         <div class="notification-popup" :class="[notification.type, { 'show': notification.show }]">
             {{ notification.message }}
         </div>
       
       <div class="center">
         <div class="project-header-info">
+            
             <div class="title">{{ projectName }}</div>
             <div class="subtitle">
                 <span class="by-text">by </span> 
@@ -6656,8 +6680,6 @@ const onPreviewWheel = (e) => {
 }
 
 .hamburger {
-  position: absolute;
-  left: 16px;
   font-size: 22px;
   background: none;
   border: none;
@@ -7477,5 +7499,56 @@ const onPreviewWheel = (e) => {
     border: 2px solid #374151;
     box-shadow: 0 0 4px rgba(0,0,0,0.5);
     cursor: ew-resize;
+}
+
+.tutorial-btn {
+  font-size: 22px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+  z-index: 20;
+  /* NEW: Flexbox alignment for the SVG */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.tutorial-btn:hover {
+  transform: scale(1.1);
+  filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.4));
+}
+
+.auth-btn {
+  background: transparent;
+  border: 1px solid #cbd5e1;
+  color: #cbd5e1;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 0.9rem;
+  z-index: 1;
+}
+.auth-btn:hover {
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+}
+.auth-btn.register {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: #fff;
+}
+.auth-btn.register:hover {
+  background: #2563eb;
+}
+.header-left-actions {
+  position: absolute;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 20;
 }
 </style>

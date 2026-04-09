@@ -8,7 +8,7 @@ import { API_URL } from '../config.js';
 const route = useRoute()
 const projectId = route.params.projectId
 const token = sessionStorage.getItem("token")
-
+const router = useRouter()
 const cursorStyle = ref('default') // Needed for the template :style="{ cursor: cursorStyle }"
 
 const giftPixelData = ref([]) // 2D Array [64][64] storing hex codes or null
@@ -161,6 +161,10 @@ const handlePixelInteract = (e) => {
         }
         requestAnimationFrame(renderPixelCanvas)
     }
+}
+
+const openTutorials = () => {
+    window.open("https://www.youtube.com/watch?v=uBE2cR4qaLY&list=PLAC06_fjjQFWUJ4VDSSZsu4D3pEjpCnKP", "_blank")
 }
 
 const floodFillPixels = (startX, startY, newColor) => {
@@ -5064,7 +5068,16 @@ const onPreviewWheel = (e) => {
       <div class="context-menu-item" style="color: #f87171;" @click="quickDeleteComponent">🗑️ Delete</div>
     </div>
     <header class="header">
-      <button class="hamburger" @click="toggleMenu">☰</button>
+      <div class="header-left-actions">
+        <button class="hamburger" @click="toggleMenu">☰</button>
+        
+        <button class="tutorial-btn" @click="openTutorials" title="Watch Tutorials">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28">
+              <path fill="#FF0000" d="M21.582,6.186c-0.23-0.86-0.908-1.538-1.768-1.768C18.254,4,12,4,12,4S5.746,4,4.186,4.418c-0.86,0.23-1.538,0.908-1.768,1.768 C2,7.746,2,12,2,12s0,4.254,0.418,5.814c0.23,0.86,0.908,1.538,1.768,1.768C5.746,20,12,20,12,20s6.254,0,7.814-0.418 c0.86-0.23,1.538-0.908,1.768-1.768C22,16.254,22,12,22,12S22,7.746,21.582,6.186z"/>
+              <polygon fill="#FFFFFF" points="10,15.464 16,12 10,8.536"/>
+            </svg>
+        </button>
+      </div>
       <div class="canvas-container" :style="{ cursor: cursorStyle }">
     
         <div class="notification-popup" :class="[notification.type, { 'show': notification.show }]">
@@ -6722,14 +6735,18 @@ const onPreviewWheel = (e) => {
   z-index: 10;
 }
 
+
 .hamburger {
-  position: absolute;
-  left: 16px;
+  position: static !important; /* Forces the button to sit inside the flex row */
   font-size: 22px;
   background: none;
   border: none;
   color: #00ff88;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  margin: 0;
 }
 
 .title { 
@@ -6738,6 +6755,16 @@ const onPreviewWheel = (e) => {
   font-weight: 700;
   text-shadow: 0 0 10px rgba(0, 255, 136, 0.2);
   letter-spacing: 0.5px;
+}
+
+.header-left-actions {
+  position: absolute;
+  left: 16px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  z-index: 20;
 }
 
 .subtitle {
@@ -7547,4 +7574,22 @@ const onPreviewWheel = (e) => {
 }
 
 .preview-input-btn { height: 100%; padding: 0 20px; border: none;}
+
+.tutorial-btn {
+  position: static !important; /* Forces the button to sit inside the flex row */
+  font-size: 22px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+}
+.tutorial-btn:hover {
+  transform: scale(1.1);
+  filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.4));
+}
 </style>
