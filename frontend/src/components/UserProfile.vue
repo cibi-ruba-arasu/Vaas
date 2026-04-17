@@ -624,11 +624,20 @@ const saveProfile = async () => {
   }
 }
 
-const toggleEdit = () => {
+const toggleEdit = async () => {
   if (isEditing.value) {
     fetchData(); 
   }
-  isEditing.value = !isEditing.value
+  
+  isEditing.value = !isEditing.value;
+
+  // 🚀 FIX: If we just entered edit mode, wait for textareas to render, then resize them
+  if (isEditing.value) {
+    await nextTick();
+    for (const id in blockRefs.value) {
+      autoResize(blockRefs.value[id]);
+    }
+  }
 }
 
 const logout = () => {
