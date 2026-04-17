@@ -1705,6 +1705,8 @@ const applyTextStyle = (styleType, value) => {
                 activeComponent.value.textDecoration = activeComponent.value.textDecoration === 'line-through' ? 'none' : 'line-through';
             }
         }
+        
+        drawComponents(); // <--- ADD THIS to update canvas instantly
         return;
     }
 
@@ -1732,6 +1734,8 @@ const applyTextStyle = (styleType, value) => {
              activeComponent.value.textDecorationColor = value
          }
     }
+    
+    drawComponents(); // <--- ADD THIS to update canvas instantly
 }
 
 /* ================= VIDEO HANDLING FUNCTIONS ================= */
@@ -5546,12 +5550,12 @@ const onPreviewWheel = (e) => {
                                 @input="handleTextContentChange"  @select="handleTextSelect"
                                 />
                                 
-                                <div v-if="textSelection.text.length > 0" class="formatting-controls">
+                                <div class="formatting-controls">
                                 <button class="format-btn" @click="applyTextStyle('bold', activeComponent.fontWeight === 'bold' ? 'normal' : 'bold')" :class="{ active: activeComponent.fontWeight === 'bold' }" title="Bold">B</button>
                                 <button class="format-btn" @click="applyTextStyle('italic')" :class="{ active: activeComponent.fontStyle === 'italic' }" title="Italic">I</button>
                                 <button class="format-btn" @click="applyTextStyle('underline')" :class="{ active: activeComponent.textDecoration === 'underline' }" title="Underline">U</button>
                                 <button class="format-btn" @click="applyTextStyle('strikethrough')" :class="{ active: activeComponent.textDecoration === 'line-through' }" title="Strikethrough">S</button>
-                                <input type="color" v-model="activeComponent.textDecorationColor" class="mini-color-input" title="Line Color" />
+                                <input type="color" v-model="activeComponent.textDecorationColor" @input="drawComponents" class="mini-color-input" title="Line Color" />
                                 </div>
                             </div>
 
