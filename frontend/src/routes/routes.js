@@ -118,7 +118,7 @@ const routes = [
     name: 'Documentation',
     // Adjust the path below to match where you create Doc.vue
     component: Doc, 
-    meta: { requiresAuth: true } // Assuming they need to be logged in to read it
+    // REMOVED meta: { requiresAuth: true } so guests from Createg can read it!
   },
   {
     path: "/homeg",

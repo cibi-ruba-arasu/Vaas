@@ -411,6 +411,8 @@ const openTutorials = () => {
 const goToLogin = () => router.push("/login")
 const goToRegister = () => router.push("/register")
 
+const goToDocs = () => window.open("/docs", "_blank")
+
 const registerMedia = (id, name, type) => {
     mediaRegistry.value.set(id, { id, name, type, status: 'loading' });
     return (status) => {
@@ -4995,6 +4997,10 @@ const onPreviewWheel = (e) => {
 
         <button class="auth-btn" @click="goToLogin">Login</button>
         <button class="auth-btn register" @click="goToRegister">Register</button>
+        <button class="media-status-btn docs-btn" @click="goToDocs" title="View Updated Documentation">
+            Docs
+            <span class="update-dot"></span>
+        </button>
     </div>
       
         <div class="canvas-container" :style="{ cursor: cursorStyle }">
@@ -7554,5 +7560,20 @@ const onPreviewWheel = (e) => {
   align-items: center;
   gap: 12px;
   z-index: 20;
+}
+
+.docs-btn {
+    position: relative;
+    font-weight: bold;
+}
+.update-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background-color: #00ff88;
+    border-radius: 50%;
+    box-shadow: 0 0 5px #00ff88;
+    margin-left: 6px;
+    animation: pulse 2s infinite;
 }
 </style>

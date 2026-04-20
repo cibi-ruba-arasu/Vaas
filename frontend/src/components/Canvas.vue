@@ -167,6 +167,8 @@ const openTutorials = () => {
     window.open("https://www.youtube.com/watch?v=uBE2cR4qaLY&list=PLAC06_fjjQFWUJ4VDSSZsu4D3pEjpCnKP", "_blank")
 }
 
+const goToDocs = () => window.open("/docs", "_blank")
+
 const floodFillPixels = (startX, startY, newColor) => {
     const targetColor = giftPixelData.value[startY][startX]
     if (targetColor === newColor) return
@@ -5081,6 +5083,10 @@ const onPreviewWheel = (e) => {
               <polygon fill="#FFFFFF" points="10,15.464 16,12 10,8.536"/>
             </svg>
         </button>
+        <button class="media-status-btn docs-btn" @click="goToDocs" title="View Updated Documentation" style="height: 28px; padding: 0 8px; font-size: 0.85rem; margin-left: 8px;">
+            Docs
+            <span class="update-dot"></span>
+        </button>
       </div>
       <div class="canvas-container" :style="{ cursor: cursorStyle }">
     
@@ -7595,5 +7601,20 @@ const onPreviewWheel = (e) => {
 .tutorial-btn:hover {
   transform: scale(1.1);
   filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.4));
+}
+
+.docs-btn {
+    position: relative;
+    font-weight: bold;
+}
+.update-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background-color: #00ff88;
+    border-radius: 50%;
+    box-shadow: 0 0 5px #00ff88;
+    margin-left: 6px;
+    animation: pulse 2s infinite;
 }
 </style>
