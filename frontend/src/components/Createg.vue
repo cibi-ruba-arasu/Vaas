@@ -493,6 +493,2402 @@ const saveProjectData = async (isAutoSave = false) => {
   autoSaveTimer.value = autoSaveDuration;
 };
 
+const exportProject = async () => {
+    try {
+        // 1. Check if the browser supports the File System Access API
+        if (!window.showDirectoryPicker) {
+            triggerNotification("Your browser doesn't support direct folder exports. Please use Chrome or Edge.", "error");
+            return;
+        }
+
+        // 2. IMMEDIATELY prompt for the folder to preserve the Browser's User Gesture Security Token!
+        let dirHandle;
+        try {
+            dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        } catch (err) {
+            if (err.name === 'AbortError') return; // Exit silently if user closes the folder picker
+            throw err;
+        }
+
+        // 3. 🚀 MOVED THE GUEST WARNING POPUP HERE
+        // Now that the secure folder picker is satisfied, we can safely pause the code.
+        const proceed = confirm("For big projects, it is recommended to create games on the Weaver.\n\nThis is just a playground for guests to test the waters. If you want to go professional and save your creations securely to the database, you can write in the official Weaver!\n\nDo you want to continue with the export?");
+        
+        // If the user clicks "Cancel", stop the export process.
+        if (!proceed) return;
+
+        let defaultName = projectName.value || 'index';
+        defaultName = defaultName.replace(/[^a-zA-Z0-9_-]/g, '_'); 
+        
+        // 4. NOW prompt for HTML file name
+        let fileName = prompt(
+            "Name your game file.\n\nRULES:\n- Use ONLY letters, numbers, dashes (-), and underscores (_).\n- NO spaces or special characters (like ? @ # %).\n\nEnter name:", 
+            defaultName
+        );
+        
+        if (!fileName) return; // Exit if user cancels
+
+        // 5. Friendly error validation
+        const isValidName = /^[a-zA-Z0-9_-]+(\.html)?$/.test(fileName);
+        if (!isValidName) {
+            triggerNotification("Invalid file name. Please avoid spaces and special characters.", "error");
+            return;
+        }
+        
+        const safeFileName = fileName.toLowerCase().endsWith('.html') ? fileName : `${fileName}.html`;
+
+        // 6. Create assets directory inside the chosen folder
+        const assetsDirHandle = await dirHandle.getDirectoryHandle('assets', { create: true });
+        
+        triggerNotification("Exporting... Please wait while media is saved. ⏳", "success");
+
+        // 7. Find all unique media URLs across the project
+        const urlMap = {}; 
+        const mediaUrls = new Set();
+        
+        Canvas_Status.value.forEach(node => {
+            if (node.audio && node.audio.url) mediaUrls.add(node.audio.url);
+            if (node.giftAudio && node.giftAudio.url) mediaUrls.add(node.giftAudio.url);
+            if (node.scenes) {
+                node.scenes.forEach(scene => {
+                    if (scene.components) {
+                        scene.components.forEach(comp => {
+                            if ((comp.type === 'image' || comp.type === 'video') && comp.url) {
+                                mediaUrls.add(comp.url);
+                            }
+                        });
+                    }
+                });
+            }
+        });
+
+        // 8. Download and save each media file
+        for (const url of mediaUrls) {
+            try {
+                const response = await fetch(url);
+                const blob = await response.blob();
+                
+                let originalName;
+                if (url.startsWith('data:')) {
+                    const mime = url.split(';')[0].split(':')[1];
+                    const ext = mime.split('/')[1] || 'bin';
+                    originalName = `asset_${Date.now()}_${Math.floor(Math.random()*1000)}.${ext}`;
+                } else {
+                    originalName = url.split('/').pop().split('?')[0] || `media_${Date.now()}`;
+                    originalName = originalName.replace(/[^a-zA-Z0-9.-]/g, '_'); 
+                }
+
+                const fileHandle = await assetsDirHandle.getFileHandle(originalName, { create: true });
+                const writable = await fileHandle.createWritable();
+                await writable.write(blob);
+                await writable.close();
+                
+                urlMap[url] = `./assets/${originalName}`;
+            } catch (e) {
+                console.error("Failed to download asset:", url, e);
+            }
+        }
+
+        // 9. Clone Canvas_Status and update URLs to point to local assets
+        const exportStatus = JSON.parse(JSON.stringify(Canvas_Status.value));
+        exportStatus.forEach(node => {
+            if (node.audio && node.audio.url && urlMap[node.audio.url]) {
+                node.audio.url = urlMap[node.audio.url];
+            }
+            if (node.giftAudio && node.giftAudio.url && urlMap[node.giftAudio.url]) {
+                node.giftAudio.url = urlMap[node.giftAudio.url];
+            }
+            if (node.scenes) {
+                node.scenes.forEach(scene => {
+                    if (scene.components) {
+                        scene.components.forEach(comp => {
+                            if ((comp.type === 'image' || comp.type === 'video') && comp.url && urlMap[comp.url]) {
+                                comp.url = urlMap[comp.url];
+                            }
+                            // Cleanup references that shouldn't be stringified
+                            if (comp.imgObject) delete comp.imgObject;
+                            if (comp.videoElement) delete comp.videoElement;
+                            if (comp.domElement) delete comp.domElement;
+                        });
+                    }
+                });
+            }
+        });
+
+        // 10. Package the game data (Safely escaping closing tags for embedding)
+        const projectData = {
+            nodes: exportStatus,
+            globalVariables: globalVariables.value,
+            rootNodeId: rootNodeId.value
+        };
+        const safeJsonString = JSON.stringify(projectData).replace(/</g, '\\u003c');
+
+        // 11. Save the HTML file with Embedded JSON, Workspace UI, and Inline Editing
+        const htmlHandle = await dirHandle.getFileHandle(safeFileName, { create: true });
+        const htmlWritable = await htmlHandle.createWritable();
+        
+        const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>${projectName.value || 'My Weave'}</title>
+    <style>
+        body { background-color: #0f172a; color: #fff; font-family: 'Inter', sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; width: 100vw; overflow: hidden; }
+        
+        /* Fullscreen Popup Request Overlay */
+        #fs-popup { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px); z-index: 99999; display: flex; align-items: center; justify-content: center; transition: opacity 0.4s ease; }
+        .fs-box { background: #1e293b; border: 1px solid #3b82f6; border-radius: 16px; padding: 40px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.6); max-width: 400px; }
+        .fs-box h2 { margin-top: 0; font-family: serif; color: #f8fafc; font-size: 1.8rem; }
+        .fs-box p { color: #94a3b8; margin-bottom: 25px; line-height: 1.5; }
+        .fs-btn { background: #3b82f6; color: white; border: none; padding: 12px 30px; font-size: 1.1rem; border-radius: 8px; font-weight: bold; cursor: pointer; transition: 0.2s; margin: 0 5px; box-shadow: 0 4px 15px rgba(59,130,246,0.3); }
+        .fs-btn:hover { background: #2563eb; transform: translateY(-2px); box-shadow: 0 6px 20px rgba(59,130,246,0.5); }
+        .fs-btn.secondary { background: transparent; border: 1px solid #64748b; color: #cbd5e1; box-shadow: none; }
+        .fs-btn.secondary:hover { background: rgba(255,255,255,0.1); border-color: #94a3b8; }
+
+        /* Workspace Styles */
+        .workspace-header { display: flex; justify-content: space-between; align-items: center; padding: 15px 25px; background: rgba(2, 6, 23, 0.8); border-bottom: 1px solid rgba(255, 255, 255, 0.05); flex-shrink: 0; }
+        .workspace-header-title { color: #94a3b8; font-size: 1.2rem; letter-spacing: 2px; text-transform: uppercase; font-family: serif; }
+        .header-actions { display: flex; gap: 10px; align-items: center; }
+        
+        .header-fs-btn { background: transparent; border: 1px solid #64748b; color: #cbd5e1; padding: 8px 16px; border-radius: 20px; font-weight: bold; cursor: pointer; transition: 0.3s; display: none; font-size: 0.9rem; }
+        .header-fs-btn:hover { background: rgba(255,255,255,0.1); border-color: #94a3b8; color: #fff; }
+        
+        .start-game-btn { background: #10b981; color: #fff; border: none; padding: 8px 24px; border-radius: 20px; font-weight: bold; cursor: pointer; transition: 0.3s; box-shadow: 0 0 15px rgba(16, 185, 129, 0.4); }
+        .start-game-btn:hover { background: #059669; transform: scale(1.05); }
+        
+        .workspace-grid { display: flex; flex: 1; gap: 20px; padding: 20px; overflow: hidden; width: 100%; box-sizing: border-box; }
+        .workspace-left { width: 320px; display: flex; flex-direction: column; gap: 20px; flex-shrink: 0; overflow-y: auto; overflow-x: hidden; padding-right: 5px; }
+        .workspace-right { flex: 1; display: flex; min-width: 0; }
+        .workspace-box { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+        .top-square { height: 250px; flex-shrink: 0; display: flex; flex-direction: column; }
+        .bottom-rect { flex: 1; display: flex; flex-direction: column; flex-shrink: 0; min-height: 350px; }
+        .main-viewport { flex: 1; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.5); padding: 0; }
+        
+        /* Dynamic Instance UI Styles */
+        .instance-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .box-title-static { font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin: 0; }
+        .add-instance-btn { background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.4); color: #60a5fa; border-radius: 4px; cursor: pointer; padding: 4px 8px; font-size: 0.75rem; font-weight: bold; transition: 0.2s; }
+        .add-instance-btn:hover { background: rgba(59,130,246,0.3); color: #fff; }
+        .instances-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 5px; }
+        
+        .instance-item { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255,255,255,0.05); padding: 10px 12px; border-radius: 8px; display: flex; align-items: center; gap: 10px; cursor: pointer; transition: 0.2s; min-height: 20px; }
+        .instance-item:hover { background: rgba(255,255,255,0.08); }
+        .instance-item.active { background: rgba(59, 130, 246, 0.15); border-color: #3b82f6; }
+        .instance-name { color: white; font-size: 0.9rem; flex: 1; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; user-select: none; }
+        
+        /* Inline Editor Styles */
+        .inline-edit-input { background: rgba(15, 23, 42, 0.9); border: 1px solid #3b82f6; color: #fff; border-radius: 4px; padding: 4px 8px; font-size: 0.9rem; width: 100%; box-sizing: border-box; outline: none; font-family: 'Inter', sans-serif; }
+        .inline-edit-input:focus { box-shadow: 0 0 5px rgba(59,130,246,0.5); }
+        
+        .instance-rename-btn { background: transparent; border: none; color: #64748b; cursor: pointer; opacity: 0; transition: 0.2s; font-size: 1rem; padding: 0 4px; }
+        .instance-item:hover .instance-rename-btn { opacity: 1; }
+        .instance-rename-btn:hover { color: #fff; }
+
+        .viewport-header { position: absolute; top: 0; left: 0; width: 100%; background: rgba(15, 23, 42, 0.85); border-bottom: 1px solid rgba(59, 130, 246, 0.3); padding: 10px 20px; display: flex; align-items: center; gap: 12px; z-index: 10; box-sizing: border-box; }
+        .status-pulse { width: 8px; height: 8px; background: #10b981; border-radius: 50%; box-shadow: 0 0 8px #10b981; animation: pulse 2s infinite; }
+        .header-instance-name { color: #fff; font-weight: 700; font-size: 0.95rem; }
+        .header-game-name { color: #94a3b8; font-size: 0.85rem; font-style: italic; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        
+        .data-tabs { display: flex; gap: 10px; background: rgba(0, 0, 0, 0.4); padding: 5px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.05); margin-top: 30px; flex-shrink: 0; margin-bottom: 15px; }
+        .data-tab-btn { flex: 1; background: transparent; border: none; color: #64748b; padding: 8px 0; font-size: 0.85rem; font-weight: bold; border-radius: 6px; cursor: pointer; }
+        .data-tab-btn.active { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+        
+        /* Reward Progress Bar Styles */
+        .progress-wrapper { background: rgba(0,0,0,0.3); border-radius: 8px; padding: 12px; margin-bottom: 15px; border: 1px solid rgba(255,255,255,0.05); flex-shrink: 0; }
+        .progress-header { display: flex; justify-content: space-between; font-size: 0.75rem; color: #94a3b8; margin-bottom: 8px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
+        .progress-bar-bg { width: 100%; height: 6px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; }
+        .progress-bar-fill { height: 100%; background: #3b82f6; transition: width 0.4s ease; box-shadow: 0 0 10px rgba(59,130,246,0.5); }
+
+        /* Reward Grid & Thumbnail Canvas Styles */
+        .gift-item { background: rgba(255,255,255,0.05); padding: 10px; border-radius: 8px; text-align: center; cursor: pointer; transition: 0.2s; border: 1px solid transparent; }
+        .gift-item:hover { background: rgba(59,130,246,0.15); border-color: rgba(59,130,246,0.4); transform: translateY(-2px); }
+        .gift-name { font-size: 0.8rem; margin-top: 5px; color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        #gifts-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; overflow-y: auto; flex: 1; align-content: start; padding-bottom: 20px;}
+        .gift-thumb-canvas { display: block; margin: 0 auto 5px auto; width: 48px; height: 48px; image-rendering: pixelated; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); background: transparent; }
+        
+        /* Workspace Reward Modal Styles */
+        #gift-popup { position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 999999; display: none; align-items: center; justify-content: center; }
+        .gift-box { background: #1e293b; border: 1px solid #3b82f6; border-radius: 16px; padding: 30px; text-align: center; max-width: 350px; width: 100%; box-sizing: border-box; box-shadow: 0 20px 40px rgba(0,0,0,0.6);}
+        .gift-box h2 { margin-top: 0; color: #f8fafc; letter-spacing: 1px;}
+        #gift-render-canvas { border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); margin: 15px auto; display: block; image-rendering: pixelated; background: transparent; }
+        .gift-box .action-btns { display: flex; gap: 10px; margin-top: 20px; justify-content: center;}
+        
+        /* In-Game Reward Overlay Styles */
+        .gift-reward-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1000000; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px); cursor: pointer; animation: overlayFadeIn 0.5s ease-out; }
+        .gift-reward-container { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 60px; background: linear-gradient(135deg, #1e293b, #0f172a); border: 2px solid rgba(255, 215, 0, 0.3); border-radius: 32px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.8), 0 0 30px rgba(255, 215, 0, 0.3), inset 0 0 30px rgba(255, 215, 0, 0.1); transform-origin: center; transition: all 0.3s ease; }
+        .gift-reward-container.float-up { animation: floatUpDown 2s ease-in-out infinite; }
+        .gift-reward-container.fade-out { animation: fadeOutGift 0.5s forwards !important; }
+        .gift-halo { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 180px; height: 180px; background: radial-gradient(circle, rgba(255, 215, 0, 0.4) 0%, rgba(255, 215, 0, 0.2) 30%, rgba(255, 215, 0, 0.1) 50%, transparent 70%); border-radius: 50%; filter: blur(5px); animation: haloPulse 2s ease-in-out infinite; z-index: 1; }
+        .in-game-gift-pixel-art { width: 128px; height: 128px; image-rendering: pixelated; background: transparent; border-radius: 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 0 4px rgba(255, 215, 0, 0.3), inset 0 0 10px rgba(255, 215, 0, 0.2); margin-bottom: 20px; z-index: 2; transform: scale(1); transition: transform 0.3s ease; }
+        .in-game-gift-pixel-art:hover { transform: scale(1.05); }
+        .in-game-gift-title { font-size: 1.2rem; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; background: linear-gradient(135deg, #ffd700, #ffb347); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; z-index: 2; text-shadow: 0 2px 10px rgba(255, 215, 0, 0.3); }
+        .in-game-gift-name { font-size: 2rem; font-weight: bold; color: #fff; text-align: center; margin-bottom: 30px; z-index: 2; text-shadow: 0 2px 10px rgba(255, 215, 0, 0.5), 0 0 20px rgba(255, 215, 0, 0.3); letter-spacing: 1px; }
+        .gift-continue-prompt { display: flex; flex-direction: column; align-items: center; gap: 10px; z-index: 2; cursor: pointer; }
+        .continue-text { color: #94a3b8; font-size: 0.9rem; letter-spacing: 2px; text-transform: uppercase; animation: textPulse 2s ease-in-out infinite; }
+        .pulse-dot { width: 8px; height: 8px; background: #ffd700; border-radius: 50%; animation: dotPulse 1.5s ease-in-out infinite; box-shadow: 0 0 15px #ffd700; }
+        @keyframes floatUpDown { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-20px) scale(1.02); } }
+        @keyframes fadeOutGift { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.8); } }
+        @keyframes overlayFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes haloPulse { 0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); } 50% { opacity: 0.8; transform: translate(-50%, -50%) scale(1.2); } }
+        @keyframes textPulse { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; } }
+        @keyframes dotPulse { 0%, 100% { transform: scale(1); opacity: 0.5; } 50% { transform: scale(1.5); opacity: 1; } }
+
+        /* Custom Scrollbar for Instances & Gifts */
+        .workspace-left::-webkit-scrollbar, .instances-list::-webkit-scrollbar, #gifts-container::-webkit-scrollbar { width: 6px; }
+        .workspace-left::-webkit-scrollbar-track, .instances-list::-webkit-scrollbar-track, #gifts-container::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
+        .workspace-left::-webkit-scrollbar-thumb, .instances-list::-webkit-scrollbar-thumb, #gifts-container::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+        .workspace-left::-webkit-scrollbar-thumb:hover, .instances-list::-webkit-scrollbar-thumb:hover, #gifts-container::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+        /* Preview Graph Canvas Styles */
+        #viewport-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; cursor: grab; }
+        #viewport-canvas:active { cursor: grabbing; }
+
+        /* Mobile Responsive Layout Media Queries */
+        @media (max-width: 768px) {
+            .workspace-grid { 
+                flex-direction: column; 
+                overflow-y: auto; 
+                padding: 10px; 
+            }
+            .workspace-left { 
+                width: 100%; 
+                flex-shrink: 0; 
+                gap: 10px; 
+            }
+            .workspace-right { 
+                width: 100%; 
+                height: 50vh; 
+                min-height: 400px; 
+                flex-shrink: 0; 
+            }
+            .top-square, .bottom-rect { 
+                height: auto; 
+                min-height: 250px; 
+            }
+            .instances-list, #gifts-container {
+                max-height: 200px; 
+                overflow-y: auto;
+            }
+            .workspace-header { flex-direction: column; gap: 15px; }
+            .header-actions { width: 100%; justify-content: space-around; }
+            #gift-popup .gift-box { width: 90%; padding: 20px; }
+        }
+
+        /* ================= GAME PLAYER CSS ================= */
+        #game-player-overlay { position: fixed; inset: 0; background: #000; z-index: 999999; display: none; }
+        #game-container { position: absolute; left: 50%; top: 50%; transform-origin: center center; overflow: hidden; background-color: #000; transition: background-color 1s ease-in-out; cursor: pointer; }
+        #game-render-canvas { position: absolute; top: 0; left: 0; }
+        .exit-player-btn { position: absolute; top: 20px; left: 20px; z-index: 10; padding: 10px 20px; background: rgba(0,0,0,0.6); color: #fff; border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; cursor: pointer; font-family: sans-serif; transition: 0.2s; }
+        .exit-player-btn:hover { background: rgba(0,0,0,0.8); border-color: #fff; }
+
+        /* DOM Component Overlays (Inputs) */
+        .weaver-input-wrapper {
+            position: absolute;
+            display: flex;
+            align-items: center;
+            box-sizing: border-box;
+            overflow: hidden;
+            z-index: 100;
+            pointer-events: auto;
+            
+            /* DYNAMIC CSS VARS MAP DIRECTLY TO SCHEMA PROPERTIES */
+            background-color: var(--bg-color, transparent);
+            border: var(--border-width, 0) solid var(--border-color, transparent);
+            
+            /* Reduced CSS transition time so it doesn't conflict with our JS render loop animations */
+            transition: background-color 0.2s, border-color 0.2s;
+        }
+        
+        .weaver-input-wrapper:focus-within {
+            background-color: var(--focus-bg, transparent);
+            border-color: var(--focus-border, transparent);
+        }
+
+        .weaver-input-wrapper input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: inherit;
+            font-family: inherit;
+            width: 100%;
+            height: 100%;
+            box-sizing: border-box;
+        }
+
+        .weaver-input-wrapper input:disabled { opacity: 0.8; cursor: not-allowed; }
+        
+        .weaver-input-wrapper button.in-submit {
+            cursor: pointer;
+            border: none;
+            color: inherit;
+            font-family: inherit;
+            font-weight: bold;
+            height: 100%;
+            transition: background 0.2s;
+            box-sizing: border-box;
+            
+            /* INHERITED BTN STYLES */
+            background-color: var(--btn-normal, rgba(255,255,255,0.15));
+            color: var(--btn-text, #fff);
+        }
+        
+        .weaver-input-wrapper button.in-submit:hover:not(:disabled) {
+            background-color: var(--btn-hover, rgba(255,255,255,0.3));
+        }
+        .weaver-input-wrapper button.in-submit:active:not(:disabled) {
+            background-color: var(--btn-click, rgba(255,255,255,0.4));
+        }
+        .weaver-input-wrapper button.in-submit:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="fs-popup">
+        <div class="fs-box">
+            <h2>Ready to Play</h2>
+            <p>For the best immersive experience, please run this game in Full Screen mode.</p>
+            <button class="fs-btn" onclick="enterFullscreen()">⛶ Enter Full Screen</button>
+            <div style="margin-top: 15px;">
+                <button class="fs-btn secondary" onclick="closePopup()">Play Windowed</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="gift-popup">
+       <div class="gift-box">
+          <h2 id="gift-popup-title">Reward Name</h2>
+          <canvas id="gift-render-canvas" width="256" height="256"></canvas>
+          <p id="gift-popup-desc" style="color:#94a3b8; font-size:0.85rem; margin-top: 10px; line-height: 1.4;"></p>
+          <div class="action-btns">
+              <button class="fs-btn" style="flex:1;" onclick="shareGiftImage()">📤 Share</button>
+              <button class="fs-btn secondary" onclick="closeGiftPopup()">Close</button>
+          </div>
+       </div>
+    </div>
+
+    <div id="game-player-overlay" onclick="handlePlayerClick(event)">
+        <button class="exit-player-btn" onclick="exitGame()">⏸️ Pause / Exit</button>
+        <div id="game-container">
+            <canvas id="game-render-canvas"></canvas>
+        </div>
+        
+        <div id="in-game-gift-overlay" class="gift-reward-overlay" style="display: none;" onclick="continueAfterGift()">
+            <div id="in-game-gift-container" class="gift-reward-container float-up" onclick="event.stopPropagation()">
+                <div class="gift-halo"></div>
+                <canvas id="in-game-gift-canvas" class="in-game-gift-pixel-art" width="128" height="128"></canvas>
+                <div id="in-game-gift-title" class="in-game-gift-title"></div>
+                <div id="in-game-gift-name" class="in-game-gift-name"></div>
+                <div class="gift-continue-prompt" onclick="continueAfterGift()">
+                    <span class="continue-text">▼ Click anywhere to continue ▼</span>
+                    <div class="pulse-dot"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="workspace-header">
+        <div class="workspace-header-title">Console Workspace</div>
+        <div class="header-actions">
+            <button id="header-fs-btn" class="header-fs-btn" onclick="enterFullscreen()">⛶ Go Full Screen</button>
+            <button class="start-game-btn" onclick="startGame()">▶ Start</button>
+        </div>
+    </div>
+    
+    <div class="workspace-grid">
+        <div class="workspace-left">
+            <div class="workspace-box top-square">
+                <div class="instance-header">
+                    <h3 class="box-title-static">Game Instances</h3>
+                    <button class="add-instance-btn" onclick="createNewInstance()" title="Create New Save Instance">+ NEW</button>
+                </div>
+                <div class="instances-list" id="instances-list"></div>
+            </div>
+
+            <div class="workspace-box bottom-rect">
+                <h3 class="box-title-static" style="margin-bottom: 15px;">Game Data</h3>
+                <div class="data-tabs" style="margin-bottom: 10px;">
+                    <button id="tab-btn-pfps" class="data-tab-btn active" onclick="switchTab('pfps')">🖼️ PFPs</button>
+                    <button id="tab-btn-badges" class="data-tab-btn" onclick="switchTab('badges')">🎖️ Badges</button>
+                </div>
+                
+                <div id="progress-container"></div>
+
+                <div id="gifts-container"></div>
+            </div>
+        </div>
+
+        <div class="workspace-right">
+            <div class="workspace-box main-viewport">
+                <div class="viewport-header">
+                    <span class="status-pulse"></span>
+                    <span class="header-instance-name" id="header-instance-name">Instance 1</span>
+                    <span class="header-game-name">— ${projectName.value || 'Exported Game'}</span>
+                </div>
+                <canvas id="viewport-canvas"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // --- HELPER FUNCTIONS FOR OPTIONS RENDER ---
+        function hexToRgba(hex, alpha) {
+            let c;
+            if (/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)) {
+                c = hex.substring(1).split('');
+                if (c.length === 3) {
+                    c = [c[0], c[0], c[1], c[1], c[2], c[2]];
+                }
+                c = '0x' + c.join('');
+                return 'rgba(' + [(c >> 16) & 255, (c >> 8) & 255, c & 255].join(',') + ',' + alpha + ')';
+            }
+            return hex;
+        }
+
+        function calculateOptionsLayout(comp, ctx) {
+            const style = comp.styles?.normal || {};
+            const fontSize = style.fontSize || 16;
+            const fontFamily = style.fontFamily || 'sans-serif';
+            ctx.font = fontSize + 'px ' + fontFamily;
+
+            const paddingX = 12; 
+            const paddingY = 8;  
+            const gap = 10;      
+            const boxPadding = 10; 
+            
+            let currentX = -comp.width / 2 + boxPadding;
+            let currentY = -comp.height / 2 + boxPadding;
+            
+            const buttons = [];
+            let maxButtonWidth = 0;
+            let rowHeight = 0;
+
+            (comp.optionsList || []).forEach(opt => {
+                const textMetrics = ctx.measureText(opt.text);
+                const btnW = textMetrics.width + (paddingX * 2);
+                const btnH = fontSize + (paddingY * 2);
+                
+                if (btnW > maxButtonWidth) maxButtonWidth = btnW;
+                if (btnH > rowHeight) rowHeight = btnH;
+
+                const rightEdge = comp.width / 2 - boxPadding;
+                
+                if (currentX + btnW > rightEdge && currentX !== (-comp.width / 2 + boxPadding)) {
+                    currentX = -comp.width / 2 + boxPadding;
+                    currentY += rowHeight + gap;
+                }
+
+                buttons.push({
+                    id: opt.id,
+                    text: opt.text,
+                    x: currentX, 
+                    y: currentY,
+                    w: btnW,
+                    h: btnH
+                });
+
+                currentX += btnW + gap;
+            });
+
+            const totalContentHeight = (currentY + rowHeight + boxPadding) - (-comp.height / 2);
+
+            return { buttons, totalContentHeight, maxButtonWidth };
+        }
+
+        function getOptionAtPosition(comp, localX, localY, ctx) {
+            const layout = calculateOptionsLayout(comp, ctx);
+            const scrollY = comp.scrollY || 0;
+            
+            for (let i = 0; i < layout.buttons.length; i++) {
+                const btn = layout.buttons[i];
+                const drawY = btn.y - scrollY;
+                
+                if (localX >= btn.x && localX <= btn.x + btn.w &&
+                    localY >= drawY && localY <= drawY + btn.h) {
+                    return { index: i, id: btn.id };
+                }
+            }
+            return null;
+        }
+
+        // --- SHARED PIXEL ART RENDERER FUNCTION ---
+        function drawMiniPixelArt(canvas, pixels) {
+            if (!canvas || !pixels || !Array.isArray(pixels) || pixels.length === 0) return;
+            const ctx = canvas.getContext('2d');
+            const rows = pixels.length;
+            const cols = pixels[0].length;
+            
+            ctx.imageSmoothingEnabled = false; 
+            const scaleX = canvas.width / cols;
+            const scaleY = canvas.height / rows;
+
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    if (pixels[y][x]) {
+                        ctx.fillStyle = pixels[y][x];
+                        ctx.fillRect(Math.floor(x * scaleX), Math.floor(y * scaleY), Math.ceil(scaleX), Math.ceil(scaleY));
+                    }
+                }
+            }
+        }
+
+        // 1. Data Injection
+        window.WEAVER_DATA = ${safeJsonString};
+        console.log("Game data loaded successfully into Workspace!", window.WEAVER_DATA);
+
+        // Global Reward Tracking
+        window.GLOBAL_EARNED_GIFTS = { pfps: [], badges: [] };
+
+        // 2. Instance Management System (Independent JSON tracked states)
+        window.GAME_INSTANCES = [
+            { 
+                id: Date.now().toString(), 
+                name: "Instance 1", 
+                variables: JSON.parse(JSON.stringify(window.WEAVER_DATA.globalVariables || [])),
+                visitedNodes: [],
+                currentNodeId: null
+            }
+        ];
+        let activeInstanceId = window.GAME_INSTANCES[0].id;
+
+        function getActiveVariables() {
+            const activeInst = window.GAME_INSTANCES.find(i => i.id === activeInstanceId);
+            return activeInst ? activeInst.variables : (window.WEAVER_DATA.globalVariables || []);
+        }
+
+        function renderInstances() {
+            const list = document.getElementById('instances-list');
+            list.innerHTML = '';
+            
+            window.GAME_INSTANCES.forEach(inst => {
+                const isActive = inst.id === activeInstanceId;
+                const item = document.createElement('div');
+                item.className = 'instance-item ' + (isActive ? 'active' : '');
+                
+                item.onclick = () => selectInstance(inst.id);
+                item.ondblclick = (e) => renameInstance(inst.id, e);
+                
+                item.innerHTML = 
+                    '<div class="status-pulse" style="visibility: ' + (isActive ? 'visible' : 'hidden') + '"></div>' +
+                    '<span class="instance-name" id="name-' + inst.id + '" title="Double click to rename">' + inst.name + '</span>' +
+                    '<button class="instance-rename-btn" onclick="renameInstance(\\'' + inst.id + '\\', event)" title="Rename Instance">✎</button>';
+                
+                list.appendChild(item);
+            });
+            
+            updateHeader();
+        }
+
+        function createNewInstance() {
+            const newId = Date.now().toString();
+            const newName = "Instance " + (window.GAME_INSTANCES.length + 1);
+            window.GAME_INSTANCES.push({ 
+                id: newId, 
+                name: newName, 
+                variables: JSON.parse(JSON.stringify(window.WEAVER_DATA.globalVariables || [])),
+                visitedNodes: [],
+                currentNodeId: null
+            });
+            selectInstance(newId);
+        }
+
+        function selectInstance(id) {
+            activeInstanceId = id;
+            renderInstances();
+            renderGifts(); 
+            if (typeof exitGame === 'function' && isPlaying) {
+                exitGame(); 
+            }
+            drawViewport(); 
+        }
+
+        function renameInstance(id, event) {
+            if (event) event.stopPropagation(); 
+            const inst = window.GAME_INSTANCES.find(i => i.id === id);
+            if (!inst) return;
+            const nameSpan = document.getElementById('name-' + id);
+            if (!nameSpan || nameSpan.querySelector('input')) return; 
+            
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = inst.name;
+            input.className = 'inline-edit-input';
+            
+            const saveName = () => {
+                const newName = input.value.trim();
+                if (newName !== "") inst.name = newName;
+                renderInstances();
+            };
+            
+            input.onblur = saveName;
+            input.onkeydown = (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+                if (e.key === 'Escape') { e.preventDefault(); renderInstances(); }
+            };
+            
+            nameSpan.innerHTML = '';
+            nameSpan.appendChild(input);
+            input.focus();
+            input.select();
+        }
+
+        function updateHeader() {
+            const activeInst = window.GAME_INSTANCES.find(i => i.id === activeInstanceId);
+            const headerElem = document.getElementById('header-instance-name');
+            if(headerElem && activeInst) {
+                headerElem.innerText = activeInst.name;
+            }
+        }
+
+        // --- WORKSPACE REWARD UI LOGIC ---
+        let activeTab = 'pfps'; 
+        
+        function switchTab(tab) {
+            activeTab = tab;
+            document.querySelectorAll('.data-tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById('tab-btn-' + tab).classList.add('active');
+            renderGifts();
+        }
+
+        function renderGifts() {
+            const container = document.getElementById('gifts-container');
+            const progressContainer = document.getElementById('progress-container');
+            container.innerHTML = '';
+            
+            let totalPfps = 0;
+            let totalBadges = 0;
+            
+            (window.WEAVER_DATA.nodes || []).forEach(n => {
+                if (n.node_type === 'Gift') {
+                    const mode = n.giftMode || (n.data && n.data.giftMode) || 'pfp';
+                    if (mode === 'badge') totalBadges++;
+                    else totalPfps++;
+                }
+            });
+
+            const earnedList = activeTab === 'pfps' ? window.GLOBAL_EARNED_GIFTS.pfps : window.GLOBAL_EARNED_GIFTS.badges;
+            const totalCount = activeTab === 'pfps' ? totalPfps : totalBadges;
+            const unlockedCount = earnedList.length;
+            const percentage = totalCount > 0 ? (unlockedCount / totalCount) * 100 : 0;
+            
+            progressContainer.innerHTML = '<div class="progress-wrapper">' +
+                '<div class="progress-header">' +
+                    '<span>' + activeTab.toUpperCase() + ' PROGRESS</span>' +
+                    '<span style="color: #fff;">' + unlockedCount + ' / ' + totalCount + ' UNLOCKED</span>' +
+                '</div>' +
+                '<div class="progress-bar-bg">' +
+                    '<div class="progress-bar-fill" style="width: ' + percentage + '%;"></div>' +
+                '</div>' +
+            '</div>';
+
+            if (earnedList.length === 0) {
+                container.innerHTML = '<div style="color: #64748b; padding: 20px; text-align: center; font-size: 0.85rem; grid-column: 1 / -1;">No ' + activeTab + ' discovered yet. Play the game to unlock them!</div>';
+                return;
+            }
+            
+            earnedList.forEach((gift, index) => {
+                const item = document.createElement('div');
+                item.className = 'gift-item';
+                
+                const canvasId = 'gift-thumb-' + activeTab + '-' + index;
+                
+                item.innerHTML = '<canvas id="' + canvasId + '" width="64" height="64" class="gift-thumb-canvas"></canvas>' +
+                                 '<div class="gift-name" style="font-family:' + (gift.font || 'sans-serif') + '">' + gift.name + '</div>';
+                
+                item.onclick = function() {
+                    openGiftPopup(gift);
+                };
+                
+                container.appendChild(item);
+                
+                const thumbCanvas = document.getElementById(canvasId);
+                if (thumbCanvas) {
+                    const ctx = thumbCanvas.getContext('2d');
+                    if (gift.mode === 'pfp') {
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(0, 0, thumbCanvas.width, thumbCanvas.height);
+                    } else {
+                        ctx.clearRect(0, 0, thumbCanvas.width, thumbCanvas.height);
+                    }
+                    if (gift.pixels && gift.pixels.length > 0) {
+                        drawMiniPixelArt(thumbCanvas, gift.pixels);
+                    }
+                }
+            });
+        }
+
+        let currentGiftForPopup = null;
+        
+        function openGiftPopup(gift) {
+            currentGiftForPopup = gift;
+            const titleEl = document.getElementById('gift-popup-title');
+            titleEl.innerText = gift.name;
+            titleEl.style.fontFamily = gift.font || 'sans-serif';
+            
+            const desc = document.getElementById('gift-popup-desc');
+            if (gift.mode === 'pfp') {
+                desc.innerText = "Awesome find! Note: If you play this game directly on the official LoomArt website, you can equip this pixel art as your global profile picture.";
+            } else {
+                desc.innerText = "Congratulations! You earned a new badge.";
+            }
+            
+            const canvas = document.getElementById('gift-render-canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (gift.mode === 'pfp') {
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            } 
+            
+            if (gift.pixels && gift.pixels.length > 0) {
+                ctx.imageSmoothingEnabled = false;
+                const rows = gift.pixels.length;
+                const cols = gift.pixels[0].length;
+                const scaleX = canvas.width / cols;
+                const scaleY = canvas.height / rows;
+
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        if (gift.pixels[r][c]) {
+                            ctx.fillStyle = gift.pixels[r][c];
+                            ctx.fillRect(c * scaleX, r * scaleY, scaleX, scaleY);
+                        }
+                    }
+                }
+            }
+            
+            document.getElementById('gift-popup').style.display = 'flex';
+        }
+
+        function closeGiftPopup() {
+            document.getElementById('gift-popup').style.display = 'none';
+            currentGiftForPopup = null;
+        }
+
+        async function shareGiftImage() {
+            if (!currentGiftForPopup) return;
+            const canvas = document.getElementById('gift-render-canvas');
+            const safeFileName = currentGiftForPopup.name.replace(/[^a-zA-Z0-9]/g, '_') + '.png';
+
+            if (navigator.share && navigator.canShare) {
+                canvas.toBlob(async (blob) => {
+                    const file = new File([blob], safeFileName, { type: 'image/png' });
+                    const shareData = {
+                        title: 'I unlocked: ' + currentGiftForPopup.name,
+                        text: 'Check out the reward I unlocked in this game!',
+                        files: [file]
+                    };
+
+                    if (navigator.canShare(shareData)) {
+                        try {
+                            await navigator.share(shareData);
+                        } catch (err) {
+                            if (err.name !== 'AbortError') {
+                                console.log('Share failed, falling back to download:', err);
+                                fallbackDownloadGiftImage(canvas, safeFileName);
+                            }
+                        }
+                    } else {
+                        fallbackDownloadGiftImage(canvas, safeFileName);
+                    }
+                }, 'image/png');
+            } else {
+                fallbackDownloadGiftImage(canvas, safeFileName);
+            }
+        }
+
+        function fallbackDownloadGiftImage(canvas, fileName) {
+            const dataUrl = canvas.toDataURL('image/png');
+            const a = document.createElement('a');
+            a.href = dataUrl;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        renderInstances();
+        renderGifts();
+
+        // 3. Fullscreen Logic
+        function enterFullscreen() {
+            if (document.documentElement.requestFullscreen) {
+                document.documentElement.requestFullscreen().catch(e => console.log(e));
+            }
+            closePopup();
+        }
+
+        function closePopup() {
+            const popup = document.getElementById('fs-popup');
+            popup.style.opacity = '0';
+            setTimeout(() => { popup.style.display = 'none'; }, 400);
+            if (!document.fullscreenElement) {
+                document.getElementById('header-fs-btn').style.display = 'block';
+            }
+        }
+
+        function showPopup() {
+            const popup = document.getElementById('fs-popup');
+            popup.style.display = 'flex';
+            setTimeout(() => { popup.style.opacity = '1'; }, 10);
+        }
+
+        document.addEventListener('fullscreenchange', () => {
+            const headerBtn = document.getElementById('header-fs-btn');
+            if (!document.fullscreenElement) {
+                showPopup();
+                headerBtn.style.display = 'block'; 
+            } else {
+                headerBtn.style.display = 'none'; 
+            }
+            setTimeout(resizeCanvas, 100);
+        });
+
+        // 4. Interactive Preview Graph Logic
+        const canvas = document.getElementById('viewport-canvas');
+        const ctx = canvas.getContext('2d');
+        let viewportOffset = { x: 0, y: 0 };
+        let viewportScale = 1;
+        let isPanning = false;
+        let panStart = { x: 0, y: 0 };
+        
+        let hasMoved = false; 
+        let startClient = { x: 0, y: 0 }; 
+        
+        let initialPinchDistance = null;
+        let initialPinchScale = 1;
+
+        function resizeCanvas() {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            drawViewport();
+        }
+        window.addEventListener('resize', resizeCanvas);
+        
+        canvas.addEventListener('mousedown', (e) => {
+            isPanning = true;
+            hasMoved = false; 
+            startClient = { x: e.clientX, y: e.clientY }; 
+            panStart = { x: e.clientX - viewportOffset.x, y: e.clientY - viewportOffset.y };
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isPanning) return;
+            if (Math.abs(e.clientX - startClient.x) > 3 || Math.abs(e.clientY - startClient.y) > 3) {
+                hasMoved = true; 
+            }
+            viewportOffset = { x: e.clientX - panStart.x, y: e.clientY - panStart.y };
+            drawViewport();
+        });
+        
+        canvas.addEventListener('mouseup', (e) => { 
+            isPanning = false; 
+
+            if (!hasMoved) {
+                const rect = canvas.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                const clickY = e.clientY - rect.top;
+
+                const worldX = (clickX - viewportOffset.x) / viewportScale;
+                const worldY = (clickY - viewportOffset.y) / viewportScale;
+
+                const nodes = window.WEAVER_DATA.nodes || [];
+                const activeInst = window.GAME_INSTANCES.find(i => i.id === activeInstanceId);
+                let rawVisitedSequence = activeInst?.visitedNodes || [];
+                
+                if (rawVisitedSequence.length === 0) {
+                    const rootId = window.WEAVER_DATA.rootNodeId;
+                    if (rootId !== undefined && rootId !== null) {
+                        rawVisitedSequence = [rootId];
+                    }
+                }
+                
+                const visibleHistory = rawVisitedSequence.filter(nodeId => {
+                    const n = nodes.find(node => node.index === nodeId);
+                    return n && n.node_type !== 'Set Variables';
+                });
+                const visibleVisitedNodes = new Set(visibleHistory);
+                
+                const nw = 220; 
+                const nh = 70;
+                let clickedNodeId = null;
+
+                const drawnNodes = Array.from(visibleVisitedNodes);
+                for (let i = drawnNodes.length - 1; i >= 0; i--) {
+                    const nodeId = drawnNodes[i];
+                    const n = nodes.find(x => x.index === nodeId);
+                    if (!n) continue;
+                    
+                    if (worldX >= n.x && worldX <= n.x + nw && worldY >= n.y && worldY <= n.y + nh) {
+                        clickedNodeId = n.index;
+                        break;
+                    }
+                }
+
+                if (clickedNodeId !== null && activeInst) {
+                    activeInst.currentNodeId = clickedNodeId;
+                    
+                    if (!activeInst.visitedNodes.includes(clickedNodeId)) {
+                        activeInst.visitedNodes.push(clickedNodeId);
+                    }
+                    drawViewport(); 
+                }
+            }
+        });
+        canvas.addEventListener('mouseleave', () => { isPanning = false; });
+        
+        canvas.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 1) {
+                isPanning = true;
+                hasMoved = false;
+                startClient = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                panStart = { x: e.touches[0].clientX - viewportOffset.x, y: e.touches[0].clientY - viewportOffset.y };
+            } else if (e.touches.length === 2) {
+                isPanning = false;
+                initialPinchDistance = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                initialPinchScale = viewportScale;
+            }
+        }, { passive: false });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 1 && isPanning) {
+                e.preventDefault(); 
+                if (Math.abs(e.touches[0].clientX - startClient.x) > 5 || Math.abs(e.touches[0].clientY - startClient.y) > 5) {
+                    hasMoved = true; 
+                }
+                viewportOffset = { x: e.touches[0].clientX - panStart.x, y: e.touches[0].clientY - panStart.y };
+                drawViewport();
+            } else if (e.touches.length === 2 && initialPinchDistance !== null) {
+                e.preventDefault(); 
+                const currentDistance = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                
+                const ratio = currentDistance / initialPinchDistance;
+                const newScale = Math.min(Math.max(0.1, initialPinchScale * ratio), 3);
+                
+                const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = centerX - rect.left;
+                const mouseY = centerY - rect.top;
+
+                viewportOffset.x = mouseX - newScale * ((mouseX - viewportOffset.x) / viewportScale);
+                viewportOffset.y = mouseY - newScale * ((mouseY - viewportOffset.y) / viewportScale);
+                viewportScale = newScale;
+                drawViewport();
+            }
+        }, { passive: false });
+        
+        canvas.addEventListener('touchend', (e) => {
+            if (e.touches.length < 2) {
+                initialPinchDistance = null;
+            }
+            if (e.touches.length === 0) {
+                isPanning = false;
+                if (!hasMoved && e.changedTouches.length > 0) {
+                    const rect = canvas.getBoundingClientRect();
+                    const clickX = startClient.x - rect.left;
+                    const clickY = startClient.y - rect.top;
+
+                    const worldX = (clickX - viewportOffset.x) / viewportScale;
+                    const worldY = (clickY - viewportOffset.y) / viewportScale;
+
+                    const nodes = window.WEAVER_DATA.nodes || [];
+                    const activeInst = window.GAME_INSTANCES.find(i => i.id === activeInstanceId);
+                    let rawVisitedSequence = activeInst?.visitedNodes || [];
+                    
+                    if (rawVisitedSequence.length === 0) {
+                        const rootId = window.WEAVER_DATA.rootNodeId;
+                        if (rootId !== undefined && rootId !== null) {
+                            rawVisitedSequence = [rootId];
+                        }
+                    }
+                    
+                    const visibleHistory = rawVisitedSequence.filter(nodeId => {
+                        const n = nodes.find(node => node.index === nodeId);
+                        return n && n.node_type !== 'Set Variables';
+                    });
+                    const visibleVisitedNodes = new Set(visibleHistory);
+                    
+                    const nw = 220; 
+                    const nh = 70;
+                    let clickedNodeId = null;
+
+                    const drawnNodes = Array.from(visibleVisitedNodes);
+                    for (let i = drawnNodes.length - 1; i >= 0; i--) {
+                        const nodeId = drawnNodes[i];
+                        const n = nodes.find(x => x.index === nodeId);
+                        if (!n) continue;
+                        
+                        if (worldX >= n.x && worldX <= n.x + nw && worldY >= n.y && worldY <= n.y + nh) {
+                            clickedNodeId = n.index;
+                            break;
+                        }
+                    }
+
+                    if (clickedNodeId !== null && activeInst) {
+                        activeInst.currentNodeId = clickedNodeId;
+                        if (!activeInst.visitedNodes.includes(clickedNodeId)) {
+                            activeInst.visitedNodes.push(clickedNodeId);
+                        }
+                        drawViewport(); 
+                    }
+                }
+            }
+        });
+        
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+            let newScale = Math.min(Math.max(0.1, viewportScale * zoomFactor), 3);
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            viewportOffset.x = mouseX - newScale * ((mouseX - viewportOffset.x) / viewportScale);
+            viewportOffset.y = mouseY - newScale * ((mouseY - viewportOffset.y) / viewportScale);
+            viewportScale = newScale;
+            drawViewport();
+        }, { passive: false });
+        
+        function drawViewport() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.translate(viewportOffset.x, viewportOffset.y);
+            ctx.scale(viewportScale, viewportScale);
+            
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+            ctx.lineWidth = 1 / viewportScale;
+            const gridSize = 40;
+            const startX = -viewportOffset.x / viewportScale - gridSize;
+            const endX = (canvas.width - viewportOffset.x) / viewportScale + (gridSize * 2);
+            const startY = -viewportOffset.y / viewportScale - gridSize;
+            const endY = (canvas.height - viewportOffset.y) / viewportScale + (gridSize * 2);
+            const gridStartX = Math.floor(startX / gridSize) * gridSize;
+            const gridStartY = Math.floor(startY / gridSize) * gridSize;
+            
+            ctx.beginPath();
+            for(let x = gridStartX; x < endX; x += gridSize) { ctx.moveTo(x, startY); ctx.lineTo(x, endY); }
+            for(let y = gridStartY; y < endY; y += gridSize) { ctx.moveTo(startX, y); ctx.lineTo(endX, y); }
+            ctx.stroke();
+            
+            const nodes = window.WEAVER_DATA.nodes || [];
+            const activeInst = window.GAME_INSTANCES.find(i => i.id === activeInstanceId);
+            let rawVisitedSequence = activeInst?.visitedNodes || [];
+            
+            if (rawVisitedSequence.length === 0) {
+                const rootId = window.WEAVER_DATA.rootNodeId;
+                if (rootId !== undefined && rootId !== null) {
+                    rawVisitedSequence = [rootId];
+                }
+            }
+            
+            const visibleHistory = rawVisitedSequence.filter(nodeId => {
+                const n = nodes.find(node => node.index === nodeId);
+                return n && n.node_type !== 'Set Variables';
+            });
+            
+            const visibleVisitedNodes = new Set(visibleHistory);
+            
+            const traversedEdges = new Set();
+            for (let i = 0; i < visibleHistory.length - 1; i++) {
+                traversedEdges.add(visibleHistory[i] + '->' + visibleHistory[i+1]);
+            }
+            
+            const nw = 220; 
+            const nh = 70;
+            
+            const getStructuralTargets = (node) => {
+                const targets = [];
+                const addTarget = (id) => {
+                    if (id === null || id === undefined || id === "") return;
+                    let currId = Number(id);
+                    let safety = 0;
+                    while (currId !== null && currId !== undefined && safety < 100) {
+                        const n = nodes.find(x => x.index === currId);
+                        if (!n) break;
+                        if (n.node_type !== 'Set Variables') {
+                            targets.push(currId);
+                            break;
+                        }
+                        currId = n.Next;
+                        safety++;
+                    }
+                };
+                addTarget(node.Next);
+                addTarget(node.NextTrue);
+                addTarget(node.NextFalse);
+                if (node.options && Array.isArray(node.options)) {
+                    node.options.forEach(opt => addTarget(opt.next));
+                }
+                return targets;
+            };
+            
+            ctx.strokeStyle = '#4ade80';
+            ctx.lineWidth = 3;
+            const drawnLines = new Set();
+            
+            visibleVisitedNodes.forEach(fromNodeId => {
+                const fromNode = nodes.find(n => n.index === fromNodeId);
+                if (!fromNode) return;
+                const targets = getStructuralTargets(fromNode);
+                
+                targets.forEach(toNodeId => {
+                    const edgeKey = fromNodeId + '->' + toNodeId;
+                    if (!traversedEdges.has(edgeKey)) return;
+                    if (drawnLines.has(edgeKey)) return;
+                    drawnLines.add(edgeKey);
+                    
+                    const toNode = nodes.find(n => n.index === toNodeId);
+                    if (!toNode) return;
+                    
+                    const startX = fromNode.node_type === 'If-Else' ? fromNode.x + nw/2 + 30 : fromNode.x + nw;
+                    const startY = fromNode.y + nh / 2;
+                    const endX = toNode.node_type === 'If-Else' ? toNode.x + nw/2 - 30 : toNode.x;
+                    const endY = toNode.y + nh / 2;
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(startX, startY);
+                    const cpOffset = Math.max(50, Math.abs(endX - startX) / 2);
+                    ctx.bezierCurveTo(startX + cpOffset, startY, endX - cpOffset, endY, endX, endY);
+                    ctx.stroke();
+                    
+                    ctx.fillStyle = '#4ade80';
+                    ctx.beginPath(); ctx.arc(endX, endY, 4, 0, Math.PI * 2); ctx.fill();
+                });
+            });
+            
+            let lastVisibleId = activeInst?.currentNodeId;
+            if (lastVisibleId === null || lastVisibleId === undefined) {
+                for (let i = rawVisitedSequence.length - 1; i >= 0; i--) {
+                    if (visibleVisitedNodes.has(rawVisitedSequence[i])) {
+                        lastVisibleId = rawVisitedSequence[i];
+                        break;
+                    }
+                }
+            }
+
+            visibleVisitedNodes.forEach(nodeId => {
+                const node = nodes.find(n => n.index === nodeId);
+                if (!node) return;
+                
+                const isCurrentLocation = (nodeId === lastVisibleId);
+                const cx = node.x + nw/2;
+                const cy = node.y + nh/2;
+                
+                if (node.node_type === 'If-Else') {
+                    ctx.fillStyle = isCurrentLocation ? '#facc15' : '#ef4444';
+                    ctx.strokeStyle = isCurrentLocation ? '#fef08a' : '#fca5a5';
+                    ctx.lineWidth = isCurrentLocation ? 3 : 2;
+                    const radius = 30;
+                    ctx.beginPath();
+                    ctx.moveTo(cx, cy - radius); ctx.lineTo(cx + radius, cy);
+                    ctx.lineTo(cx, cy + radius); ctx.lineTo(cx - radius, cy);
+                    ctx.closePath();
+                    ctx.fill(); ctx.stroke();
+                    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 24px Inter, sans-serif';
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('?', cx, cy);
+                } else if (node.node_type === 'Gift') {
+                    ctx.fillStyle = isCurrentLocation ? '#facc15' : 'rgba(139, 92, 246, 0.9)';
+                    ctx.strokeStyle = isCurrentLocation ? '#fef08a' : '#a78bfa';
+                    ctx.lineWidth = isCurrentLocation ? 3 : 2;
+                    ctx.beginPath(); ctx.roundRect(node.x, node.y, nw, nh, 8); ctx.fill(); ctx.stroke();
+                    ctx.fillStyle = isCurrentLocation ? '#000000' : '#ffffff'; ctx.font = '600 14px Inter, sans-serif';
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.fillText(node.giftName || 'Gift', cx + 10, cy);
+                    ctx.font = '16px sans-serif'; ctx.fillText(node.giftMode === 'badge' ? '🎖️' : '🖼️', cx - 80, cy);
+                } else {
+                    ctx.fillStyle = isCurrentLocation ? 'rgba(59, 130, 246, 0.9)' : 'rgba(15, 23, 42, 0.9)';
+                    ctx.strokeStyle = isCurrentLocation ? '#60a5fa' : '#3b82f6';
+                    ctx.lineWidth = isCurrentLocation ? 3 : 2;
+                    ctx.beginPath(); ctx.roundRect(node.x, node.y, nw, nh, 8); ctx.fill(); ctx.stroke();
+                    ctx.fillStyle = '#ffffff'; ctx.font = '600 14px Inter, sans-serif';
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.fillText(node.Node_name || ('Node ' + node.index), cx, cy);
+                }
+                
+                if (node.index === window.WEAVER_DATA.rootNodeId) {
+                    ctx.fillStyle = '#10b981'; ctx.font = 'bold 10px sans-serif';
+                    ctx.textAlign = 'center'; ctx.fillText('ENTRY POINT', cx, node.y - 10);
+                }
+                
+                if (isCurrentLocation) {
+                    ctx.fillStyle = '#facc15'; ctx.font = 'bold 10px sans-serif';
+                    ctx.textAlign = 'center'; ctx.fillText('📍 CURRENT', cx, node.y + nh + 15);
+                }
+            });
+            
+            ctx.restore();
+        }
+
+        setTimeout(() => {
+            resizeCanvas();
+            const rootNode = (window.WEAVER_DATA.nodes || []).find(n => n.index === window.WEAVER_DATA.rootNodeId);
+            if (rootNode) {
+                const rect = canvas.parentElement.getBoundingClientRect();
+                const nw = 220; const nh = 70;
+                viewportOffset = {
+                    x: (rect.width / 2) - ((rootNode.x + (nw / 2)) * viewportScale),
+                    y: (rect.height / 2) - ((rootNode.y + (nh / 2)) * viewportScale)
+                };
+                drawViewport();
+            }
+        }, 150);
+
+        // ================= 5. EXPORTED PLAYER ENGINE LOGIC =================
+        let isPlaying = false;
+        let currentNode = null;
+        let currentSceneIndex = 0;
+        let currentCompIndex = 0;
+        let renderedComps = [];
+        let autoRenderTimer = null;
+        let renderLoopId = null;
+        
+        let inGameGiftAudio = null;
+        let inGameGiftData = null;
+        let isGiftFadingOut = false;
+
+        // --- NODE BACKGROUND AUDIO LOGIC WITH DUCKING PROPERTY ---
+        let currentAudio = null;
+
+        function handleNodeAudio(audioData) {
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio.currentTime = 0;
+                currentAudio = null;
+            }
+            if (audioData && audioData.url) {
+                const audio = new Audio(audioData.url);
+                audio.baseVolume = audioData.volume !== undefined ? audioData.volume : 1.0;
+                audio.volume = audio.baseVolume;
+                audio.loop = audioData.loop !== undefined ? audioData.loop : true;
+                audio.play().catch(e => console.warn("Background audio blocked by browser:", e));
+                currentAudio = audio;
+            }
+        }
+
+        function updateAudioDucking() {
+            if (!currentAudio) return;
+
+            let baseVolume = currentAudio.baseVolume !== undefined ? currentAudio.baseVolume : 1.0;
+            let targetVol = baseVolume;
+
+            for (let i = 0; i < renderedComps.length; i++) {
+                const comp = renderedComps[i];
+                if (comp.type === 'video' && comp.videoElement && !comp.videoElement.paused && !comp.videoElement.ended) {
+                    let duckVol = 0.2; 
+                    if (comp.bgMusicVolume !== undefined && comp.bgMusicVolume !== null) {
+                        duckVol = Number(comp.bgMusicVolume);
+                    }
+                    targetVol = baseVolume * duckVol;
+                    break; 
+                }
+            }
+            
+            if (Math.abs(currentAudio.volume - targetVol) > 0.01) {
+                currentAudio.volume += (targetVol - currentAudio.volume) * 0.05;
+            } else {
+                currentAudio.volume = targetVol;
+            }
+        }
+        // ----------------------------------------
+
+        // --- SCENE EXIT STATE ---
+        let isSceneExiting = false;
+        let sceneExitStartTime = 0;
+
+        // --- TIMEOUT TRAVERSAL LOGIC ---
+        function beginSceneExitToNode(targetNodeId) {
+            isSceneExiting = true;
+            sceneExitStartTime = Date.now();
+
+            let maxExitTime = 0;
+            renderedComps.forEach(comp => {
+                const dur = (comp.exitAnimationDuration || 1) * 1000;
+                if (dur > maxExitTime && comp.exitAnimationType && comp.exitAnimationType !== 'none') maxExitTime = dur;
+            });
+            if (maxExitTime === 0) maxExitTime = 100;
+
+            const container = document.getElementById('game-container');
+            let nextColor = '#000000';
+            if (targetNodeId !== null && targetNodeId !== undefined) {
+                const nextNode = window.WEAVER_DATA.nodes.find(n => n.index === targetNodeId);
+                if (nextNode && nextNode.scenes && nextNode.scenes.length > 0) {
+                    nextColor = nextNode.scenes[0].backgroundColor || '#000000';
+                }
+            }
+            container.style.transition = 'background-color ' + (maxExitTime / 1000) + 's ease-in-out';
+            container.style.backgroundColor = nextColor;
+
+            setTimeout(() => {
+                isSceneExiting = false;
+                document.querySelectorAll('.weaver-input-wrapper').forEach(el => el.remove());
+                if (targetNodeId !== null && targetNodeId !== undefined) loadNodeForGame(targetNodeId);
+                else exitGame();
+            }, maxExitTime);
+        }
+
+        function triggerOptionsTimeout(comp) {
+            comp._timeoutTriggered = true;
+            if (comp.timeoutAction === 'random') {
+                if (comp.optionsList && comp.optionsList.length > 0) {
+                    const randIdx = Math.floor(Math.random() * comp.optionsList.length);
+                    const opt = comp.optionsList[randIdx];
+                    beginSceneExitForOption(comp.id, opt.id);
+                } else {
+                    exitGame();
+                }
+            } else if (comp.timeoutAction === 'manual') {
+                if (comp.timeoutTargetId !== null && comp.timeoutTargetId !== undefined && comp.timeoutTargetId !== "") {
+                    beginSceneExitToNode(Number(comp.timeoutTargetId));
+                } else {
+                    exitGame();
+                }
+            }
+        }
+
+        function continueAfterGift() {
+            if (!inGameGiftData || isGiftFadingOut) return;
+            isGiftFadingOut = true;
+
+            const container = document.getElementById('in-game-gift-container');
+            container.classList.remove('float-up');
+            container.classList.add('fade-out');
+
+            if (inGameGiftAudio) {
+                inGameGiftAudio.pause();
+                inGameGiftAudio.currentTime = 0;
+                inGameGiftAudio = null;
+            }
+
+            const nextId = inGameGiftData.Next;
+
+            setTimeout(() => {
+                document.getElementById('in-game-gift-overlay').style.display = 'none';
+                inGameGiftData = null;
+                isGiftFadingOut = false;
+
+                if (nextId !== null && nextId !== undefined && nextId !== "") {
+                    loadNodeForGame(nextId);
+                } else {
+                    exitGame();
+                }
+            }, 400); 
+        }
+
+        // --- NODE TRAVERSAL ENGINE ---
+        function loadNodeForGame(targetNodeId) {
+            let currentStatus = window.WEAVER_DATA.nodes.find(s => s.index === targetNodeId);
+            let safetyCounter = 0;
+            const activeInst = window.GAME_INSTANCES.find(i => i.id === activeInstanceId);
+            
+            while (currentStatus && (currentStatus.node_type === 'Set Variables' || currentStatus.node_type === 'If-Else')) {
+                if (safetyCounter > 100) { alert("Infinite loop detected."); exitGame(); return; }
+                
+                if (activeInst) {
+                    if (!activeInst.visitedNodes) activeInst.visitedNodes = [];
+                    if (activeInst.visitedNodes[activeInst.visitedNodes.length - 1] !== currentStatus.index) {
+                        activeInst.visitedNodes.push(currentStatus.index);
+                    }
+                    activeInst.currentNodeId = currentStatus.index; 
+                }
+                
+                let nextId = null;
+                if (currentStatus.node_type === 'Set Variables') {
+                    const targetVar = getActiveVariables().find(v => v.id == currentStatus.varId);
+                    if (targetVar) {
+                        let val = currentStatus.varValue;
+                        if (currentStatus.varValueType === 'variable') {
+                            const sourceVar = getActiveVariables().find(v => v.id == currentStatus.varValue);
+                            val = sourceVar ? sourceVar.value : (targetVar.type === 'integer' ? 0 : "");
+                        }
+                        
+                        if (targetVar.type === 'integer') {
+                            const operand = Number(val) || 0;
+                            const current = Number(targetVar.value) || 0;
+                            switch(currentStatus.varOperator) {
+                                case '=': targetVar.value = operand; break;
+                                case '+': targetVar.value = current + operand; break;
+                                case '-': targetVar.value = current - operand; break;
+                                case '*': targetVar.value = current * operand; break;
+                                case '/': targetVar.value = current / operand; break;
+                            }
+                        } else {
+                            if (currentStatus.varOperator === '=') {
+                                targetVar.value = String(val);
+                            } else if (currentStatus.varOperator === '+') {
+                                targetVar.value = (currentStatus.stringPrefix || "") + String(targetVar.value || "") + (currentStatus.stringSuffix || "");
+                            }
+                        }
+                    }
+                    nextId = currentStatus.Next;
+                } else if (currentStatus.node_type === 'If-Else') {
+                    const leftVar = getActiveVariables().find(v => v.id == currentStatus.varId);
+                    let leftVal = leftVar ? leftVar.value : 0;
+                    let rightVal = currentStatus.compareValue;
+                    
+                    if (currentStatus.compareValueType === 'variable') {
+                        const rightVar = getActiveVariables().find(v => v.id == currentStatus.compareValue);
+                        rightVal = rightVar ? rightVar.value : 0;
+                    }
+                    
+                    if (leftVar && leftVar.type === 'integer') {
+                        leftVal = Number(leftVal);
+                        rightVal = Number(rightVal);
+                    } else {
+                        leftVal = String(leftVal);
+                        rightVal = String(rightVal);
+                    }
+                    
+                    let result = false;
+                    switch(currentStatus.operator) {
+                        case '==': result = (leftVal == rightVal); break;
+                        case '!=': result = (leftVal != rightVal); break;
+                        case '>': result = (leftVal > rightVal); break;
+                        case '<': result = (leftVal < rightVal); break;
+                        case '>=': result = (leftVal >= rightVal); break;
+                        case '<=': result = (leftVal <= rightVal); break;
+                    }
+                    nextId = result ? currentStatus.NextTrue : currentStatus.NextFalse;
+                }
+                
+                if (nextId === null || nextId === undefined) { exitGame(); return; }
+                currentStatus = window.WEAVER_DATA.nodes.find(s => s.index === nextId);
+                safetyCounter++;
+            }
+            
+            if (!currentStatus) { exitGame(); return; }
+            
+            if (activeInst) {
+                if (!activeInst.visitedNodes) activeInst.visitedNodes = [];
+                if (activeInst.visitedNodes[activeInst.visitedNodes.length - 1] !== currentStatus.index) {
+                    activeInst.visitedNodes.push(currentStatus.index);
+                }
+                activeInst.currentNodeId = currentStatus.index; 
+                drawViewport();
+            }
+            
+            if (currentStatus.node_type === 'Gift') {
+                if (activeInst) {
+                    if (!activeInst.earnedGifts) activeInst.earnedGifts = { pfps: [], badges: [] };
+                    
+                    const mode = currentStatus.giftMode || (currentStatus.data && currentStatus.data.giftMode) || 'pfp';
+                    const font = currentStatus.giftFont || currentStatus.font || 'sans-serif';
+                    const pixelArray = currentStatus.pixels || currentStatus.pixelData || [];
+
+                    const giftData = {
+                        id: currentStatus.index,
+                        name: currentStatus.giftName || 'Reward',
+                        pixels: pixelArray,
+                        mode: mode,
+                        font: font
+                    };
+                    
+                    const targetList = giftData.mode === 'badge' ? window.GLOBAL_EARNED_GIFTS.badges : window.GLOBAL_EARNED_GIFTS.pfps;
+                    
+                    if (!targetList.some(g => g.id === giftData.id)) {
+                        targetList.push(giftData);
+                        renderGifts(); 
+                    }
+                }
+
+                inGameGiftData = currentStatus;
+                
+                const overlay = document.getElementById('in-game-gift-overlay');
+                const container = document.getElementById('in-game-gift-container');
+                const canvas = document.getElementById('in-game-gift-canvas');
+                const title = document.getElementById('in-game-gift-title');
+                const name = document.getElementById('in-game-gift-name');
+
+                const displayMode = currentStatus.giftMode || 'pfp';
+                const displayFont = currentStatus.giftFont || currentStatus.font || 'sans-serif';
+                const displayPixels = currentStatus.pixels || currentStatus.pixelData || [];
+
+                overlay.style.display = 'flex';
+                container.classList.remove('fade-out');
+                container.classList.add('float-up');
+
+                title.innerText = displayMode === 'pfp' ? '✨ NEW PFP:' : '🏆 NEW BADGE:';
+                name.innerText = currentStatus.giftName || 'Reward';
+                title.style.fontFamily = displayFont;
+                name.style.fontFamily = displayFont;
+                
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                if (displayMode === 'pfp') {
+                     ctx.fillStyle = '#ffffff';
+                     ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
+
+                if (displayPixels && displayPixels.length > 0) {
+                    ctx.imageSmoothingEnabled = false;
+                    const rows = displayPixels.length;
+                    const cols = displayPixels[0].length;
+                    const scaleX = canvas.width / cols;
+                    const scaleY = canvas.height / rows;
+
+                    for (let r = 0; r < rows; r++) {
+                        for (let c = 0; c < cols; c++) {
+                            if (displayPixels[r][c]) {
+                                ctx.fillStyle = displayPixels[r][c];
+                                ctx.fillRect(c * scaleX, r * scaleY, scaleX, scaleY);
+                            }
+                        }
+                    }
+                }
+
+                if (currentStatus.giftAudio && currentStatus.giftAudio.url) {
+                    if (inGameGiftAudio) {
+                        inGameGiftAudio.pause();
+                        inGameGiftAudio.currentTime = 0;
+                    }
+                    inGameGiftAudio = new Audio(currentStatus.giftAudio.url);
+                    inGameGiftAudio.volume = currentStatus.giftAudio.volume !== undefined ? currentStatus.giftAudio.volume : 1.0;
+                    inGameGiftAudio.loop = false;
+                    inGameGiftAudio.play().catch(e => console.warn("Gift audio blocked:", e));
+                }
+
+                return; 
+            }
+            
+            const oldNodeId = currentNode ? currentNode.index : null;
+            currentNode = currentStatus;
+            currentSceneIndex = 0;
+
+            if (oldNodeId !== currentNode.index) {
+                handleNodeAudio(currentNode.audio);
+            }
+
+            resizePlayer();
+            startScene();
+        }
+
+        // Triggered by Option Buttons
+        function beginSceneExitForOption(compId, optionId) {
+            isSceneExiting = true;
+            sceneExitStartTime = Date.now();
+
+            let maxExitTime = 0;
+            renderedComps.forEach(comp => {
+                const dur = (comp.exitAnimationDuration || 1) * 1000;
+                if (dur > maxExitTime && comp.exitAnimationType && comp.exitAnimationType !== 'none') maxExitTime = dur;
+            });
+            if (maxExitTime === 0) maxExitTime = 100;
+
+            const currentStatus = window.WEAVER_DATA.nodes.find(s => s.index === currentNode.index);
+            const optStatus = currentStatus.options.find(o => o.id === optionId);
+            const nextNodeId = (optStatus && optStatus.next != null) ? optStatus.next : null;
+
+            const container = document.getElementById('game-container');
+            let nextColor = '#000000';
+            if (nextNodeId !== null) {
+                const nextNode = window.WEAVER_DATA.nodes.find(n => n.index === nextNodeId);
+                if (nextNode && nextNode.scenes && nextNode.scenes.length > 0) {
+                    nextColor = nextNode.scenes[0].backgroundColor || '#000000';
+                }
+            }
+            container.style.transition = 'background-color ' + (maxExitTime / 1000) + 's ease-in-out';
+            container.style.backgroundColor = nextColor;
+
+            setTimeout(() => {
+                isSceneExiting = false;
+                document.querySelectorAll('.weaver-input-wrapper').forEach(el => el.remove());
+                if (nextNodeId !== null && targetNodeId !== undefined) loadNodeForGame(nextNodeId);
+                else exitGame();
+            }, maxExitTime);
+        }
+
+        // Triggered by normal Background Clicks or Inputs
+        function beginSceneExit() {
+            isSceneExiting = true;
+            sceneExitStartTime = Date.now();
+
+            let maxExitTime = 0;
+            renderedComps.forEach(comp => {
+                const dur = (comp.exitAnimationDuration || 1) * 1000;
+                if (dur > maxExitTime && comp.exitAnimationType && comp.exitAnimationType !== 'none') {
+                    maxExitTime = dur;
+                }
+            });
+            if (maxExitTime === 0) maxExitTime = 100;
+
+            const container = document.getElementById('game-container');
+            
+            let nextColor = '#000000';
+            if (currentSceneIndex < currentNode.scenes.length - 1) {
+                nextColor = currentNode.scenes[currentSceneIndex + 1].backgroundColor || '#000000';
+            } else if (currentNode.Next !== null && currentNode.Next !== undefined) {
+                const nextNode = window.WEAVER_DATA.nodes.find(n => n.index === currentNode.Next);
+                if (nextNode && nextNode.scenes && nextNode.scenes.length > 0) {
+                    nextColor = nextNode.scenes[0].backgroundColor || '#000000';
+                }
+            }
+            
+            container.style.transition = 'background-color ' + (maxExitTime / 1000) + 's ease-in-out';
+            container.style.backgroundColor = nextColor;
+
+            setTimeout(() => {
+                finishSceneExit();
+            }, maxExitTime);
+        }
+
+        function finishSceneExit() {
+            isSceneExiting = false;
+            document.querySelectorAll('.weaver-input-wrapper').forEach(el => el.remove());
+            
+            if (currentSceneIndex < currentNode.scenes.length - 1) {
+                currentSceneIndex++;
+                startScene();
+            } else {
+                if (currentNode.Next !== null && currentNode.Next !== undefined) {
+                    loadNodeForGame(currentNode.Next);
+                } else {
+                    exitGame();
+                }
+            }
+        }
+        
+        function startGame() {
+            const rootId = window.WEAVER_DATA.rootNodeId;
+            if (rootId === null || rootId === undefined) {
+                alert("No Root Node found. Cannot start game.");
+                return;
+            }
+            
+            document.getElementById('game-player-overlay').style.display = 'block';
+            isPlaying = true;
+            
+            const canvas = document.getElementById('game-render-canvas');
+            window.addEventListener('resize', resizePlayer);
+            
+            if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(e=>console.log(e));
+            }
+
+            // --- BIND OPTIONS COMPONENT EVENT LISTENERS ---
+            if (!canvas.hasAttribute('data-events-bound')) {
+                canvas.addEventListener('mousemove', (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = canvas.width / rect.width;
+                    const scaleY = canvas.height / rect.height;
+                    const canvasX = (e.clientX - rect.left) * scaleX;
+                    const canvasY = (e.clientY - rect.top) * scaleY;
+                    const graphX = (canvasX - canvas.width / 2) / 2;
+                    const graphY = (canvas.height / 2 - canvasY) / 2;
+
+                    renderedComps.forEach(comp => {
+                        if (comp.type === 'options') {
+                            const ctx = canvas.getContext('2d');
+                            const dx = graphX - comp.x;
+                            const dy = graphY - comp.y;
+                            
+                            const screenDx = dx * 2;
+                            const screenDy = dy * 2;
+
+                            const rad = -(comp.rotation || 0) * Math.PI / 180;
+                            const localX = screenDx * Math.cos(rad) - screenDy * Math.sin(rad);
+                            const localY = screenDx * Math.sin(rad) + screenDy * Math.cos(rad);
+                            
+                            const hit = getOptionAtPosition(comp, localX, -localY, ctx);
+                            if (hit) {
+                                if (comp._hoveredOptionIndex !== hit.index) comp._hoveredOptionIndex = hit.index;
+                            } else {
+                                if (comp._hoveredOptionIndex !== -1) comp._hoveredOptionIndex = -1;
+                            }
+                        }
+                    });
+                });
+                
+                canvas.addEventListener('mousedown', (e) => {
+                    renderedComps.forEach(comp => {
+                        if (comp.type === 'options' && comp._hoveredOptionIndex !== -1) {
+                            comp._clickedOptionIndex = comp._hoveredOptionIndex;
+                        }
+                    });
+                });
+
+                canvas.addEventListener('mouseup', (e) => {
+                    renderedComps.forEach(comp => {
+                        if (comp.type === 'options') {
+                            const clickedIdx = comp._clickedOptionIndex;
+                            comp._clickedOptionIndex = -1;
+                            
+                            if (clickedIdx !== -1 && clickedIdx === comp._hoveredOptionIndex) {
+                                const option = comp.optionsList[clickedIdx];
+                                if (option) {
+                                    beginSceneExitForOption(comp.id, option.id);
+                                }
+                            }
+                        }
+                    });
+                });
+                
+                canvas.addEventListener('wheel', (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = canvas.width / rect.width;
+                    const scaleY = canvas.height / rect.height;
+                    const canvasX = (e.clientX - rect.left) * scaleX;
+                    const canvasY = (e.clientY - rect.top) * scaleY;
+                    const graphX = (canvasX - canvas.width / 2) / 2;
+                    const graphY = (canvas.height / 2 - canvasY) / 2;
+
+                    renderedComps.forEach(comp => {
+                        if (comp.type === 'options') {
+                            const dx = graphX - comp.x;
+                            const dy = graphY - comp.y;
+                            
+                            if (Math.abs(dx * 2) <= comp.width/2 && Math.abs(dy * 2) <= comp.height/2) {
+                                const ctx = canvas.getContext('2d');
+                                const layout = calculateOptionsLayout(comp, ctx);
+                                if (layout.totalContentHeight > comp.height) {
+                                    e.preventDefault();
+                                    const maxScroll = layout.totalContentHeight - comp.height + 20;
+                                    if (!comp.scrollY) comp.scrollY = 0;
+                                    comp.scrollY += e.deltaY;
+                                    if (comp.scrollY < 0) comp.scrollY = 0;
+                                    if (comp.scrollY > maxScroll) comp.scrollY = maxScroll;
+                                }
+                            }
+                        }
+                    });
+                }, { passive: false });
+
+                canvas.setAttribute('data-events-bound', 'true');
+            }
+            
+            // PRIORITIZE EXPLICITLY SELECTED NODE FOR STARTING THE GAME
+            const activeInst = window.GAME_INSTANCES.find(i => i.id === activeInstanceId);
+            if (activeInst && activeInst.currentNodeId !== null) {
+                loadNodeForGame(activeInst.currentNodeId);
+            } else if (activeInst && activeInst.visitedNodes && activeInst.visitedNodes.length > 0) {
+                loadNodeForGame(activeInst.visitedNodes[activeInst.visitedNodes.length - 1]);
+            } else {
+                loadNodeForGame(rootId);
+            }
+        }
+        
+        function resizePlayer() {
+            if (!currentNode) return;
+            const refW = currentNode.referenceWidth || 800;
+            const refH = currentNode.referenceHeight || 600;
+            const scaleX = window.innerWidth / refW;
+            const scaleY = window.innerHeight / refH;
+            const scale = Math.min(scaleX, scaleY);
+            
+            const container = document.getElementById('game-container');
+            container.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
+        }
+        
+        function startScene() {
+            document.querySelectorAll('.weaver-input-wrapper').forEach(el => el.remove());
+
+            renderedComps.forEach(comp => {
+                if (comp.type === 'video' && comp.videoElement) {
+                    comp.videoElement.pause();
+                }
+            });
+
+            renderedComps = [];
+            currentCompIndex = 0;
+            isSceneExiting = false;
+
+            const scene = currentNode.scenes[currentSceneIndex];
+            if (!scene) {
+                if (currentSceneIndex < currentNode.scenes.length - 1) {
+                    currentSceneIndex++;
+                    startScene();
+                } else if (currentNode.Next !== null && currentNode.Next !== undefined) {
+                    loadNodeForGame(currentNode.Next);
+                } else {
+                    exitGame();
+                }
+                return;
+            }
+            
+            const container = document.getElementById('game-container');
+            const canvas = document.getElementById('game-render-canvas');
+            
+            const refW = currentNode.referenceWidth || 800;
+            const refH = currentNode.referenceHeight || 600;
+            container.style.width = refW + 'px';
+            container.style.height = refH + 'px';
+            canvas.width = refW;
+            canvas.height = refH;
+            
+            if (currentSceneIndex === 0) {
+                 container.style.backgroundColor = scene.backgroundColor || '#000000';
+            }
+            
+            if (!renderLoopId) {
+                renderLoopId = requestAnimationFrame(renderLoop);
+            }
+            
+            if (scene.components && scene.components.length > 0) {
+                if (scene.components[0].autoRender) {
+                    autoRenderTimer = setTimeout(advanceScene, 100); 
+                }
+            }
+        }
+        
+        function advanceScene() {
+            if (!isPlaying) return;
+            const scene = currentNode.scenes[currentSceneIndex];
+            if (!scene || !scene.components) return;
+            
+            if (currentCompIndex >= scene.components.length) {
+                return;
+            }
+            
+            const comp = scene.components[currentCompIndex];
+            
+            comp._animStart = Date.now();
+            comp._skipped = false;
+
+            if (comp.type === 'options') {
+                comp._hoveredOptionIndex = -1;
+                comp._clickedOptionIndex = -1;
+                comp.scrollY = 0;
+                comp._timeoutTriggered = false; 
+            }
+
+            if (comp.type === 'video' && comp.videoElement) {
+                comp.videoElement.currentTime = 0;
+                comp.videoElement.play().catch(e => console.warn("Video Autoplay blocked:", e));
+            }
+
+            if (comp.type === 'input') {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'weaver-input-wrapper';
+                
+                comp.isSubmitted = false;
+                wrapper.style.opacity = '0';
+                
+                wrapper.style.setProperty('--bg-color', comp.backgroundColor || 'transparent');
+                wrapper.style.setProperty('--border-color', comp.borderColor || 'transparent');
+                wrapper.style.setProperty('--border-width', (comp.borderWidth || 0) + 'px');
+                wrapper.style.setProperty('--focus-bg', comp.focusBackgroundColor || comp.backgroundColor || 'transparent');
+                wrapper.style.setProperty('--focus-border', comp.focusBorderColor || comp.borderColor || 'transparent');
+                wrapper.style.setProperty('--btn-normal', comp.buttonNormalColor || 'rgba(255,255,255,0.15)');
+                wrapper.style.setProperty('--btn-hover', comp.buttonHoverColor || 'rgba(255,255,255,0.3)');
+                wrapper.style.setProperty('--btn-click', comp.buttonClickColor || 'rgba(255,255,255,0.4)');
+                wrapper.style.setProperty('--btn-text', comp.buttonTextColor || '#ffffff');
+                
+                wrapper.style.width = comp.width + 'px';
+                wrapper.style.height = comp.height + 'px';
+                wrapper.style.borderRadius = (comp.borderRadius || 0) + 'px';
+                wrapper.style.color = comp.textColor || '#ffffff';
+                wrapper.style.fontFamily = comp.fontFamily || 'sans-serif';
+                wrapper.style.fontWeight = comp.fontWeight || 'normal';
+                wrapper.style.fontStyle = comp.fontStyle || 'normal';
+                
+                const targetVar = getActiveVariables().find(v => v.id == comp.targetVariableId);
+                const inputType = (targetVar && targetVar.type === 'integer') ? 'number' : 'text';
+
+                // Fixed: String concatenation avoids nested template literal errors
+                wrapper.innerHTML = 
+                    '<input type="' + inputType + '" placeholder="' + (comp.placeholderText || 'Type here...') + '" style="color: inherit; font-family: inherit; font-size: ' + (comp.fontSize || 16) + 'px; padding: 0 10px; border-top-right-radius: 0; border-bottom-right-radius: 0; box-sizing: border-box;">' +
+                    '<button class="in-submit" disabled style="font-family: inherit; font-size: 14px; padding: 0 20px; border-top-right-radius: ' + (comp.borderRadius || 0) + 'px; border-bottom-right-radius: ' + (comp.borderRadius || 0) + 'px; box-sizing: border-box;">' + (comp.buttonText || 'Submit') + '</button>';
+                
+                const btn = wrapper.querySelector('.in-submit');
+                const inp = wrapper.querySelector('input');
+                
+                inp.oninput = (e) => {
+                    const isEmpty = e.target.value.trim() === '';
+                    btn.disabled = isEmpty;
+                };
+
+                btn.onclick = (e) => {
+                    e.stopPropagation(); 
+                    if (btn.disabled) return;
+
+                    let val = inp.value.trim();
+
+                    if (targetVar) {
+                        if (targetVar.type === 'integer') {
+                            const numVal = Number(val);
+                            if (isNaN(numVal)) { alert("Please enter a valid number."); return; }
+                            val = numVal;
+                        }
+                        targetVar.value = val;
+                    }
+
+                    btn.innerText = comp.buttonSubmittedText || 'Sent';
+                    btn.disabled = true;
+                    inp.disabled = true;
+                    
+                    comp.isSubmitted = true;
+                    
+                    if (currentCompIndex >= currentNode.scenes[currentSceneIndex].components.length) {
+                        beginSceneExit();
+                    } else {
+                        const currentSceneData = currentNode.scenes[currentSceneIndex];
+                        if (currentSceneData && currentCompIndex < currentSceneData.components.length) {
+                            const nextComp = currentSceneData.components[currentCompIndex];
+                            if (nextComp && nextComp.autoRender) {
+                                advanceScene();
+                            }
+                        }
+                    }
+                };
+                
+                inp.onclick = (e) => e.stopPropagation();
+                inp.onkeydown = (e) => e.stopPropagation();
+                
+                document.getElementById('game-container').appendChild(wrapper);
+                comp.domElement = wrapper;
+            }
+
+            renderedComps.push(comp);
+            currentCompIndex++;
+            
+            if (currentCompIndex < scene.components.length) {
+                const nextComp = scene.components[currentCompIndex];
+                if (nextComp.autoRender) {
+                    
+                    const isLooping = (comp.isLoop === true || String(comp.isLoop).toLowerCase() === 'true');
+                    const isInput = (comp.type === 'input');
+                    const isOptions = (comp.type === 'options');
+                    
+                    if ((comp.type === 'video' && !isLooping) || isInput || isOptions) {
+                        // Resumed by events
+                    } else {
+                        const waitTime = (!comp.animationType || comp.animationType === 'none') ? 0 : (comp.animationDuration || 1) * 1000;
+                        autoRenderTimer = setTimeout(advanceScene, waitTime);
+                    }
+                }
+            }
+        }
+        
+        function handlePlayerClick(e) {
+            if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return; 
+            
+            let skippedAny = false;
+            const now = Date.now();
+            
+            renderedComps.forEach(comp => {
+                const duration = (comp.animationDuration || 1) * 1000;
+                if (comp.animationType && comp.animationType !== 'none') {
+                    if (!comp._skipped && (now - comp._animStart < duration)) {
+                        comp._skipped = true;
+                        skippedAny = true;
+                    }
+                }
+            });
+
+            if (skippedAny) {
+                if (autoRenderTimer) {
+                    clearTimeout(autoRenderTimer);
+                    autoRenderTimer = null;
+                    advanceScene();
+                }
+                return;
+            }
+
+            if (renderedComps.length > 0) {
+                const lastComp = renderedComps[renderedComps.length - 1];
+                if (lastComp.type === 'input' && !lastComp.isSubmitted) return;
+                if (lastComp.type === 'options') return;
+            }
+
+            const scene = currentNode?.scenes?.[currentSceneIndex];
+            if (scene) {
+                if (currentCompIndex < scene.components.length) {
+                    const nextComp = scene.components[currentCompIndex];
+                    if (!nextComp.autoRender) advanceScene();
+                } else if (!isSceneExiting) {
+                    beginSceneExit();
+                }
+            }
+        }
+        
+        function drawRoundedRectPaths(ctx, x, y, w, h, r) {
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + w - r, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+            ctx.lineTo(x + w, y + h - r);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+            ctx.lineTo(x + r, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+            ctx.lineTo(x, y + r);
+            ctx.quadraticCurveTo(x, y, x + r, y);
+            ctx.closePath();
+        }
+
+        function renderLoop() {
+            if (!isPlaying) return;
+            renderAll();
+            updateAudioDucking();
+            renderLoopId = requestAnimationFrame(renderLoop);
+        }
+
+        function renderAll() {
+            const canvas = document.getElementById('game-render-canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            const now = Date.now();
+
+            renderedComps.forEach(comp => {
+                let currentAlpha = 1;
+                let currentScale = 1;
+                let currentTransX = 0;
+                let currentTransY = 0;
+
+                // --- ENTRANCE ---
+                let progress = 1;
+                const dur = (comp.animationDuration || 1) * 1000;
+                if (comp.animationType && comp.animationType !== 'none' && !comp._skipped) {
+                    progress = Math.min((now - comp._animStart) / dur, 1);
+                }
+
+                if (progress < 1) {
+                    if (comp.animationType === 'fade') currentAlpha = progress;
+                    else if (comp.animationType === 'scale') currentScale = progress;
+                    else if (comp.animationType === 'slide') {
+                        if(comp.type === 'input') currentTransX = -200 * (1 - progress);
+                        else currentTransY = 50 * (1 - progress);
+                        currentAlpha = progress;
+                    }
+                }
+
+                // --- EXIT ---
+                if (isSceneExiting) {
+                    const exitDur = (comp.exitAnimationDuration || 1) * 1000;
+                    if (comp.exitAnimationType && comp.exitAnimationType !== 'none') {
+                        const exitProgress = Math.min((now - sceneExitStartTime) / exitDur, 1);
+                        if (comp.exitAnimationType === 'fade') currentAlpha = 1 - exitProgress;
+                        else if (comp.exitAnimationType === 'scale') currentScale = 1 - exitProgress;
+                        else if (comp.exitAnimationType === 'slide') {
+                            if(comp.type === 'input') currentTransX = -200 * exitProgress; 
+                            else currentTransY = 50 * exitProgress; 
+                            currentAlpha = 1 - exitProgress;
+                        }
+                    }
+                }
+
+                // --- DOM (Inputs) ---
+                if (comp.type === 'input') {
+                    if (comp.domElement) {
+                        const screenX = (canvas.width / 2) + (comp.x * 2);
+                        const screenY = (canvas.height / 2) - (comp.y * 2);
+                        comp.domElement.style.left = screenX + 'px';
+                        comp.domElement.style.top = screenY + 'px';
+                        comp.domElement.style.opacity = currentAlpha;
+                        // Fixed template literal replacement
+                        comp.domElement.style.transform = 'translate(-50%, -50%) rotate(' + (comp.rotation || 0) + 'deg) scale(' + currentScale + ') translate(' + currentTransX + 'px, ' + currentTransY + 'px)';
+                    }
+                    return; 
+                }
+
+                // --- CANVAS ELEMENTS ---
+                ctx.save();
+                const screenX = (canvas.width / 2) + (comp.x * 2);
+                const screenY = (canvas.height / 2) - (comp.y * 2);
+                
+                ctx.translate(screenX, screenY);
+                ctx.globalAlpha = currentAlpha;
+                ctx.translate(currentTransX, currentTransY);
+                ctx.scale(currentScale, currentScale);
+                ctx.rotate((comp.rotation || 0) * Math.PI / 180);
+                
+                // Shared Backgrounds & Borders
+                if (comp.type !== 'options') {
+                    if (comp.backgroundColor && comp.backgroundColor !== 'transparent') {
+                        ctx.fillStyle = comp.backgroundColor;
+                        if (comp.borderRadius > 0) {
+                            drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius);
+                            ctx.fill();
+                        } else {
+                            ctx.fillRect(-(comp.width/2), -(comp.height/2), comp.width, comp.height);
+                        }
+                    }
+
+                    if (comp.borderWidth > 0 && comp.borderColor !== 'transparent') {
+                        ctx.strokeStyle = comp.borderColor;
+                        ctx.lineWidth = comp.borderWidth;
+                        if (comp.borderRadius > 0) {
+                            drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius);
+                            ctx.stroke();
+                        } else {
+                            ctx.strokeRect(-(comp.width/2), -(comp.height/2), comp.width, comp.height);
+                        }
+                    }
+                }
+
+                // Text & Variable Logic
+                if (comp.type === 'text' || comp.type === 'variable') {
+                    const fontWeight = comp.fontWeight || 'normal';
+                    const fontStyle = comp.fontStyle || 'normal';
+                    const fontSize = comp.fontSize || 24;
+                    const fontFamily = comp.fontFamily || 'sans-serif';
+                    
+                    // Fixed template literal replacement
+                    ctx.font = fontStyle + ' ' + fontWeight + ' ' + fontSize + 'px ' + fontFamily;
+                    ctx.fillStyle = comp.color || '#ffffff';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    
+                    let rawContent = comp.content || "";
+                    if (comp.type === 'variable') {
+                        let varObj = getActiveVariables().find(v => v.id == comp.variableId);
+                        rawContent = varObj !== undefined ? String(varObj.value) : (comp.content || "[Unassigned Variable]");
+                    }
+
+                    let contentToDraw = rawContent;
+                    if (comp.animationType === 'typewriter' && progress < 1) {
+                        const length = Math.floor(contentToDraw.length * progress);
+                        contentToDraw = contentToDraw.substring(0, length);
+                    }
+
+                    const maxWidth = Math.max(10, comp.width - 20);
+                    const lineHeight = fontSize * 1.2;
+                    const paragraphs = contentToDraw.split(/[\\r\\n|\\n]/); 
+                    let lines = [];
+                    
+                    paragraphs.forEach(paragraph => {
+                         const words = paragraph.split(' ');
+                         let currentLine = words[0] || '';
+                         for (let i = 1; i < words.length; i++) {
+                            const word = words[i];
+                            const width = ctx.measureText(currentLine + " " + word).width;
+                            if (width < maxWidth) {
+                                currentLine += " " + word;
+                            } else {
+                                lines.push(currentLine);
+                                currentLine = word;
+                            }
+                         }
+                         lines.push(currentLine);
+                    });
+                    
+                    const totalTextHeight = lines.length * lineHeight;
+                    let currentY = -(totalTextHeight / 2) + (lineHeight / 2);
+                    
+                    lines.forEach(line => {
+                        ctx.fillText(line, 0, currentY);
+                        currentY += lineHeight;
+                    });
+                } 
+                else if (comp.type === 'image') {
+                    if (comp.imgObject && comp.imgObject.complete) {
+                        ctx.drawImage(comp.imgObject, -(comp.width / 2), -(comp.height / 2), comp.width, comp.height);
+                    } else if (!comp.imgObject && comp.url) {
+                        const img = new Image();
+                        img.onload = () => { comp._animStart = Date.now(); };
+                        img.src = comp.url;
+                        comp.imgObject = img;
+                    }
+                }
+                else if (comp.type === 'video') {
+                    if (comp.videoElement && comp.videoElement.readyState >= 2) {
+                        ctx.save(); 
+                        if (comp.borderRadius > 0) {
+                            drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, comp.borderRadius);
+                            ctx.clip();
+                        }
+                        ctx.drawImage(comp.videoElement, -(comp.width / 2), -(comp.height / 2), comp.width, comp.height);
+                        ctx.restore();
+                    } else if (!comp.videoElement && comp.url) {
+                        const vid = document.createElement('video');
+                        vid.src = comp.url;
+
+                        const isLooping = (comp.isLoop === true || String(comp.isLoop).toLowerCase() === 'true');
+                        vid.loop = isLooping;
+                        
+                        if (!vid.loop) {
+                            vid.onended = () => {
+                                const scene = currentNode.scenes[currentSceneIndex];
+                                if (scene && currentCompIndex < scene.components.length) {
+                                    const nextComp = scene.components[currentCompIndex];
+                                    const lastRendered = renderedComps[renderedComps.length - 1];
+                                    if (lastRendered === comp && nextComp.autoRender) advanceScene();
+                                }
+                            };
+                        }
+                        
+                        vid.autoplay = true;
+                        
+                        vid.muted = (comp.isMuted !== false && String(comp.isMuted).toLowerCase() !== 'false'); 
+                        if (vid.muted) vid.setAttribute('muted', '');
+                        vid.setAttribute('autoplay', '');
+                        vid.setAttribute('playsinline', '');
+                        vid.oncanplay = () => {
+                            if (!comp._animReset) { comp._animStart = Date.now(); comp._animReset = true; }
+                            vid.play().catch(e => console.warn("Video Autoplay blocked:", e));
+                        };
+                        vid.load();
+                        comp.videoElement = vid;
+                    }
+                }
+                else if (comp.type === 'options') {
+                    const boxBaseOpacity = (comp.boxOpacity !== undefined) ? comp.boxOpacity : 0.8;
+                    const radius = comp.borderRadius !== undefined ? comp.borderRadius : 8;
+                    const layout = calculateOptionsLayout(comp, ctx);
+                    
+                    if (comp.boxColor && boxBaseOpacity > 0) {
+                        ctx.fillStyle = hexToRgba(comp.boxColor, boxBaseOpacity);
+                        drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, radius);
+                        ctx.fill();
+                    }
+                    
+                    if (comp.borderWidth > 0 && comp.borderColor) {
+                        ctx.strokeStyle = comp.borderColor;
+                        ctx.lineWidth = comp.borderWidth;
+                        ctx.setLineDash([]); 
+                        drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, radius);
+                        ctx.stroke();
+                    }
+
+                    // --- TIME LIMIT LOGIC AND PROGRESS BAR ---
+                    if (comp.hasTimeLimit) {
+                        const elapsed = (now - comp._animStart) / 1000; 
+                        const limitDuration = comp.timeLimitDuration || 5;
+                        let timeProgress = 1.0 - (elapsed / limitDuration);
+                        
+                        if (timeProgress <= 0) {
+                            timeProgress = 0;
+                            if (!comp._timeoutTriggered && !isSceneExiting) {
+                                triggerOptionsTimeout(comp);
+                            }
+                        }
+                        
+                        const barHeight = 6;
+                        const totalW = comp.width;
+                        const currentW = totalW * timeProgress;
+                        const barX = -(comp.width / 2);
+                        const barY = -(comp.height / 2) - barHeight - 4; 
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                        ctx.fillRect(barX, barY, totalW, barHeight);
+                        
+                        if (timeProgress > 0) {
+                            if (timeProgress > 0.5) ctx.fillStyle = '#00ff88'; 
+                            else if (timeProgress > 0.2) ctx.fillStyle = '#eab308'; 
+                            else ctx.fillStyle = '#ef4444'; 
+                            ctx.fillRect(barX, barY, currentW, barHeight);
+                        }
+                    }
+                    // -----------------------------------------
+
+                    ctx.save();
+                    drawRoundedRectPaths(ctx, -(comp.width/2), -(comp.height/2), comp.width, comp.height, radius);
+                    ctx.clip();
+
+                    if (layout.buttons.length > 0) {
+                        layout.buttons.forEach((btn, index) => {
+                            const drawY = btn.y - (comp.scrollY || 0);
+                            
+                            const defaultBtnStyle = {
+                                backgroundColor: '#374151', color: '#ffffff', borderColor: '#9ca3af',
+                                borderWidth: 1, borderRadius: 4, fontSize: 16, fontFamily: 'sans-serif'
+                            };
+                            
+                            const safeStyles = comp.styles || {
+                                normal: { ...defaultBtnStyle },
+                                hovered: { ...defaultBtnStyle, backgroundColor: '#4b5563', borderColor: '#00ff88' },
+                                clicked: { ...defaultBtnStyle, backgroundColor: '#1f2937', borderColor: '#00ff88', borderWidth: 2 }
+                            };
+
+                            let style = safeStyles.normal;
+                            if (comp._clickedOptionIndex === index) style = safeStyles.clicked;
+                            else if (comp._hoveredOptionIndex === index) style = safeStyles.hovered;
+                            
+                            if (style.backgroundColor && style.backgroundColor !== 'transparent') {
+                                ctx.fillStyle = style.backgroundColor;
+                                drawRoundedRectPaths(ctx, btn.x, drawY, btn.w, btn.h, style.borderRadius);
+                                ctx.fill();
+                            }
+                            
+                            if (style.borderWidth > 0 && style.borderColor && style.borderColor !== 'transparent') {
+                                ctx.strokeStyle = style.borderColor;
+                                ctx.lineWidth = style.borderWidth;
+                                drawRoundedRectPaths(ctx, btn.x, drawY, btn.w, btn.h, style.borderRadius);
+                                ctx.stroke();
+                            }
+                            
+                            ctx.fillStyle = style.color;
+                            // Fixed template literal replacement
+                            ctx.font = style.fontSize + 'px ' + (style.fontFamily || 'sans-serif');
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'middle';
+                            ctx.fillText(btn.text, btn.x + (btn.w/2), drawY + (btn.h/2));
+                        });
+                    }
+                    
+                    if (layout.totalContentHeight > comp.height) {
+                        const scrollBarW = 4;
+                        const scrollRatio = comp.height / layout.totalContentHeight;
+                        const thumbH = Math.max(20, comp.height * scrollRatio);
+                        const thumbY = -comp.height/2 + ((comp.scrollY || 0) / layout.totalContentHeight) * comp.height;
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                        ctx.fillRect(comp.width/2 - 6, thumbY, scrollBarW, thumbH);
+                    }
+                    ctx.restore(); 
+                }
+                
+                ctx.restore();
+            });
+        }
+        
+        function exitGame() {
+            isPlaying = false;
+            document.getElementById('game-player-overlay').style.display = 'none';
+            document.getElementById('in-game-gift-overlay').style.display = 'none';
+            
+            clearTimeout(autoRenderTimer);
+            if (renderLoopId) {
+                cancelAnimationFrame(renderLoopId);
+                renderLoopId = null;
+            }
+            
+            handleNodeAudio(null);
+            
+            if (inGameGiftAudio) {
+                inGameGiftAudio.pause();
+                inGameGiftAudio.currentTime = 0;
+                inGameGiftAudio = null;
+            }
+            
+            inGameGiftData = null;
+            isGiftFadingOut = false;
+            currentNode = null;
+            
+            document.querySelectorAll('.weaver-input-wrapper').forEach(el => el.remove());
+            renderedComps.forEach(comp => {
+                if (comp.type === 'video' && comp.videoElement) comp.videoElement.pause();
+            });
+            if (document.fullscreenElement) document.exitFullscreen().catch(e=>console.log(e));
+        }
+
+    <${'/'}script>
+</body>
+</html>`;
+        await htmlWritable.write(htmlContent);
+        await htmlWritable.close();
+
+        triggerNotification("Project successfully exported! 🚀", "success");
+        
+    } catch (err) {
+        if (err.name !== 'AbortError') {
+            console.error("Export failed:", err);
+            triggerNotification("Export failed: " + err.message, "error");
+        }
+    }
+};
+
 const loadProjectData = async () => {
   try {
     // Clear previous registry on reload
@@ -5073,6 +7469,10 @@ const onPreviewWheel = (e) => {
                 <span v-else>💾 Save</span>
             </button>
 
+            <button class="export-btn" @click="exportProject" title="Export Project">
+                📤 Export
+            </button>
+
             <button class="play-project-btn" @click="playProjectFromRoot" title="Play Project from Start">
                 ▶
             </button>
@@ -7575,5 +9975,22 @@ const onPreviewWheel = (e) => {
     box-shadow: 0 0 5px #00ff88;
     margin-left: 6px;
     animation: pulse 2s infinite;
+}
+
+.export-btn {
+  background: transparent;
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.5);
+  padding: 8px 20px;
+  border-radius: 20px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: 0.3s;
+}
+
+.export-btn:hover {
+  background: rgba(59, 130, 246, 0.1);
+  transform: scale(1.05);
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.2);
 }
 </style>

@@ -200,7 +200,6 @@ const handlePlay = async () => {
         guestGames.push(postId);
         localStorage.setItem('guest_games', JSON.stringify(guestGames));
       }
-      alert("Added to your Guest Console! 🎮");
       inConsole.value = true;
       return;
     } else {
@@ -236,7 +235,6 @@ const handlePlay = async () => {
           });
         }
         
-        alert("Added to your Console! 🎮");
     } else {
         alert("Failed to add to console.");
     }
